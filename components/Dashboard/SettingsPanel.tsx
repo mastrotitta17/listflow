@@ -61,6 +61,7 @@ const SettingsPanel: React.FC = () => {
 
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isOpeningSubscriptionPortal, setIsOpeningSubscriptionPortal] = useState(false);
+  const [isOpeningUpgradePortal, setIsOpeningUpgradePortal] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
 
@@ -183,7 +184,7 @@ const SettingsPanel: React.FC = () => {
     setInfoMessage(null);
 
     try {
-      const response = await fetch("/api/settings/subscription/portal", {
+      const response = await fetch("/api/settings/subscription/upgrade", {
         method: "POST",
       });
       const payload = (await response.json().catch(() => ({}))) as SubscriptionPortalResponse;
@@ -197,6 +198,28 @@ const SettingsPanel: React.FC = () => {
       setInfoMessage(error instanceof Error ? error.message : t("settings.cancelSubscriptionsFailed"));
     } finally {
       setIsOpeningSubscriptionPortal(false);
+    }
+  };
+
+  const handleOpenUpgradePortal = async () => {
+    setIsOpeningUpgradePortal(true);
+    setInfoMessage(null);
+
+    try {
+      const response = await fetch("/api/settings/subscription/portal", {
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => ({}))) as SubscriptionPortalResponse;
+
+      if (!response.ok || !payload.url) {
+        throw new Error(payload.error || t("settings.upgradePlanFailed"));
+      }
+
+      window.location.href = payload.url;
+    } catch (error) {
+      setInfoMessage(error instanceof Error ? error.message : t("settings.upgradePlanFailed"));
+    } finally {
+      setIsOpeningUpgradePortal(false);
     }
   };
 
@@ -341,21 +364,39 @@ const SettingsPanel: React.FC = () => {
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => void handleOpenSubscriptionPortal()}
-              disabled={!hasActiveSubscription || isOpeningSubscriptionPortal}
-              className="w-full py-3.5 rounded-2xl border border-amber-500/30 text-amber-200 bg-amber-500/10 font-black text-xs uppercase tracking-widest hover:bg-amber-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-            >
-              {isOpeningSubscriptionPortal ? (
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {t("common.loading")}...
-                </span>
-              ) : (
-                t("settings.cancelSubscriptions")
-              )}
-            </button>
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => void handleOpenUpgradePortal()}
+                disabled={!hasActiveSubscription || isOpeningUpgradePortal}
+                className="w-full py-3.5 rounded-2xl border border-indigo-500/30 text-indigo-200 bg-indigo-500/10 font-black text-xs uppercase tracking-widest hover:bg-indigo-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {isOpeningUpgradePortal ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {t("common.loading")}...
+                  </span>
+                ) : (
+                  t("settings.upgradePlan")
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleOpenSubscriptionPortal()}
+                disabled={!hasActiveSubscription || isOpeningSubscriptionPortal}
+                className="w-full py-3.5 rounded-2xl border border-amber-500/30 text-amber-200 bg-amber-500/10 font-black text-xs uppercase tracking-widest hover:bg-amber-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {isOpeningSubscriptionPortal ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {t("common.loading")}...
+                  </span>
+                ) : (
+                  t("settings.cancelSubscriptions")
+                )}
+              </button>
+            </div>
           </section>
 
           <section className="rounded-[28px] glass-card border border-zinc-200 dark:border-white/10 p-6">

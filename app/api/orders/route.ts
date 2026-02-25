@@ -159,24 +159,20 @@ const selectOrdersWithFallback = async (userId: string) => {
   throw new Error(lastError?.message ?? "orders could not be loaded");
 };
 
-const resolveSingleStoreIdForUser = async (userId: string) => {
+const loadUserStoreIds = async (userId: string) => {
   const { data, error } = await supabaseAdmin
     .from("stores")
     .select("id")
     .eq("user_id", userId)
     .order("created_at", { ascending: true })
-    .limit(2);
+    .limit(5000);
 
   if (error) {
-    return null;
+    throw new Error(error.message || "stores could not be loaded");
   }
 
   const rows = (data ?? []) as Array<{ id: string }>;
-  if (rows.length !== 1) {
-    return null;
-  }
-
-  return rows[0]?.id ?? null;
+  return rows.map((row) => row.id).filter(Boolean);
 };
 
 export async function GET(request: NextRequest) {
@@ -236,7 +232,33 @@ export async function POST(request: NextRequest) {
     const amountUsd = toNumber(body.price as number | string | null | undefined);
     const date = asDateString(body.date);
     const requestedStoreId = asTrimmedString(body.storeId) || null;
-    const storeId = requestedStoreId ?? (await resolveSingleStoreIdForUser(user.id));
+    const userStoreIds = await loadUserStoreIds(user.id);
+
+    let storeId: string | null = null;
+
+    if (requestedStoreId) {
+      if (!userStoreIds.includes(requestedStoreId)) {
+        return NextResponse.json(
+          {
+            code: "STORE_NOT_OWNED",
+            error: "Selected store does not belong to the current user.",
+          },
+          { status: 403 }
+        );
+      }
+
+      storeId = requestedStoreId;
+    } else if (userStoreIds.length === 1) {
+      storeId = userStoreIds[0];
+    } else if (userStoreIds.length > 1) {
+      return NextResponse.json(
+        {
+          code: "STORE_ID_REQUIRED",
+          error: "storeId is required when you have more than one store.",
+        },
+        { status: 400 }
+      );
+    }
 
     if (!category || !subProductName || !productLink || !address || !labelNumber) {
       return NextResponse.json({ error: "Missing required order fields." }, { status: 400 });

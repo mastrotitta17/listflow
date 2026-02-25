@@ -59,6 +59,13 @@ type OrderCountRow = {
   id: string;
   store_id?: string | null;
   payment_status?: string | null;
+  category_name?: string | null;
+};
+
+type OrderBackfillSummary = {
+  scanned: number;
+  updated: number;
+  unresolved: number;
 };
 
 const isMissingColumnError = (error: { message?: string } | null | undefined, column: string) => {
@@ -88,6 +95,15 @@ const chunkArray = <T>(items: T[], size: number) => {
     chunks.push(items.slice(index, index + size));
   }
   return chunks;
+};
+
+const normalizeCategoryKey = (value: string | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
 };
 
 const isDirectAutomationMode = () =>
@@ -543,6 +559,141 @@ const loadPaidOrderCounts = async (args: { userId: string; storeIds: string[] })
   throw new Error(lastErrorMessage);
 };
 
+const resolveSafeBackfillStoreId = (args: {
+  stores: StoreRow[];
+  orderCategoryName: string | null | undefined;
+  activeSubscriptionStoreIds: Set<string>;
+}) => {
+  if (args.stores.length === 1) {
+    return args.stores[0]?.id ?? null;
+  }
+
+  const normalizedOrderCategory = normalizeCategoryKey(args.orderCategoryName);
+  if (normalizedOrderCategory) {
+    const categoryMatches = args.stores.filter((store) => normalizeCategoryKey(store.category) === normalizedOrderCategory);
+    if (categoryMatches.length === 1) {
+      return categoryMatches[0]?.id ?? null;
+    }
+  }
+
+  if (args.activeSubscriptionStoreIds.size === 1) {
+    return Array.from(args.activeSubscriptionStoreIds)[0] ?? null;
+  }
+
+  return null;
+};
+
+const backfillLegacyPaidOrdersWithoutStoreId = async (args: {
+  userId: string;
+  stores: StoreRow[];
+  activeSubscriptionStoreIds: Set<string>;
+}): Promise<OrderBackfillSummary> => {
+  const summary: OrderBackfillSummary = {
+    scanned: 0,
+    updated: 0,
+    unresolved: 0,
+  };
+
+  if (!args.stores.length) {
+    return summary;
+  }
+
+  const candidates = [
+    { select: "id, store_id, payment_status, category_name", hasStoreId: true, hasPaymentStatus: true, hasCategoryName: true },
+    { select: "id, store_id, payment_status", hasStoreId: true, hasPaymentStatus: true, hasCategoryName: false },
+    { select: "id, payment_status, category_name", hasStoreId: false, hasPaymentStatus: true, hasCategoryName: true },
+    { select: "id, payment_status", hasStoreId: false, hasPaymentStatus: true, hasCategoryName: false },
+  ] as const;
+
+  for (const candidate of candidates) {
+    const query = await supabaseAdmin
+      .from("orders")
+      .select(candidate.select)
+      .eq("user_id", args.userId)
+      .limit(5000);
+
+    if (query.error) {
+      if (!isRecoverableColumnError(query.error, ["store_id", "payment_status", "category_name"])) {
+        throw new Error(query.error.message);
+      }
+      continue;
+    }
+
+    if (!candidate.hasStoreId || !candidate.hasPaymentStatus) {
+      return summary;
+    }
+
+    const rows = (query.data ?? []) as unknown as OrderCountRow[];
+
+    for (const row of rows) {
+      const paymentStatus = (row.payment_status ?? "").toLowerCase();
+      if (paymentStatus !== "paid") {
+        continue;
+      }
+
+      if (row.store_id) {
+        continue;
+      }
+
+      summary.scanned += 1;
+
+      const targetStoreId = resolveSafeBackfillStoreId({
+        stores: args.stores,
+        orderCategoryName: candidate.hasCategoryName ? row.category_name ?? null : null,
+        activeSubscriptionStoreIds: args.activeSubscriptionStoreIds,
+      });
+
+      if (!targetStoreId) {
+        summary.unresolved += 1;
+        continue;
+      }
+
+      const withUpdatedAt = await supabaseAdmin
+        .from("orders")
+        .update({
+          store_id: targetStoreId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id)
+        .eq("user_id", args.userId);
+
+      if (!withUpdatedAt.error) {
+        summary.updated += 1;
+        continue;
+      }
+
+      if (!isMissingColumnError(withUpdatedAt.error, "updated_at")) {
+        if (!isRecoverableColumnError(withUpdatedAt.error, ["store_id", "updated_at"])) {
+          throw new Error(withUpdatedAt.error.message);
+        }
+      }
+
+      const fallback = await supabaseAdmin
+        .from("orders")
+        .update({
+          store_id: targetStoreId,
+        })
+        .eq("id", row.id)
+        .eq("user_id", args.userId);
+
+      if (fallback.error) {
+        if (!isRecoverableColumnError(fallback.error, ["store_id"])) {
+          throw new Error(fallback.error.message);
+        }
+
+        summary.unresolved += 1;
+        continue;
+      }
+
+      summary.updated += 1;
+    }
+
+    return summary;
+  }
+
+  return summary;
+};
+
 const loadStoreWebhookMappingsFromLogs = async (storeIds: string[]) => {
   if (!storeIds.length) {
     return new Map<string, StoreWebhookMappingSnapshot>();
@@ -721,6 +872,12 @@ export async function GET(request: NextRequest) {
     const subscriptions = await loadSubscriptions(user.id);
     const subscriptionIds = subscriptions.map((row) => row.id);
     const storeIds = stores.map((store) => store.id);
+    const activeSubscriptionStoreIds = new Set(
+      subscriptions
+        .filter((row) => isActiveSubscription(row))
+        .map((row) => row.store_id ?? (row.shop_id && isUuid(row.shop_id) ? row.shop_id : null))
+        .filter((value): value is string => Boolean(value))
+    );
 
     let schedulerJobs: SchedulerJobRow[] = [];
 
@@ -729,6 +886,12 @@ export async function GET(request: NextRequest) {
     } catch {
       schedulerJobs = [];
     }
+
+    const orderBackfill = await backfillLegacyPaidOrdersWithoutStoreId({
+      userId: user.id,
+      stores,
+      activeSubscriptionStoreIds,
+    });
 
     const { countsByStoreId, orphanPaidCount } = await loadPaidOrderCounts({
       userId: user.id,
@@ -995,7 +1158,12 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ rows });
+    return NextResponse.json({
+      rows,
+      meta: {
+        orderBackfill,
+      },
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not load stores overview";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import type { Session } from "@supabase/supabase-js";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Check,
@@ -37,6 +37,25 @@ type PublicPlanPricing = {
   monthlyCents: number;
   yearlyCents: number;
   yearlyDiscountPercent: number;
+};
+
+type StoreUpgradeOption = {
+  plan: BillingPlan;
+  includedStores: number;
+  monthlyPriceCents: number;
+};
+
+type StoreQuotaPayload = {
+  plan: BillingPlan;
+  hasActiveSubscription: boolean;
+  includedStoreLimit: number;
+  totalStores: number;
+  purchasedExtraStores: number;
+  usedExtraStores: number;
+  remainingSlots: number;
+  canCreateStore: boolean;
+  extraStorePriceCents: number;
+  upgradeOptions: StoreUpgradeOption[];
 };
 
 type PlanFeature = {
@@ -101,6 +120,16 @@ type PricingCopy = {
   storeCreating: string;
   storeCreatedNotice: string;
   storePhoneRequired: string;
+  storeLimitReachedTitle: string;
+  storeLimitReachedText: string;
+  storeQuotaSummary: string;
+  storeQuotaRemaining: string;
+  buyExtraStore: string;
+  buyExtraStoreLoading: string;
+  upgradePlan: string;
+  upgradePlanLoading: string;
+  suggestedPlans: string;
+  storeLimitUnit: string;
   storeDefaultCategory: string;
   storeDefaultName: string;
   paymentTitle: string;
@@ -173,6 +202,16 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
     storeCreating: "Oluşturuluyor...",
     storeCreatedNotice: "Mağaza oluşturuldu. Son adım: ödeme.",
     storePhoneRequired: "Telefon alanı zorunludur.",
+    storeLimitReachedTitle: "Mağaza Limitine Ulaştınız",
+    storeLimitReachedText: "Yeni mağaza için ek mağaza hakkı satın alabilir veya planınızı yükseltebilirsiniz.",
+    storeQuotaSummary: "Mevcut kota",
+    storeQuotaRemaining: "Kalan slot",
+    buyExtraStore: "Ek Mağaza Hakkı Satın Al",
+    buyExtraStoreLoading: "Ödeme açılıyor...",
+    upgradePlan: "Planı Yükselt",
+    upgradePlanLoading: "Yönlendiriliyor...",
+    suggestedPlans: "Önerilen üst planlar",
+    storeLimitUnit: "mağaza limiti",
     storeDefaultCategory: "Genel",
     storeDefaultName: "Mağazam",
     paymentTitle: "Ödemeye geç",
@@ -183,7 +222,7 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
     paymentPrice: "Toplam",
     paymentCheckout: "Stripe ile öde",
     paymentProcessing: "Ödeme yönlendiriliyor...",
-    paymentHint: "Ödeme tamamlandığında abonelik webhook ile otomatik senkronlanır.",
+    paymentHint: "Ödeme tamamlandığında planınız otomatik olarak aktive edilir.",
     genericError: "İşlem tamamlanamadı. Lütfen tekrar deneyin.",
     plans: {
       standard: {
@@ -191,9 +230,10 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
         cadence: "8 saatte bir otomasyon",
         description: "Yeni mağazayı güvenli ritimle büyütmek isteyenler için.",
         features: [
+          { text: "4 mağaza dahil (limit dolunca +$20 / mağaza)" },
           { text: "8 saatte bir ürün oluşturma/yükleme" },
           { text: "Etsy başlık + etiket optimizasyonu" },
-          { text: "Tek mağaza için akıllı katalog yönetimi" },
+          { text: "AI trend analizi ile niş ürün önerileri" },
           { text: "Temel sipariş ve ödeme görünürlüğü" },
           { text: "Pinterest otomasyonu", upcoming: true },
           { text: "Meta Business otomasyonu", upcoming: true },
@@ -204,8 +244,9 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
         cadence: "4 saatte bir otomasyon",
         description: "Daha hızlı büyüme ve daha fazla operasyon kontrolü.",
         features: [
+          { text: "6 mağaza dahil (limit dolunca +$20 / mağaza)" },
           { text: "4 saatte bir ürün oluşturma/yükleme" },
-          { text: "3 mağazaya kadar paralel yönetim" },
+          { text: "AI trend sinyalleri ile satış odaklı üretim" },
           { text: "Varyant bazlı ürün kurgusu" },
           { text: "Öncelikli üretim kuyruğu" },
           { text: "Pinterest otomasyonu", upcoming: true },
@@ -218,8 +259,9 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
         cadence: "2 saatte bir otomasyon",
         description: "Yüksek hacimli ekipler ve agresif büyüme için.",
         features: [
+          { text: "8 mağaza dahil (limit dolunca +$10 / mağaza)" },
           { text: "2 saatte bir ürün oluşturma/yükleme" },
-          { text: "Sınırsız mağaza/kategori akışı" },
+          { text: "Yüksek talep odaklı AI ürün üretim akışı" },
           { text: "Toplu katalog + ürün güncelleme" },
           { text: "Öncelikli destek ve ekip erişimi" },
           { text: "Pinterest + Meta + eBay + Amazon", upcoming: true },
@@ -284,6 +326,16 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
     storeCreating: "Creating...",
     storeCreatedNotice: "Store created. Final step: payment.",
     storePhoneRequired: "Phone is required.",
+    storeLimitReachedTitle: "Store Limit Reached",
+    storeLimitReachedText: "You can buy an extra store slot or upgrade your plan to continue.",
+    storeQuotaSummary: "Current quota",
+    storeQuotaRemaining: "Remaining slots",
+    buyExtraStore: "Buy Extra Store Slot",
+    buyExtraStoreLoading: "Opening checkout...",
+    upgradePlan: "Upgrade Plan",
+    upgradePlanLoading: "Redirecting...",
+    suggestedPlans: "Recommended higher plans",
+    storeLimitUnit: "store limit",
     storeDefaultCategory: "General",
     storeDefaultName: "My Store",
     paymentTitle: "Continue to payment",
@@ -294,7 +346,7 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
     paymentPrice: "Total",
     paymentCheckout: "Pay with Stripe",
     paymentProcessing: "Redirecting to payment...",
-    paymentHint: "After payment, subscription status is synced automatically by webhook.",
+    paymentHint: "After payment, your plan is activated automatically.",
     genericError: "Operation could not be completed. Please try again.",
     plans: {
       standard: {
@@ -302,9 +354,10 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
         cadence: "Automation every 8 hours",
         description: "For new stores that want reliable growth cadence.",
         features: [
+          { text: "4 stores included (+$20 per extra store after limit)" },
           { text: "Automatic product generation/upload every 8h" },
           { text: "Etsy title + tag optimization" },
-          { text: "Smart catalog management for one store" },
+          { text: "AI trend-backed niche product suggestions" },
           { text: "Basic order and payment visibility" },
           { text: "Pinterest automation", upcoming: true },
           { text: "Meta Business automation", upcoming: true },
@@ -315,8 +368,9 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
         cadence: "Automation every 4 hours",
         description: "Faster growth and stronger operational control.",
         features: [
+          { text: "6 stores included (+$20 per extra store after limit)" },
           { text: "Automatic product generation/upload every 4h" },
-          { text: "Manage up to 3 stores in parallel" },
+          { text: "AI trend signals for demand-focused production" },
           { text: "Variant-focused product flow" },
           { text: "Priority production queue" },
           { text: "Pinterest automation", upcoming: true },
@@ -329,8 +383,9 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
         cadence: "Automation every 2 hours",
         description: "For high-volume teams and aggressive scale.",
         features: [
+          { text: "8 stores included (+$10 per extra store after limit)" },
           { text: "Automatic product generation/upload every 2h" },
-          { text: "Unlimited store/category streams" },
+          { text: "High-frequency AI product production flow" },
           { text: "Bulk catalog + product updates" },
           { text: "Priority support and team access" },
           { text: "Pinterest + Meta + eBay + Amazon", upcoming: true },
@@ -405,6 +460,9 @@ const PricingPage = () => {
   const [storeSubmitting, setStoreSubmitting] = useState(false);
   const [createdStoreId, setCreatedStoreId] = useState<string | null>(null);
   const [createdStoreName, setCreatedStoreName] = useState<string | null>(null);
+  const [storeQuota, setStoreQuota] = useState<StoreQuotaPayload | null>(null);
+  const [isOpeningUpgradePortal, setIsOpeningUpgradePortal] = useState(false);
+  const [isBuyingExtraStoreSlot, setIsBuyingExtraStoreSlot] = useState(false);
 
   const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
 
@@ -449,6 +507,28 @@ const PricingPage = () => {
     }
   }, [categories, storeCategoryId]);
 
+  const loadStoreQuota = useCallback(async () => {
+    const response = await fetch("/api/stores/quota", {
+      cache: "no-store",
+      credentials: "include",
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      quota?: StoreQuotaPayload;
+      error?: string;
+    };
+
+    if (response.status === 401) {
+      setStoreQuota(null);
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(payload.error || copy.genericError);
+    }
+
+    setStoreQuota(payload.quota ?? null);
+  }, [copy.genericError]);
+
   useEffect(() => {
     const onboardingFlag = searchParams.get("onboarding");
     if (onboardingFlag !== "1") {
@@ -485,6 +565,7 @@ const PricingPage = () => {
 
         if (session?.access_token) {
           await syncServerSession(session);
+          await loadStoreQuota();
           if (!canceled) {
             setWizardStep(2);
             setWizardInfo(copy.authSignedInNotice);
@@ -513,7 +594,7 @@ const PricingPage = () => {
     return () => {
       canceled = true;
     };
-  }, [copy.authSessionMissing, copy.authSignedInNotice, router, searchParams]);
+  }, [copy.authSessionMissing, copy.authSignedInNotice, loadStoreQuota, router, searchParams]);
 
   const currencyFormatter = useMemo(
     () =>
@@ -565,10 +646,12 @@ const PricingPage = () => {
 
       if (session?.access_token) {
         await syncServerSession(session);
+        await loadStoreQuota();
         setWizardStep(2);
         setWizardInfo(copy.authSignedInNotice);
       } else {
         setWizardStep(1);
+        setStoreQuota(null);
       }
     } catch {
       setWizardStep(1);
@@ -665,6 +748,7 @@ const PricingPage = () => {
 
       await syncServerSession(session);
       await bootstrapProfile(session, authMode === "signup" ? normalizedName : undefined);
+      await loadStoreQuota();
 
       setWizardStep(2);
     } catch (error) {
@@ -738,21 +822,79 @@ const PricingPage = () => {
       const payload = (await response.json().catch(() => ({}))) as {
         id?: string;
         storeName?: string;
+        code?: string;
+        quota?: StoreQuotaPayload;
         error?: string;
       };
 
       if (!response.ok || !payload.id) {
+        if (response.status === 409 && payload.code === "STORE_LIMIT_REACHED") {
+          if (payload.quota) {
+            setStoreQuota(payload.quota);
+          }
+          throw new Error(payload.error || copy.storeLimitReachedText);
+        }
+
         throw new Error(payload.error || copy.genericError);
       }
 
       setCreatedStoreId(payload.id);
       setCreatedStoreName((payload.storeName ?? normalizedStoreName) || copy.storeDefaultName);
+      await loadStoreQuota();
       setWizardStep(3);
       setWizardInfo(copy.storeCreatedNotice);
     } catch (error) {
       setWizardError(toErrorMessage(error, copy.genericError));
     } finally {
       setStoreSubmitting(false);
+    }
+  };
+
+  const handleOpenUpgradePortal = async () => {
+    if (isOpeningUpgradePortal) {
+      return;
+    }
+
+    setIsOpeningUpgradePortal(true);
+    setWizardError(null);
+    setWizardInfo(null);
+
+    try {
+      const response = await fetch("/api/settings/subscription/upgrade", { method: "POST" });
+      const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+
+      if (!response.ok || !payload.url) {
+        throw new Error(payload.error || copy.genericError);
+      }
+
+      window.location.href = payload.url;
+    } catch (error) {
+      setWizardError(toErrorMessage(error, copy.genericError));
+      setIsOpeningUpgradePortal(false);
+    }
+  };
+
+  const handleBuyExtraStoreSlot = async () => {
+    if (isBuyingExtraStoreSlot) {
+      return;
+    }
+
+    setIsBuyingExtraStoreSlot(true);
+    setWizardError(null);
+    setWizardInfo(null);
+
+    try {
+      const response = await fetch("/api/billing/store-capacity-checkout", { method: "POST" });
+      const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+
+      if (!response.ok || !payload.url) {
+        throw new Error(payload.error || copy.genericError);
+      }
+
+      window.location.href = payload.url;
+    } catch (error) {
+      setWizardError(toErrorMessage(error, copy.genericError));
+      setIsBuyingExtraStoreSlot(false);
     }
   };
 
@@ -1126,6 +1268,73 @@ const PricingPage = () => {
                     <h3 className="text-2xl font-black mb-2">{copy.storeTitle}</h3>
                     <p className="text-slate-400 mb-6">{copy.storeSubtitle}</p>
 
+                    {storeQuota ? (
+                      <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">{copy.storeQuotaSummary}</p>
+                        <div className="flex flex-wrap gap-3 text-slate-200">
+                          <span>
+                            {storeQuota.totalStores}/
+                            {storeQuota.includedStoreLimit + storeQuota.purchasedExtraStores}
+                          </span>
+                          <span className="text-slate-500">•</span>
+                          <span>
+                            {copy.storeQuotaRemaining}: {Math.max(0, storeQuota.remainingSlots)}
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {storeQuota && !storeQuota.canCreateStore ? (
+                      <div className="mb-5 rounded-2xl border border-amber-500/35 bg-amber-500/10 px-4 py-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-amber-300 mb-2">
+                          {copy.storeLimitReachedTitle}
+                        </p>
+                        <p className="text-sm text-amber-100 mb-4">
+                          {copy.storeLimitReachedText}
+                        </p>
+
+                        <div className="flex flex-wrap gap-3 mb-4">
+                          <button
+                            type="button"
+                            onClick={() => void handleBuyExtraStoreSlot()}
+                            disabled={isBuyingExtraStoreSlot}
+                            className="rounded-xl bg-emerald-600 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-white hover:bg-emerald-500 transition-all disabled:opacity-60 cursor-pointer inline-flex items-center gap-2"
+                          >
+                            {isBuyingExtraStoreSlot ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                            {isBuyingExtraStoreSlot ? copy.buyExtraStoreLoading : copy.buyExtraStore}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleOpenUpgradePortal()}
+                            disabled={isOpeningUpgradePortal}
+                            className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-white hover:bg-white/15 transition-all disabled:opacity-60 cursor-pointer inline-flex items-center gap-2"
+                          >
+                            {isOpeningUpgradePortal ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                            {isOpeningUpgradePortal ? copy.upgradePlanLoading : copy.upgradePlan}
+                          </button>
+                        </div>
+
+                        {storeQuota.upgradeOptions.length ? (
+                          <>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">{copy.suggestedPlans}</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {storeQuota.upgradeOptions.map((option) => (
+                                <div key={option.plan} className="rounded-xl border border-white/10 bg-[#0d1016] px-3 py-3">
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-indigo-300 mb-1">
+                                    {copy.plans[option.plan].title}
+                                  </p>
+                                  <p className="text-xs text-slate-300 mb-1">
+                                    {option.includedStores} {copy.storeLimitUnit}
+                                  </p>
+                                  <p className="text-sm font-black text-white">{currencyFormatter.format(option.monthlyPriceCents / 100)}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+
                     <form onSubmit={handleCreateStore} className="space-y-4">
                       <label className="block">
                         <span className="mb-2 ml-1 block text-[10px] font-black uppercase tracking-widest text-slate-500">{copy.storeName}</span>
@@ -1187,7 +1396,7 @@ const PricingPage = () => {
                         </button>
                         <button
                           type="submit"
-                          disabled={storeSubmitting}
+                          disabled={storeSubmitting || Boolean(storeQuota && !storeQuota.canCreateStore)}
                           className="rounded-2xl bg-indigo-600 py-3.5 text-xs font-black uppercase tracking-widest text-white hover:bg-indigo-500 transition-all disabled:opacity-60 cursor-pointer flex items-center justify-center gap-2"
                         >
                           {storeSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../../lib/supabaseClient';
 import {
@@ -44,10 +44,62 @@ const OrdersPanel: React.FC = () => {
   const [note, setNote] = useState('');
   const [ioss, setIoss] = useState('');
   const [labelNumber, setLabelNumber] = useState('');
+  const [storeOptions, setStoreOptions] = useState<Array<{ id: string; name: string; category: string | null }>>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [storeOptionsLoading, setStoreOptionsLoading] = useState(false);
+  const [storeOptionsError, setStoreOptionsError] = useState<string | null>(null);
 
   const currentCategory = useMemo(() => categories.find((category) => category.id === selectedCatId), [categories, selectedCatId]);
   const currentSubProduct = useMemo(() => currentCategory?.subProducts.find((subProduct) => subProduct.id === selectedSubId), [currentCategory, selectedSubId]);
   const currentVariation = useMemo(() => currentSubProduct?.variations?.find((variation) => variation.id === selectedVarId), [currentSubProduct, selectedVarId]);
+
+  const loadStoreOptions = useCallback(async () => {
+    setStoreOptionsLoading(true);
+    setStoreOptionsError(null);
+
+    try {
+      const response = await fetch('/api/stores/overview', {
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'include',
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        rows?: Array<{ id?: string; storeName?: string; category?: string | null }>;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error || t('orders.storeLoadFailed'));
+      }
+
+      const nextOptions = (payload.rows ?? [])
+        .filter((row): row is { id: string; storeName: string; category: string | null } => Boolean(row.id && row.storeName))
+        .map((row) => ({
+          id: row.id,
+          name: row.storeName,
+          category: row.category ?? null,
+        }));
+
+      setStoreOptions(nextOptions);
+      setSelectedStoreId((prev) => {
+        if (prev && nextOptions.some((store) => store.id === prev)) {
+          return prev;
+        }
+
+        if (nextOptions.length === 1) {
+          return nextOptions[0].id;
+        }
+
+        return '';
+      });
+    } catch (loadError) {
+      setStoreOptions([]);
+      setStoreOptionsError(loadError instanceof Error ? loadError.message : t('orders.storeLoadFailed'));
+    } finally {
+      setStoreOptionsLoading(false);
+    }
+  }, [t]);
 
   useEffect(() => {
     if (categories.length === 0) {
@@ -67,6 +119,14 @@ const OrdersPanel: React.FC = () => {
       setSelectedVarId('');
     }
   }, [categories, selectedCatId]);
+
+  useEffect(() => {
+    if (!showModal) {
+      return;
+    }
+
+    void loadStoreOptions();
+  }, [loadStoreOptions, showModal]);
 
   const calculatedPrice = useMemo(() => {
     const baseMaliyet = currentVariation?.maliyet ?? currentSubProduct?.maliyet ?? 0;
@@ -102,10 +162,19 @@ const OrdersPanel: React.FC = () => {
       return;
     }
 
+    const resolvedStoreId =
+      selectedStoreId || (storeOptions.length === 1 ? storeOptions[0].id : '');
+
+    if (!resolvedStoreId) {
+      alert(t('orders.storeRequired'));
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
       await createOrder({
+        storeId: resolvedStoreId,
         category: currentCategory.name,
         subProductName: currentSubProduct.name,
         variantName: currentVariation?.name ?? null,
@@ -125,6 +194,9 @@ const OrdersPanel: React.FC = () => {
       setSelectedSubId('');
       setSelectedVarId('');
       setProductLink('');
+      if (storeOptions.length > 1) {
+        setSelectedStoreId('');
+      }
       setShowModal(false);
     } catch (saveError) {
       alert(saveError instanceof Error ? saveError.message : 'Sipariş kaydedilemedi.');
@@ -192,7 +264,7 @@ const OrdersPanel: React.FC = () => {
   };
 
   return (
-    <div className="w-full container mx-auto h-full flex flex-col">
+    <div className="w-full p-5 h-full flex flex-col">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8 shrink-0">
         <div>
           <h1 className="text-3xl font-black tracking-tight">{t('orders.title')}</h1>
@@ -374,7 +446,27 @@ const OrdersPanel: React.FC = () => {
               </div>
 
               <form onSubmit={handleSendOrder} className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">{t('orders.storeLabel')}</label>
+                    <select
+                      required={storeOptions.length > 1}
+                      value={selectedStoreId}
+                      onChange={(e) => setSelectedStoreId(e.target.value)}
+                      disabled={storeOptionsLoading || storeOptions.length === 0}
+                      className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none text-sm appearance-none bg-transparent disabled:opacity-60"
+                    >
+                      <option value="" className="dark:bg-zinc-900">
+                        {storeOptionsLoading ? t('orders.storeLoading') : t('orders.storePlaceholder')}
+                      </option>
+                      {storeOptions.map((store) => (
+                        <option key={store.id} value={store.id} className="dark:bg-zinc-900">
+                          {store.name}
+                        </option>
+                      ))}
+                    </select>
+                    {storeOptionsError ? <p className="text-[10px] text-red-400 px-1">{storeOptionsError}</p> : null}
+                  </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Kategori Seç</label>
                     <select

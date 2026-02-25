@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { getActiveStripeMode, getStripeClientForMode, type StripeMode } from "@/lib/stripe/client";
+import { getActiveStripeMode, getStripeClientForMode } from "@/lib/stripe/client";
 import { isSubscriptionActive, loadUserSubscriptions } from "@/lib/settings/subscriptions";
 import { resolvePublicSiteUrl } from "@/lib/url/public-site";
 
@@ -10,12 +10,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const getAccessToken = (request: NextRequest) => request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
-
-const getModeCandidates = () => {
-  const primary = getActiveStripeMode();
-  const secondary: StripeMode = primary === "live" ? "test" : "live";
-  return [primary, secondary] as const;
-};
 
 const isMissingColumnError = (error: { message?: string } | null | undefined, column: string) => {
   if (!error) {
@@ -44,26 +38,26 @@ const loadProfileStripeCustomerId = async (userId: string) => {
   throw new Error(withCustomer.error.message);
 };
 
-const resolveCustomerFromStripeSubscription = async (subscriptionId: string | null | undefined) => {
+const resolveCustomerFromStripeSubscription = async (
+  subscriptionId: string | null | undefined,
+  activeMode: ReturnType<typeof getActiveStripeMode>
+) => {
   if (!subscriptionId) {
     return null;
   }
 
-  for (const mode of getModeCandidates()) {
-    try {
-      const subscription = await getStripeClientForMode(mode).subscriptions.retrieve(subscriptionId);
-      return typeof subscription.customer === "string" ? subscription.customer : null;
-    } catch {
-      // Try same subscription id in the other Stripe mode.
-    }
+  try {
+    const subscription = await getStripeClientForMode(activeMode).subscriptions.retrieve(subscriptionId);
+    return typeof subscription.customer === "string" ? subscription.customer : null;
+  } catch {
+    return null;
   }
-
-  return null;
 };
 
 export async function POST(request: NextRequest) {
   try {
     const appUrl = resolvePublicSiteUrl(request);
+    const activeMode = getActiveStripeMode();
     const accessToken = getAccessToken(request);
     if (!accessToken) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -93,7 +87,7 @@ export async function POST(request: NextRequest) {
     }
 
     for (const row of activeSubscriptions) {
-      const resolved = await resolveCustomerFromStripeSubscription(row.stripe_subscription_id ?? null);
+      const resolved = await resolveCustomerFromStripeSubscription(row.stripe_subscription_id ?? null, activeMode);
       if (resolved) {
         candidateCustomerIds.add(resolved);
       }
@@ -106,26 +100,43 @@ export async function POST(request: NextRequest) {
 
     if (!candidateCustomerIds.size) {
       return NextResponse.json(
-        { error: "Stripe müşteri kaydı bulunamadı. Lütfen destek ekibiyle iletişime geçin." },
+        {
+          code: "STRIPE_CUSTOMER_NOT_FOUND_IN_ACTIVE_MODE",
+          error: "Stripe müşteri kaydı aktif ödeme modunda bulunamadı.",
+          activeMode,
+        },
         { status: 409 }
       );
     }
 
     let lastError: string | null = null;
+    let missingCustomerInActiveMode = false;
 
     for (const customerId of candidateCustomerIds) {
-      for (const mode of getModeCandidates()) {
-        try {
-          const session = await getStripeClientForMode(mode).billingPortal.sessions.create({
-            customer: customerId,
-            return_url: `${appUrl}/`,
-          });
+      try {
+        const session = await getStripeClientForMode(activeMode).billingPortal.sessions.create({
+          customer: customerId,
+          return_url: `${appUrl}/`,
+        });
 
-          return NextResponse.json({ url: session.url });
-        } catch (error) {
-          lastError = error instanceof Error ? error.message : "Stripe müşteri portalı açılamadı";
+        return NextResponse.json({ url: session.url });
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : "Stripe müşteri portalı açılamadı";
+        if ((lastError ?? "").toLowerCase().includes("no such customer")) {
+          missingCustomerInActiveMode = true;
         }
       }
+    }
+
+    if (missingCustomerInActiveMode) {
+      return NextResponse.json(
+        {
+          code: "STRIPE_CUSTOMER_NOT_FOUND_IN_ACTIVE_MODE",
+          error: `Stripe müşteri kaydı aktif modda (${activeMode}) bulunamadı.`,
+          activeMode,
+        },
+        { status: 409 }
+      );
     }
 
     return NextResponse.json(
