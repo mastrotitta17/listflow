@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 type ClaimBody = {
   client_id?: unknown;
+  force_recover?: unknown;
 };
 
 const toTrimmed = (value: unknown) => (typeof value === "string" ? value.trim() : "");
@@ -30,10 +31,12 @@ export async function POST(request: NextRequest) {
 
     const body = (await request.json().catch(() => ({}))) as ClaimBody;
     const preferredClientId = toTrimmed(body.client_id);
+    const forceRecover = Boolean(body.force_recover);
 
     const nextListing = await claimNextListingForUser({
       userId: auth.user.id,
       preferredClientId: preferredClientId || null,
+      forceRecover,
     });
 
     if (!nextListing) {
@@ -41,6 +44,10 @@ export async function POST(request: NextRequest) {
         {
           ok: true,
           job: null,
+          code: "NO_MATCHING_LISTING_FOR_USER",
+          message:
+            "Yüklenecek ürün bulunamadı. listing.client_id değeri mağaza id/shop_id/store_id ile eşleşmiyor veya ürün durumu uygun değil.",
+          preferred_client_id: preferredClientId || null,
         },
         {
           headers: {
