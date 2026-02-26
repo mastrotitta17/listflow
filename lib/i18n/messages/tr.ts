@@ -233,6 +233,7 @@ export const trMessages = {
     billingMonthly: "Aylık",
     billingYearly: "Yıllık",
     yearlyDiscount: "indirim",
+    mostPopular: "Most Popular",
     cancel: "Vazgeç",
     nextUploadIn: "Sonraki Yükleme",
     automationNoPlan: "Abonelik planı bulunmuyor",

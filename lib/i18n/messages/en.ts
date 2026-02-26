@@ -233,6 +233,7 @@ export const enMessages = {
     billingMonthly: "Monthly",
     billingYearly: "Yearly",
     yearlyDiscount: "discount",
+    mostPopular: "Most Popular",
     cancel: "Cancel",
     nextUploadIn: "Next Upload",
     automationNoPlan: "No subscription plan found",

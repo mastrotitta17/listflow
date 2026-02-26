@@ -82,17 +82,9 @@ const DISPLAY_DISCOUNT_PERCENT: Record<BillingInterval, number> = {
   month: 50,
   year: 50,
 };
+const FEATURED_PLAN: BillingPlan = "pro";
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
 type StoreCurrency = "USD" | "TRY";
-
-const resolveShopPlan = (value: string | null | undefined): BillingPlan => {
-  const normalized = (value ?? "").toLowerCase();
-  if (normalized === "pro" || normalized === "turbo") {
-    return normalized;
-  }
-
-  return "standard";
-};
 
 const EtsyPanel: React.FC = () => {
   const { shops, setShops } = useStore();
@@ -522,7 +514,7 @@ const EtsyPanel: React.FC = () => {
     setStoreActionMessage(null);
     setActivationModal({
       shop,
-      plan: resolveShopPlan(shop.plan),
+      plan: FEATURED_PLAN,
       interval: "month",
     });
   };
@@ -976,6 +968,7 @@ const EtsyPanel: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
                 {PLAN_ORDER.map((planKey) => {
                   const selected = activationModal.plan === planKey;
+                  const isFeatured = planKey === FEATURED_PLAN;
                   const amount = PLAN_PRICE_CENTS[planKey][activationModal.interval];
                   const originalAmount = getOriginalCentsFromDiscounted(amount, activationModal.interval);
                   const discountPercent = DISPLAY_DISCOUNT_PERCENT[activationModal.interval];
@@ -985,12 +978,19 @@ const EtsyPanel: React.FC = () => {
                       key={planKey}
                       type="button"
                       onClick={() => setActivationModal((prev) => (prev ? { ...prev, plan: planKey } : prev))}
-                      className={`rounded-2xl border p-4 text-left transition-all cursor-pointer ${
+                      className={`relative rounded-2xl border p-4 text-left transition-all cursor-pointer ${
                         selected
                           ? "border-indigo-400/60 bg-indigo-500/20"
-                          : "border-white/10 bg-white/5 hover:border-indigo-400/30"
+                          : isFeatured
+                            ? "border-indigo-400/40 bg-indigo-500/10 hover:border-indigo-400/60"
+                            : "border-white/10 bg-white/5 hover:border-indigo-400/30"
                       }`}
                     >
+                      {isFeatured ? (
+                        <span className="absolute right-3 top-3 inline-flex rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.2em] text-amber-200">
+                          {t("etsy.mostPopular")}
+                        </span>
+                      ) : null}
                       <p className="text-[10px] text-indigo-300 font-black uppercase tracking-widest mb-1">
                         {planLabel(planKey)}
                       </p>
