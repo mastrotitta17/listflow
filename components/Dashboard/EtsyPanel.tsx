@@ -1158,10 +1158,12 @@ const EtsyPanel: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                <div className="space-y-2 border border-white/10 py-2 px-3 rounded-xl flex justify-between items-center w-full">
+                  <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
                     {locale === "en" ? "Store Currency" : "Mağaza Para Birimi"}
                   </label>
+                  </div>
                   <div className="inline-flex rounded-full border border-indigo-500/25 bg-white/5 p-1">
                     <button
                       type="button"
@@ -1186,10 +1188,10 @@ const EtsyPanel: React.FC = () => {
                       ₺ Türk Lirası
                     </button>
                   </div>
+                </div>
                   <p className="text-[10px] text-slate-500 font-semibold">
                     {locale === "en" ? "Default currency is USD." : "Varsayılan para birimi dolardır."}
                   </p>
-                </div>
 
                 <div className="p-6 rounded-[28px] bg-indigo-500/5 border border-indigo-500/10">
                   <div className="flex items-start gap-3">
