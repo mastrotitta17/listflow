@@ -10,9 +10,14 @@ type CreateStoreBody = {
   storeName?: unknown;
   phone?: unknown;
   category?: unknown;
+  topCategoryId?: unknown;
+  subCategoryId?: unknown;
+  currency?: unknown;
   priceCents?: unknown;
   fallbackStoreNamePrefix?: unknown;
 };
+
+type StoreCurrency = "USD" | "TRY";
 
 const asTrimmedString = (value: unknown) => {
   if (typeof value !== "string") {
@@ -29,6 +34,19 @@ const asSafePrice = (value: unknown) => {
 
   const rounded = Math.round(value);
   return rounded > 0 ? rounded : 2990;
+};
+
+const asStoreCurrency = (value: unknown): StoreCurrency => {
+  if (typeof value !== "string") {
+    return "USD";
+  }
+
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "TRY") {
+    return "TRY";
+  }
+
+  return "USD";
 };
 
 const isMissingColumnError = (error: { message?: string } | null | undefined, column: string) => {
@@ -90,49 +108,56 @@ const insertStore = async (payload: {
   storeName: string;
   phone: string;
   category: string;
+  topCategoryId: string | null;
+  subCategoryId: string | null;
+  currency: StoreCurrency;
   priceCents: number;
 }) => {
-  const fullInsert = await supabaseAdmin.from("stores").insert({
-    id: payload.id,
-    user_id: payload.userId,
-    store_name: payload.storeName,
-    phone: payload.phone,
-    category: payload.category,
-    status: "pending",
-    price_cents: payload.priceCents,
-  });
-
-  if (!fullInsert.error) {
-    return null;
-  }
-
-  if (isMissingRelationError(fullInsert.error)) {
-    return "Table public.stores does not exist in remote schema.";
-  }
-
-  const reducedPayload: Record<string, unknown> = {
+  const requiredInsertPayload: Record<string, unknown> = {
     id: payload.id,
     user_id: payload.userId,
     store_name: payload.storeName,
     status: "pending",
   };
 
-  if (!isMissingColumnError(fullInsert.error, "phone")) {
-    reducedPayload.phone = payload.phone;
-  }
-  if (!isMissingColumnError(fullInsert.error, "category")) {
-    reducedPayload.category = payload.category;
-  }
-  if (!isMissingColumnError(fullInsert.error, "price_cents")) {
-    reducedPayload.price_cents = payload.priceCents;
+  const optionalInsertPayload: Record<string, unknown> = {
+    phone: payload.phone,
+    category: payload.category,
+    price_cents: payload.priceCents,
+    category_id: payload.topCategoryId,
+    sub_category_id: payload.subCategoryId,
+    subcategory_id: payload.subCategoryId,
+    currency: payload.currency.toLowerCase(),
+    store_currency: payload.currency,
+  };
+
+  const candidatePayload: Record<string, unknown> = {
+    ...requiredInsertPayload,
+    ...optionalInsertPayload,
+  };
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const insertResult = await supabaseAdmin.from("stores").insert(candidatePayload);
+    if (!insertResult.error) {
+      return null;
+    }
+
+    if (isMissingRelationError(insertResult.error)) {
+      return "Table public.stores does not exist in remote schema.";
+    }
+
+    const removableKey = Object.keys(candidatePayload).find(
+      (key) => !Object.prototype.hasOwnProperty.call(requiredInsertPayload, key) && isMissingColumnError(insertResult.error, key)
+    );
+
+    if (!removableKey) {
+      return insertResult.error.message || "Store creation failed";
+    }
+
+    delete candidatePayload[removableKey];
   }
 
-  const reducedInsert = await supabaseAdmin.from("stores").insert(reducedPayload);
-  if (!reducedInsert.error) {
-    return null;
-  }
-
-  return reducedInsert.error.message || fullInsert.error.message || "Store creation failed";
+  return "Store creation failed";
 };
 
 const countUserStores = async (userId: string) => {
@@ -165,6 +190,9 @@ export async function POST(request: NextRequest) {
     }
 
     const category = asTrimmedString(body.category) || "Genel";
+    const topCategoryId = asTrimmedString(body.topCategoryId) || null;
+    const subCategoryId = asTrimmedString(body.subCategoryId) || null;
+    const currency = asStoreCurrency(body.currency);
     const fallbackPrefix = asTrimmedString(body.fallbackStoreNamePrefix) || "Magazam";
     const requestedStoreName = asTrimmedString(body.storeName);
     const existingCount = requestedStoreName ? 0 : await countUserStores(user.id);
@@ -180,6 +208,9 @@ export async function POST(request: NextRequest) {
       storeName,
       phone,
       category,
+      topCategoryId,
+      subCategoryId,
+      currency,
       priceCents,
     });
 

@@ -232,6 +232,7 @@ export async function GET(request: NextRequest) {
         id: categoryId,
         dbId: category.id,
         slug: category.slug || null,
+        parentId: category.parent_id || null,
         name: title,
         subProducts,
       };

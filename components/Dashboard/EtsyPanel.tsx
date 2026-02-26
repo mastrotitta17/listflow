@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n/provider";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
+import { Select } from "@/components/ui/select";
 import type { Shop } from "@/types";
 
 type BillingPlan = "standard" | "pro" | "turbo";
@@ -81,6 +82,8 @@ const DISPLAY_DISCOUNT_PERCENT: Record<BillingInterval, number> = {
   month: 50,
   year: 50,
 };
+const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
+type StoreCurrency = "USD" | "TRY";
 
 const resolveShopPlan = (value: string | null | undefined): BillingPlan => {
   const normalized = (value ?? "").toLowerCase();
@@ -98,7 +101,9 @@ const EtsyPanel: React.FC = () => {
   const [showConnect, setShowConnect] = useState(false);
   const [phone, setPhone] = useState("");
   const [shopName, setShopName] = useState("");
-  const [selectedCat, setSelectedCat] = useState("");
+  const [selectedParentCategoryId, setSelectedParentCategoryId] = useState("");
+  const [selectedSubCategoryId, setSelectedSubCategoryId] = useState("");
+  const [storeCurrency, setStoreCurrency] = useState<StoreCurrency>("USD");
   const [storeActionMessage, setStoreActionMessage] = useState<StoreActionMessage | null>(null);
   const [activationModal, setActivationModal] = useState<ActivationModalState | null>(null);
   const [activationSubmitting, setActivationSubmitting] = useState(false);
@@ -118,11 +123,76 @@ const EtsyPanel: React.FC = () => {
     };
   }, []);
 
-  useEffect(() => {
-    if (!selectedCat && categories[0]) {
-      setSelectedCat(categories[0].id);
+  const topCategories = useMemo(() => {
+    const roots = categories.filter((category) => !category.parentId);
+    return roots.length > 0 ? roots : categories;
+  }, [categories]);
+
+  const selectedParentCategory = useMemo(
+    () => topCategories.find((category) => category.id === selectedParentCategoryId) ?? topCategories[0] ?? null,
+    [selectedParentCategoryId, topCategories]
+  );
+
+  const availableSubCategories = useMemo(() => {
+    if (!selectedParentCategory) {
+      return [];
     }
-  }, [categories, selectedCat]);
+
+    const parentKeys = [selectedParentCategory.dbId, selectedParentCategory.id, selectedParentCategory.slug]
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean);
+
+    if (!parentKeys.length) {
+      return [];
+    }
+
+    return categories.filter((category) => {
+      const parentId = typeof category.parentId === "string" ? category.parentId.trim() : "";
+      if (!parentId) {
+        return false;
+      }
+      return parentKeys.includes(parentId);
+    });
+  }, [categories, selectedParentCategory]);
+
+  const resolvedSubCategory = useMemo(() => {
+    if (!availableSubCategories.length) {
+      return null;
+    }
+
+    if (selectedSubCategoryId === LISTFLOW_DECIDE_VALUE || !selectedSubCategoryId) {
+      return availableSubCategories[0];
+    }
+
+    return (
+      availableSubCategories.find((subcategory) => subcategory.id === selectedSubCategoryId) ?? availableSubCategories[0]
+    );
+  }, [availableSubCategories, selectedSubCategoryId]);
+
+  useEffect(() => {
+    if (!selectedParentCategoryId && topCategories[0]) {
+      setSelectedParentCategoryId(topCategories[0].id);
+    }
+  }, [selectedParentCategoryId, topCategories]);
+
+  useEffect(() => {
+    if (!availableSubCategories.length) {
+      if (selectedSubCategoryId !== "") {
+        setSelectedSubCategoryId("");
+      }
+      return;
+    }
+
+    if (
+      selectedSubCategoryId &&
+      selectedSubCategoryId !== LISTFLOW_DECIDE_VALUE &&
+      availableSubCategories.some((subcategory) => subcategory.id === selectedSubCategoryId)
+    ) {
+      return;
+    }
+
+    setSelectedSubCategoryId(LISTFLOW_DECIDE_VALUE);
+  }, [availableSubCategories, selectedSubCategoryId]);
 
   const moneyLabel = (priceCents: number) => {
     return `$${(priceCents / 100).toFixed(2)}`;
@@ -343,7 +413,15 @@ const EtsyPanel: React.FC = () => {
         throw new Error("Telefon numarası zorunlu.");
       }
 
-      const categoryName = categories.find((category) => category.id === selectedCat)?.name || "Genel";
+      const categoryName = resolvedSubCategory?.name || selectedParentCategory?.name || (locale === "en" ? "General" : "Genel");
+      const topCategoryId =
+        (selectedParentCategory?.dbId && selectedParentCategory.dbId.trim()) ||
+        (selectedParentCategory?.id && selectedParentCategory.id.trim()) ||
+        null;
+      const subCategoryId =
+        (resolvedSubCategory?.dbId && resolvedSubCategory.dbId.trim()) ||
+        (resolvedSubCategory?.id && resolvedSubCategory.id.trim()) ||
+        null;
       const response = await fetch("/api/onboarding/store", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -351,6 +429,9 @@ const EtsyPanel: React.FC = () => {
           storeName: shopName.trim() || null,
           phone: normalizedPhone,
           category: categoryName,
+          topCategoryId,
+          subCategoryId,
+          currency: storeCurrency,
           priceCents: 2990,
           fallbackStoreNamePrefix: locale === "en" ? "My Store" : "Mağazam",
         }),
@@ -366,7 +447,9 @@ const EtsyPanel: React.FC = () => {
       setShowConnect(false);
       setPhone("");
       setShopName("");
-      setSelectedCat(categories[0]?.id ?? "");
+      setSelectedParentCategoryId(topCategories[0]?.id ?? "");
+      setSelectedSubCategoryId(topCategories.length ? LISTFLOW_DECIDE_VALUE : "");
+      setStoreCurrency("USD");
       setStoreActionMessage({
         type: "success",
         text: locale === "en" ? "Store added successfully." : "Mağaza başarıyla eklendi.",
@@ -1036,19 +1119,93 @@ const EtsyPanel: React.FC = () => {
                   </div>
                 </div>
 
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                      {locale === "en" ? "Main Category" : "Ana Kategori"}
+                    </label>
+                    <Select
+                      value={selectedParentCategoryId}
+                      onChange={(event) => setSelectedParentCategoryId(event.target.value)}
+                    >
+                      {topCategories.length === 0 ? (
+                        <option value="" disabled>
+                          {locale === "en" ? "No categories found" : "Kategori bulunamadı"}
+                        </option>
+                      ) : null}
+                      {topCategories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                      {locale === "en" ? "Subcategory" : "Alt Kategori"}
+                    </label>
+                    <Select
+                      value={availableSubCategories.length ? selectedSubCategoryId : ""}
+                      onChange={(event) => setSelectedSubCategoryId(event.target.value)}
+                      disabled={!availableSubCategories.length}
+                    >
+                      {availableSubCategories.length ? (
+                        <option value={LISTFLOW_DECIDE_VALUE}>
+                          {locale === "en" ? "Let Listflow decide" : "Listflow karar versin"}
+                        </option>
+                      ) : (
+                        <option value="" disabled>
+                          {locale === "en" ? "No subcategory for selected main category" : "Seçili ana kategori için alt kategori yok"}
+                        </option>
+                      )}
+                      {availableSubCategories.map((subcategory) => (
+                        <option key={subcategory.id} value={subcategory.id}>
+                          {subcategory.name}
+                        </option>
+                      ))}
+                    </Select>
+                    {availableSubCategories.length && selectedSubCategoryId === LISTFLOW_DECIDE_VALUE ? (
+                      <p className="text-[10px] text-indigo-300 font-semibold">
+                        {locale === "en"
+                          ? `Listflow selected: ${resolvedSubCategory?.name || "-"}`
+                          : `Listflow seçimi: ${resolvedSubCategory?.name || "-"}`}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Kategori Seçimi</label>
-                  <select
-                    value={selectedCat}
-                    onChange={(event) => setSelectedCat(event.target.value)}
-                    className="w-full px-5 py-4 rounded-2xl bg-white/5 border border-white/10 text-white outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium appearance-none"
-                  >
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.id} className="bg-[#0a0a0c]">
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                    {locale === "en" ? "Store Currency" : "Mağaza Para Birimi"}
+                  </label>
+                  <div className="inline-flex rounded-full border border-indigo-500/25 bg-white/5 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setStoreCurrency("USD")}
+                      className={`rounded-full px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                        storeCurrency === "USD"
+                          ? "bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.35)]"
+                          : "text-slate-300 hover:text-white"
+                      }`}
+                    >
+                      $ Dolar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStoreCurrency("TRY")}
+                      className={`rounded-full px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                        storeCurrency === "TRY"
+                          ? "bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.35)]"
+                          : "text-slate-300 hover:text-white"
+                      }`}
+                    >
+                      ₺ Türk Lirası
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500 font-semibold">
+                    {locale === "en" ? "Default currency is USD." : "Varsayılan para birimi dolardır."}
+                  </p>
                 </div>
 
                 <div className="p-6 rounded-[28px] bg-indigo-500/5 border border-indigo-500/10">

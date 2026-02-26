@@ -43,6 +43,7 @@ export interface Category {
   id: string;
   dbId?: string;
   slug?: string;
+  parentId?: string | null;
   name: string;
   subProducts: SubProduct[];
 }
