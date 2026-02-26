@@ -86,6 +86,40 @@ const isRecoverableSelectError = (error: QueryError | null | undefined) => {
   );
 };
 
+const toEnglishRouteSlug = (value: string) => {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[ıİ]/g, "i")
+    .replace(/[ğĞ]/g, "g")
+    .replace(/[üÜ]/g, "u")
+    .replace(/[şŞ]/g, "s")
+    .replace(/[öÖ]/g, "o")
+    .replace(/[çÇ]/g, "c")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || "category";
+};
+
+const ensureUniqueRouteSlug = (seed: string, used: Set<string>) => {
+  if (!used.has(seed)) {
+    used.add(seed);
+    return seed;
+  }
+
+  let cursor = 2;
+  while (used.has(`${seed}-${cursor}`)) {
+    cursor += 1;
+  }
+
+  const next = `${seed}-${cursor}`;
+  used.add(next);
+  return next;
+};
+
 const selectWithFallback = async <T>(
   table: "categories" | "products",
   selectCandidates: readonly string[]
@@ -179,8 +213,11 @@ export async function GET(request: NextRequest) {
       ? new Map<string, { catalogDescription: string | null; catalogYoutubeUrl: string | null }>()
       : await loadCatalogFallbackMap(productRows.map((product) => product.id));
 
+    const usedRouteSlugs = new Set<string>();
     const categories = categoriesRows.map((category) => {
       const categoryId = category.slug || category.id;
+      const routeSource = category.title_en || category.slug || category.title_tr || category.name || category.id;
+      const routeId = ensureUniqueRouteSlug(toEnglishRouteSlug(routeSource), usedRouteSlugs);
       const title =
         locale === "en"
           ? category.title_en || category.title_tr || category.name || category.slug || category.id
@@ -230,6 +267,7 @@ export async function GET(request: NextRequest) {
 
       return {
         id: categoryId,
+        routeId,
         dbId: category.id,
         slug: category.slug || null,
         parentId: category.parent_id || null,

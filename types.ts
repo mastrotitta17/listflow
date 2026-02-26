@@ -41,6 +41,7 @@ export interface SubProduct {
 
 export interface Category {
   id: string;
+  routeId?: string;
   dbId?: string;
   slug?: string;
   parentId?: string | null;

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { usePathname, useRouter } from "next/navigation";
 import { useStore } from "../../store";
 import {
   ChevronLeft,
@@ -22,7 +23,7 @@ import { useI18n } from "@/lib/i18n/provider";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
 import { calculateFinancials } from "@/lib/repositories/products";
 import { supabase } from "@/lib/supabaseClient";
-import type { SubProduct } from "@/types";
+import type { Category, SubProduct } from "@/types";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -107,10 +108,16 @@ const isValidYoutubeLink = (value: string) => {
   return Boolean(extractYouTubeVideoId(value));
 };
 
-const CategoriesPanel: React.FC = () => {
+type CategoriesPanelProps = {
+  routeCategorySlug?: string | null;
+};
+
+const CategoriesPanel: React.FC<CategoriesPanelProps> = ({ routeCategorySlug = null }) => {
   const { selectedCategoryId, setSelectedCategory } = useStore();
   const { t, locale } = useI18n();
   const { categories, error, reload } = useCategoriesRepository(locale);
+  const router = useRouter();
+  const pathname = usePathname();
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [panelMessage, setPanelMessage] = useState<FeedbackMessage | null>(null);
@@ -131,6 +138,10 @@ const CategoriesPanel: React.FC = () => {
   const [mobileSelectedCategoryId, setMobileSelectedCategoryId] = useState<string | null>(null);
 
   const isMobile = viewportWidth < 768;
+  const getCategoryRouteSlug = (category: Category) => {
+    const routeValue = (category.routeId || category.slug || category.id || "").trim();
+    return routeValue || category.id;
+  };
 
   useEffect(() => {
     const handleResize = () => {
@@ -172,6 +183,64 @@ const CategoriesPanel: React.FC = () => {
       setMobileSelectedCategoryId(null);
     }
   }, [isMobile]);
+
+  useEffect(() => {
+    if (pathname !== "/categories") {
+      return;
+    }
+
+    const firstCategory = categories[0];
+    if (!firstCategory) {
+      return;
+    }
+
+    const firstRouteSlug = getCategoryRouteSlug(firstCategory);
+    router.replace(`/categories/${encodeURIComponent(firstRouteSlug)}`);
+  }, [categories, pathname, router]);
+
+  useEffect(() => {
+    if (!routeCategorySlug || !categories.length) {
+      return;
+    }
+
+    const normalizedSlug = routeCategorySlug.trim().toLowerCase();
+    const matchedCategory =
+      categories.find((category) => getCategoryRouteSlug(category).toLowerCase() === normalizedSlug) ||
+      categories.find((category) => (category.slug || "").trim().toLowerCase() === normalizedSlug) ||
+      categories.find((category) => category.id.trim().toLowerCase() === normalizedSlug);
+
+    if (!matchedCategory) {
+      if (pathname?.startsWith("/categories/")) {
+        const firstCategory = categories[0];
+        if (firstCategory) {
+          router.replace(`/categories/${encodeURIComponent(getCategoryRouteSlug(firstCategory))}`);
+        }
+      }
+      return;
+    }
+
+    const canonicalSlug = getCategoryRouteSlug(matchedCategory).toLowerCase();
+    if (pathname?.startsWith("/categories/") && normalizedSlug !== canonicalSlug) {
+      router.replace(`/categories/${encodeURIComponent(getCategoryRouteSlug(matchedCategory))}`);
+    }
+
+    if (selectedCategoryId !== matchedCategory.id) {
+      setSelectedCategory(matchedCategory.id);
+    }
+
+    if (isMobile && mobileSelectedCategoryId !== matchedCategory.id) {
+      setMobileSelectedCategoryId(matchedCategory.id);
+    }
+  }, [
+    categories,
+    isMobile,
+    mobileSelectedCategoryId,
+    pathname,
+    routeCategorySlug,
+    router,
+    selectedCategoryId,
+    setSelectedCategory,
+  ]);
 
   useEffect(() => {
     let mounted = true;
@@ -409,7 +478,14 @@ const CategoriesPanel: React.FC = () => {
   };
 
   const handleSelectCategory = (categoryId: string) => {
+    const selected = categories.find((category) => category.id === categoryId);
     setSelectedCategory(categoryId);
+    const routeSlug = selected ? getCategoryRouteSlug(selected) : categoryId;
+    const targetPath = `/categories/${encodeURIComponent(routeSlug)}`;
+    if (pathname === "/" || pathname.startsWith("/categories")) {
+      router.push(targetPath);
+    }
+
     if (isMobile) {
       setMobileSelectedCategoryId(categoryId);
     }

@@ -1,12 +1,13 @@
 "use client";
 
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../../store';
 import { DashboardSection, View } from '../../types';
 import { supabase } from '../../lib/supabaseClient';
 import { useI18n } from '@/lib/i18n/provider';
+import { useRouter } from 'next/navigation';
 import { 
   Layers, 
   Store, 
@@ -21,13 +22,57 @@ import {
 } from 'lucide-react';
 
 type SidebarProps = {
+  activeSection?: DashboardSection;
   mobileOpen?: boolean;
   onClose?: () => void;
 };
 
-const Sidebar: React.FC<SidebarProps> = ({ mobileOpen = false, onClose }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, onClose }) => {
   const { dashboardSection, setDashboardSection, setView } = useStore();
   const { t } = useI18n();
+  const router = useRouter();
+  const effectiveSection = activeSection ?? dashboardSection;
+
+  const resolveSectionPath = (section: DashboardSection) => {
+    switch (section) {
+      case DashboardSection.CATEGORIES:
+        return "/categories";
+      case DashboardSection.ETSY_AUTOMATION:
+        return "/etsy-automation";
+      case DashboardSection.PINTEREST_AUTOMATION:
+        return "/pinterest-automation";
+      case DashboardSection.META_AUTOMATION:
+        return "/meta-automation";
+      case DashboardSection.EBAY_AUTOMATION:
+        return "/ebay-automation";
+      case DashboardSection.AMAZON_AUTOMATION:
+        return "/amazon-automation";
+      case DashboardSection.ORDERS:
+        return "/orders";
+      case DashboardSection.SETTINGS:
+        return "/settings";
+      default:
+        return "/";
+    }
+  };
+
+  useEffect(() => {
+    const staticPaths = [
+      "/categories",
+      "/etsy-automation",
+      "/pinterest-automation",
+      "/meta-automation",
+      "/ebay-automation",
+      "/amazon-automation",
+      "/orders",
+      "/settings",
+    ];
+
+    for (const path of staticPaths) {
+      router.prefetch(path);
+    }
+
+  }, [router]);
 
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
@@ -37,6 +82,7 @@ const Sidebar: React.FC<SidebarProps> = ({ mobileOpen = false, onClose }) => {
     }
     onClose?.();
     setView(View.AUTH);
+    router.push("/");
   };
 
   const menuItems = [
@@ -70,6 +116,7 @@ const Sidebar: React.FC<SidebarProps> = ({ mobileOpen = false, onClose }) => {
         onClick={() => {
           onClose?.();
           setView(View.LANDING);
+          router.push("/");
         }}
       >
         <div className="w-10 h-10 bg-indigo-600 rounded-[12px] flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:rotate-6 transition-all border border-indigo-400/30">
@@ -83,12 +130,13 @@ const Sidebar: React.FC<SidebarProps> = ({ mobileOpen = false, onClose }) => {
 
       <nav className="flex-1 space-y-2">
         {menuItems.map((item) => {
-          const isActive = dashboardSection === item.id;
+          const isActive = effectiveSection === item.id;
           return (
             <button
               key={item.id}
               onClick={() => {
                 setDashboardSection(item.id);
+                router.push(resolveSectionPath(item.id));
                 onClose?.();
               }}
               className={`w-full flex items-center gap-4 px-5 py-4 rounded-[18px] transition-all duration-300 relative group cursor-pointer group/coming ${
@@ -120,10 +168,11 @@ const Sidebar: React.FC<SidebarProps> = ({ mobileOpen = false, onClose }) => {
         <button
           onClick={() => {
             setDashboardSection(DashboardSection.SETTINGS);
+            router.push(resolveSectionPath(DashboardSection.SETTINGS));
             onClose?.();
           }}
           className={`w-full flex items-center gap-4 px-5 py-4 rounded-[18px] transition-all cursor-pointer ${
-            dashboardSection === DashboardSection.SETTINGS 
+            effectiveSection === DashboardSection.SETTINGS 
               ? 'bg-indigo-600/15 border border-indigo-500/40 text-white' 
               : 'hover:bg-white/5 text-slate-500 hover:text-white font-bold'
           }`}

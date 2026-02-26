@@ -1,13 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Loader2, Plus } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -75,11 +84,49 @@ type TableRow = AutomationOverviewRow & {
   availableWebhookOptions: WebhookOption[];
 };
 
+type AdminUserRow = {
+  user_id: string;
+  full_name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  phone?: string | null;
+};
+
+type AdminUsersResponse = {
+  rows?: AdminUserRow[];
+  warning?: string;
+  error?: string;
+};
+
+type PublicSubCategory = {
+  id: string;
+  name: string;
+};
+
+type PublicCategory = {
+  id: string;
+  dbId?: string;
+  name: string;
+  subProducts?: PublicSubCategory[];
+};
+
+type CategoriesResponse = {
+  categories?: PublicCategory[];
+  error?: string;
+};
+
+type CreateStoreForUserResponse = {
+  id?: string;
+  storeName?: string;
+  error?: string;
+};
+
 const PLAN_LABELS: Record<string, string> = {
   standard: "Standard",
   pro: "Pro",
   turbo: "Turbo",
 };
+const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
 
 const formatDate = (value: string | null | undefined) => {
   if (!value) {
@@ -198,8 +245,64 @@ export default function AdminStoresPage() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [copiedStoreId, setCopiedStoreId] = useState<string | null>(null);
+  const [userPickerOpen, setUserPickerOpen] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [users, setUsers] = useState<AdminUserRow[]>([]);
+  const [userSearch, setUserSearch] = useState("");
+  const [selectedUser, setSelectedUser] = useState<AdminUserRow | null>(null);
+  const [createStoreOpen, setCreateStoreOpen] = useState(false);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [categoriesError, setCategoriesError] = useState<string | null>(null);
+  const [categories, setCategories] = useState<PublicCategory[]>([]);
+  const [storeNameDraft, setStoreNameDraft] = useState("");
+  const [storePhoneDraft, setStorePhoneDraft] = useState("");
+  const [selectedParentCategoryId, setSelectedParentCategoryId] = useState("");
+  const [selectedSubCategoryId, setSelectedSubCategoryId] = useState("");
+  const [storeCurrency, setStoreCurrency] = useState<"USD" | "TRY">("USD");
+  const [creatingStore, setCreatingStore] = useState(false);
 
   const webhookMap = useMemo(() => new Map(webhookOptions.map((item) => [item.id, item])), [webhookOptions]);
+  const selectedParentCategory = useMemo(
+    () => categories.find((category) => category.id === selectedParentCategoryId) ?? categories[0] ?? null,
+    [categories, selectedParentCategoryId]
+  );
+  const availableSubCategories = useMemo(() => {
+    if (!selectedParentCategory) {
+      return [] as PublicSubCategory[];
+    }
+
+    return (selectedParentCategory.subProducts ?? [])
+      .map((subProduct) => ({
+        id: subProduct.id,
+        name: subProduct.name,
+      }))
+      .filter((item) => Boolean(item.id) && Boolean(item.name));
+  }, [selectedParentCategory]);
+  const resolvedSubCategory = useMemo(() => {
+    if (!availableSubCategories.length) {
+      return null;
+    }
+
+    if (selectedSubCategoryId === LISTFLOW_DECIDE_VALUE || !selectedSubCategoryId) {
+      return availableSubCategories[0];
+    }
+
+    return availableSubCategories.find((subcategory) => subcategory.id === selectedSubCategoryId) ?? availableSubCategories[0];
+  }, [availableSubCategories, selectedSubCategoryId]);
+  const filteredUsers = useMemo(() => {
+    const needle = userSearch.trim().toLowerCase();
+    if (!needle) {
+      return users;
+    }
+
+    return users.filter((user) => {
+      const fullName = (user.full_name ?? "").toLowerCase();
+      const email = (user.email ?? "").toLowerCase();
+      const userId = (user.user_id ?? "").toLowerCase();
+      return fullName.includes(needle) || email.includes(needle) || userId.includes(needle);
+    });
+  }, [users, userSearch]);
 
   const loadOverview = useCallback(async () => {
     setLoading(true);
@@ -247,6 +350,187 @@ export default function AdminStoresPage() {
   useEffect(() => {
     void loadOverview();
   }, [loadOverview]);
+
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true);
+    setUsersError(null);
+
+    try {
+      const response = await fetch("/api/admin/users", { cache: "no-store" });
+      const payload = (await response.json()) as AdminUsersResponse;
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Kullanıcı listesi yüklenemedi.");
+      }
+
+      const sortedUsers = (payload.rows ?? []).sort((a, b) => {
+        const left = (a.full_name || a.email || a.user_id || "").toLowerCase();
+        const right = (b.full_name || b.email || b.user_id || "").toLowerCase();
+        return left.localeCompare(right, "tr");
+      });
+
+      setUsers(sortedUsers);
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : "Kullanıcı listesi yüklenemedi.");
+    } finally {
+      setUsersLoading(false);
+    }
+  }, []);
+
+  const loadCategories = useCallback(async () => {
+    setCategoriesLoading(true);
+    setCategoriesError(null);
+
+    try {
+      const response = await fetch("/api/categories?locale=tr", { cache: "no-store" });
+      const payload = (await response.json()) as CategoriesResponse;
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Kategoriler yüklenemedi.");
+      }
+
+      setCategories(payload.categories ?? []);
+    } catch (err) {
+      setCategoriesError(err instanceof Error ? err.message : "Kategoriler yüklenemedi.");
+    } finally {
+      setCategoriesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!userPickerOpen || users.length > 0 || usersLoading) {
+      return;
+    }
+
+    void loadUsers();
+  }, [userPickerOpen, users.length, usersLoading, loadUsers]);
+
+  useEffect(() => {
+    if (!createStoreOpen || categories.length > 0 || categoriesLoading) {
+      return;
+    }
+
+    void loadCategories();
+  }, [createStoreOpen, categories.length, categoriesLoading, loadCategories]);
+
+  useEffect(() => {
+    if (!selectedParentCategoryId && categories[0]) {
+      setSelectedParentCategoryId(categories[0].id);
+    }
+  }, [selectedParentCategoryId, categories]);
+
+  useEffect(() => {
+    if (!availableSubCategories.length) {
+      if (selectedSubCategoryId !== "") {
+        setSelectedSubCategoryId("");
+      }
+      return;
+    }
+
+    if (
+      selectedSubCategoryId &&
+      selectedSubCategoryId !== LISTFLOW_DECIDE_VALUE &&
+      availableSubCategories.some((subcategory) => subcategory.id === selectedSubCategoryId)
+    ) {
+      return;
+    }
+
+    setSelectedSubCategoryId(LISTFLOW_DECIDE_VALUE);
+  }, [availableSubCategories, selectedSubCategoryId]);
+
+  const resetCreateStoreForm = useCallback(() => {
+    setStoreNameDraft("");
+    setStorePhoneDraft("");
+    setSelectedParentCategoryId(categories[0]?.id ?? "");
+    setSelectedSubCategoryId(categories.length ? LISTFLOW_DECIDE_VALUE : "");
+    setStoreCurrency("USD");
+  }, [categories]);
+
+  const openCreateStoreModalForUser = useCallback(
+    (user: AdminUserRow) => {
+      setSelectedUser(user);
+      setStoreNameDraft("");
+      setStorePhoneDraft((user.phone ?? "").trim());
+      setSelectedParentCategoryId(categories[0]?.id ?? "");
+      setSelectedSubCategoryId(categories.length ? LISTFLOW_DECIDE_VALUE : "");
+      setStoreCurrency("USD");
+      setCategoriesError(null);
+      setUserPickerOpen(false);
+      setCreateStoreOpen(true);
+      setError(null);
+      setSuccessMessage(null);
+      if (!categories.length) {
+        void loadCategories();
+      }
+    },
+    [categories, loadCategories]
+  );
+
+  const handleCreateStoreForUser = useCallback(async () => {
+    if (!selectedUser) {
+      setError("Önce kullanıcı seçmelisin.");
+      return;
+    }
+
+    const normalizedPhone = storePhoneDraft.trim();
+
+    const categoryName = resolvedSubCategory?.name || selectedParentCategory?.name || "Genel";
+    const topCategoryId =
+      (selectedParentCategory?.dbId && selectedParentCategory.dbId.trim()) ||
+      (selectedParentCategory?.id && selectedParentCategory.id.trim()) ||
+      null;
+    const subCategoryId = (resolvedSubCategory?.id && resolvedSubCategory.id.trim()) || null;
+
+    setCreatingStore(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const response = await fetch("/api/admin/stores/create-for-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: selectedUser.user_id,
+          storeName: storeNameDraft.trim() || null,
+          phone: normalizedPhone || null,
+          category: categoryName,
+          topCategoryId,
+          subCategoryId,
+          currency: storeCurrency,
+          priceCents: 2990,
+          fallbackStoreNamePrefix: "Mağaza",
+        }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as CreateStoreForUserResponse;
+      if (!response.ok || !payload.id) {
+        throw new Error(payload.error || "Mağaza eklenemedi.");
+      }
+
+      setSuccessMessage(
+        `${selectedUser.full_name || selectedUser.email || selectedUser.user_id} kullanıcısına ${
+          payload.storeName || "yeni mağaza"
+        } eklendi.`
+      );
+      setCreateStoreOpen(false);
+      setSelectedUser(null);
+      resetCreateStoreForm();
+      await loadOverview();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Mağaza eklenemedi.");
+    } finally {
+      setCreatingStore(false);
+    }
+  }, [
+    loadOverview,
+    resetCreateStoreForm,
+    resolvedSubCategory,
+    selectedParentCategory,
+    selectedUser,
+    storeCurrency,
+    storeNameDraft,
+    storePhoneDraft,
+  ]);
 
   const runSwitch = useCallback(
     async (store: AutomationOverviewRow) => {
@@ -502,7 +786,21 @@ export default function AdminStoresPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            <Button
+              className="cursor-pointer"
+              onClick={() => {
+                setUsersError(null);
+                setUserSearch("");
+                setUserPickerOpen(true);
+                if (!users.length) {
+                  void loadUsers();
+                }
+              }}
+            >
+              <Plus className="mr-1.5 h-4 w-4" />
+              Mağaza Ekle
+            </Button>
             <Button variant="secondary" className="cursor-pointer" onClick={() => void loadOverview()} disabled={loading}>
               Yenile
             </Button>
@@ -543,6 +841,220 @@ export default function AdminStoresPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={userPickerOpen}
+        onOpenChange={(open) => {
+          setUserPickerOpen(open);
+          if (!open) {
+            setUserSearch("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Kullanıcı Seç</DialogTitle>
+            <DialogDescription>
+              Mağaza eklemek istediğin kullanıcıyı arayıp seç.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <Input
+              value={userSearch}
+              onChange={(event) => setUserSearch(event.target.value)}
+              placeholder="Ad, e-posta veya kullanıcı ID ara..."
+            />
+
+            {usersError ? (
+              <Alert variant="destructive">
+                <AlertTitle>Hata</AlertTitle>
+                <AlertDescription>{usersError}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            {usersLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            ) : (
+              <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+                {filteredUsers.length === 0 ? (
+                  <p className="rounded-xl border border-white/10 bg-white/5 px-3 py-4 text-sm text-slate-400">
+                    Aramaya uygun kullanıcı bulunamadı.
+                  </p>
+                ) : (
+                  filteredUsers.map((user) => (
+                    <div
+                      key={user.user_id}
+                      className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/5 px-3 py-3"
+                    >
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="truncate text-sm font-black text-white">{user.full_name || "-"}</p>
+                        <p className="truncate text-xs text-slate-400">{user.email || "-"}</p>
+                        <p className="truncate text-[11px] text-slate-500">{user.user_id}</p>
+                      </div>
+                      <Button
+                        className="shrink-0 cursor-pointer"
+                        onClick={() => openCreateStoreModalForUser(user)}
+                      >
+                        Mağaza Ekle
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={createStoreOpen}
+        onOpenChange={(open) => {
+          if (!open && creatingStore) {
+            return;
+          }
+
+          setCreateStoreOpen(open);
+          if (!open) {
+            setSelectedUser(null);
+            resetCreateStoreForm();
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Kullanıcıya Mağaza Ekle</DialogTitle>
+            <DialogDescription>
+              {selectedUser
+                ? `${selectedUser.full_name || selectedUser.email || selectedUser.user_id} için mağaza oluştur`
+                : "Önce kullanıcı seçmelisin."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400">Mağaza Adı</label>
+                <Input
+                  value={storeNameDraft}
+                  onChange={(event) => setStoreNameDraft(event.target.value)}
+                  placeholder="Örn: Elif Design Store"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400">Telefon No (Opsiyonel)</label>
+                <Input
+                  value={storePhoneDraft}
+                  onChange={(event) => setStorePhoneDraft(event.target.value)}
+                  placeholder="+90 5xx xxx xx xx"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400">Ana Kategori</label>
+                <Select
+                  value={selectedParentCategoryId}
+                  onChange={(event) => setSelectedParentCategoryId(event.target.value)}
+                  disabled={categoriesLoading || categories.length === 0}
+                >
+                  {categoriesLoading ? <option value="">Kategoriler yükleniyor...</option> : null}
+                  {!categoriesLoading && categories.length === 0 ? <option value="">Kategori bulunamadı</option> : null}
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400">Alt Kategori</label>
+                <Select
+                  value={availableSubCategories.length ? selectedSubCategoryId : ""}
+                  onChange={(event) => setSelectedSubCategoryId(event.target.value)}
+                  disabled={categoriesLoading || !availableSubCategories.length}
+                >
+                  {!availableSubCategories.length ? <option value="">Seçili ana kategori için alt kategori yok</option> : null}
+                  {availableSubCategories.length ? (
+                    <option value={LISTFLOW_DECIDE_VALUE}>Listflow karar versin ({availableSubCategories[0]?.name})</option>
+                  ) : null}
+                  {availableSubCategories.map((subcategory) => (
+                    <option key={subcategory.id} value={subcategory.id}>
+                      {subcategory.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+
+            {selectedSubCategoryId === LISTFLOW_DECIDE_VALUE && availableSubCategories.length ? (
+              <p className="text-xs text-indigo-300">
+                Varsayılan alt kategori seçimi: {availableSubCategories[0]?.name}
+              </p>
+            ) : null}
+
+            <div className="space-y-2 border border-white/10 rounded-xl py-2 px-3 flex justify-between items-center w-full">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400">Mağaza Para Birimi</label>
+              <div className="inline-flex rounded-xl border border-white/10 bg-white/5 p-1">
+                <button
+                  type="button"
+                  onClick={() => setStoreCurrency("USD")}
+                  className={`min-w-[72px] rounded-lg px-3 py-1.5 text-xs font-black uppercase tracking-widest transition-all cursor-pointer ${
+                    storeCurrency === "USD" ? "bg-indigo-600 text-white" : "text-slate-300"
+                  }`}
+                >
+                  $ Dolar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStoreCurrency("TRY")}
+                  className={`min-w-[72px] rounded-lg px-3 py-1.5 text-xs font-black uppercase tracking-widest transition-all cursor-pointer ${
+                    storeCurrency === "TRY" ? "bg-indigo-600 text-white" : "text-slate-300"
+                  }`}
+                >
+                  ₺ TL
+                </button>
+              </div>
+            </div>
+
+            {categoriesError ? (
+              <Alert variant="destructive">
+                <AlertTitle>Hata</AlertTitle>
+                <AlertDescription>{categoriesError}</AlertDescription>
+              </Alert>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="cursor-pointer"
+              onClick={() => {
+                setCreateStoreOpen(false);
+                setSelectedUser(null);
+                resetCreateStoreForm();
+              }}
+              disabled={creatingStore}
+            >
+              İptal
+            </Button>
+            <Button
+              className="cursor-pointer"
+              onClick={() => void handleCreateStoreForUser()}
+              disabled={creatingStore || categoriesLoading || !selectedUser}
+            >
+              {creatingStore ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Mağaza Ekle
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

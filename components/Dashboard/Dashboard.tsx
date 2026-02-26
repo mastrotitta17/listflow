@@ -27,7 +27,17 @@ const PLAN_PRIORITY = ["turbo", "pro", "standard"] as const;
 const TOUR_STORAGE_KEY_PREFIX = "listflow:dashboard-tour:v1:";
 const TOUR_SIDE_PATTERN: Array<"left" | "right"> = ["left", "right", "left", "right", "left"];
 
-const Dashboard: React.FC = () => {
+type DashboardProps = {
+  routeSection?: DashboardSection;
+  routeCategorySlug?: string | null;
+  disableTour?: boolean;
+};
+
+const Dashboard: React.FC<DashboardProps> = ({
+  routeSection,
+  routeCategorySlug = null,
+  disableTour = false,
+}) => {
   const { dashboardSection, setDashboardSection } = useStore();
   const { t } = useI18n();
   const [userName, setUserName] = useState<string>('...');
@@ -36,6 +46,7 @@ const Dashboard: React.FC = () => {
   const [tourVisible, setTourVisible] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState(0);
   const [tourUserId, setTourUserId] = useState<string | null>(null);
+  const activeSection = routeSection ?? dashboardSection;
 
   const tourSteps = useMemo(
     () => [
@@ -103,7 +114,7 @@ const Dashboard: React.FC = () => {
         if (user) {
           setTourUserId(user.id);
 
-          if (mountedRef.value && shouldShowTourForUser(user)) {
+          if (mountedRef.value && !disableTour && !routeSection && shouldShowTourForUser(user)) {
             setDashboardSection(DashboardSection.CATEGORIES);
             setTourStepIndex(0);
             setTourVisible(true);
@@ -179,7 +190,7 @@ const Dashboard: React.FC = () => {
           setPlanLabel(t("dashboard.planUnknown"));
         }
       }
-    }, [resolvePlanLabel, setDashboardSection, shouldShowTourForUser, t]);
+    }, [disableTour, resolvePlanLabel, routeSection, setDashboardSection, shouldShowTourForUser, t]);
 
   useEffect(() => {
     const mountedRef = { value: true };
@@ -201,7 +212,17 @@ const Dashboard: React.FC = () => {
   }, [fetchUser]);
 
   useEffect(() => {
-    if (!tourVisible) {
+    if (!routeSection) {
+      return;
+    }
+
+    if (dashboardSection !== routeSection) {
+      setDashboardSection(routeSection);
+    }
+  }, [dashboardSection, routeSection, setDashboardSection]);
+
+  useEffect(() => {
+    if (!tourVisible || disableTour || routeSection) {
       return;
     }
 
@@ -209,7 +230,7 @@ const Dashboard: React.FC = () => {
     if (step?.section && step.section !== dashboardSection) {
       setDashboardSection(step.section);
     }
-  }, [dashboardSection, setDashboardSection, tourStepIndex, tourSteps, tourVisible]);
+  }, [dashboardSection, disableTour, routeSection, setDashboardSection, tourStepIndex, tourSteps, tourVisible]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -271,8 +292,8 @@ const Dashboard: React.FC = () => {
   };
 
   const renderContent = () => {
-    switch (dashboardSection) {
-      case DashboardSection.CATEGORIES: return <CategoriesPanel />;
+    switch (activeSection) {
+      case DashboardSection.CATEGORIES: return <CategoriesPanel routeCategorySlug={routeCategorySlug} />;
       case DashboardSection.ETSY_AUTOMATION: return <EtsyPanel />;
       case DashboardSection.PINTEREST_AUTOMATION:
       case DashboardSection.META_AUTOMATION:
@@ -282,7 +303,7 @@ const Dashboard: React.FC = () => {
           <div className="h-full w-full flex items-center justify-center">
             <div className="glass-card-pro border border-white/10 rounded-[32px] p-10 max-w-xl w-full text-center">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300 mb-3">
-                {t("dashboard.sections." + dashboardSection)}
+                {t("dashboard.sections." + activeSection)}
               </p>
               <p className="text-slate-300 font-semibold">{t("common.comingSoon")}</p>
             </div>
@@ -306,7 +327,11 @@ const Dashboard: React.FC = () => {
   return (
     <>
     <div className="flex h-screen overflow-hidden bg-[#0a0a0c]">
-      <Sidebar mobileOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
+      <Sidebar
+        activeSection={activeSection}
+        mobileOpen={mobileSidebarOpen}
+        onClose={() => setMobileSidebarOpen(false)}
+      />
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-20 px-4 sm:px-6 lg:px-10 flex items-center justify-between glass-pro border-b border-indigo-500/10 z-10 shrink-0">
           <div className="flex items-center gap-3">
@@ -319,7 +344,7 @@ const Dashboard: React.FC = () => {
               <Menu className="h-5 w-5" />
             </button>
             <h2 className="text-sm sm:text-base lg:text-xl font-black tracking-tight text-white uppercase">
-              {t(`dashboard.sections.${dashboardSection}`)}
+              {t(`dashboard.sections.${activeSection}`)}
             </h2>
           </div>
           <div className="flex items-center gap-6">
