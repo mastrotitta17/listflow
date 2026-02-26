@@ -55,6 +55,23 @@ const normalizeString = (value: unknown) => {
 
 const normalizeStatus = (value: unknown) => normalizeString(value).toLowerCase();
 
+const readFirstValue = (row: RowRecord, keys: string[]) => {
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(row, key)) {
+      continue;
+    }
+    const value = row[key];
+    if (value === null || value === undefined) {
+      continue;
+    }
+    if (typeof value === "string" && value.trim() === "") {
+      continue;
+    }
+    return value;
+  }
+  return null;
+};
+
 const readFirstString = (row: RowRecord, keys: string[]) => {
   for (const key of keys) {
     const value = normalizeString(row[key]);
@@ -303,11 +320,107 @@ const parseVariations = (value: unknown) => {
   return [];
 };
 
+const normalizeTagToken = (value: unknown) =>
+  normalizeString(value)
+    .replace(/^['"]+|['"]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 20);
+
+const parseTagList = (value: unknown): string[] => {
+  if (value == null) return [];
+
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => parseTagList(entry));
+  }
+
+  if (typeof value === "object") {
+    const bag = value as Record<string, unknown>;
+    const nested = bag.tags ?? bag.values ?? bag.items ?? bag.list ?? null;
+    if (nested != null) {
+      return parseTagList(nested);
+    }
+    return Object.values(bag).flatMap((entry) => parseTagList(entry));
+  }
+
+  const text = normalizeString(value);
+  if (!text) return [];
+
+  if (text.startsWith("[") && text.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(text);
+      return parseTagList(parsed);
+    } catch {
+      // Delimited fallback below.
+    }
+  }
+
+  return text
+    .split(/[,\n;|]+/)
+    .map((item) => normalizeTagToken(item))
+    .filter(Boolean);
+};
+
+const dedupeStrings = (values: string[]) => Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
+
+const parseUrlList = (value: unknown): string[] => {
+  if (value == null) return [];
+
+  if (Array.isArray(value)) {
+    return dedupeStrings(value.map((item) => normalizeString(item)).filter(Boolean));
+  }
+
+  const text = normalizeString(value);
+  if (!text) return [];
+
+  if (text.startsWith("[") && text.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(text);
+      return parseUrlList(parsed);
+    } catch {
+      // Continue with delimiter split.
+    }
+  }
+
+  return dedupeStrings(
+    text
+      .split(/[,\n;|]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  );
+};
+
+const parseBase64List = (value: unknown): string[] => {
+  if (value == null) return [];
+
+  if (Array.isArray(value)) {
+    return dedupeStrings(value.map((item) => normalizeString(item)).filter(Boolean));
+  }
+
+  const text = normalizeString(value);
+  if (!text) return [];
+
+  if (text.startsWith("[") && text.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(text);
+      return parseBase64List(parsed);
+    } catch {
+      // Keep raw string fallback below.
+    }
+  }
+
+  return [text];
+};
+
 const mapListingPayload = (row: RowRecord): RowRecord => {
   const title = readFirstString(row, ["title", "name"]) ?? "";
   const description = readFirstString(row, ["description", "catalog_description"]) ?? "";
-  const tags = readFirstString(row, ["tags", "etiket"]) ?? "";
+  const rawTags = readFirstValue(row, ["tags", "etiket", "tag_list", "tag_values"]);
+  const tags = dedupeStrings(parseTagList(rawTags)).slice(0, 13);
   const category = readFirstString(row, ["category", "category_name"]) ?? "";
+  const imageUrls = parseUrlList(readFirstValue(row, ["images", "image_urls", "photo_urls"]));
+  const imageBase64List = parseBase64List(readFirstValue(row, ["image_base64", "image_base64_list"]));
+  const variations = parseVariations(readFirstValue(row, ["variations", "variation", "variants"]));
 
   const payload: RowRecord = {
     listing_id: readFirstString(row, ["id"]),
@@ -319,14 +432,14 @@ const mapListingPayload = (row: RowRecord): RowRecord => {
     category,
     price: readFirstNumber(row, ["price", "sale_price", "amount_usd"]) ?? 0,
     quantity: readFirstNumber(row, ["quantity"]) ?? 1,
-    image_1_url: readFirstString(row, ["image_1_url"]),
-    image_2_url: readFirstString(row, ["image_2_url"]),
-    image_3_url: readFirstString(row, ["image_3_url"]),
-    image_1_base64: readFirstString(row, ["image_1_base64"]),
-    image_2_base64: readFirstString(row, ["image_2_base64"]),
-    image_3_base64: readFirstString(row, ["image_3_base64"]),
+    image_1_url: readFirstString(row, ["image_1_url", "image_url_1"]) ?? imageUrls[0] ?? null,
+    image_2_url: readFirstString(row, ["image_2_url", "image_url_2"]) ?? imageUrls[1] ?? null,
+    image_3_url: readFirstString(row, ["image_3_url", "image_url_3"]) ?? imageUrls[2] ?? null,
+    image_1_base64: readFirstString(row, ["image_1_base64"]) ?? imageBase64List[0] ?? null,
+    image_2_base64: readFirstString(row, ["image_2_base64"]) ?? imageBase64List[1] ?? null,
+    image_3_base64: readFirstString(row, ["image_3_base64"]) ?? imageBase64List[2] ?? null,
     etsy_store_link: readFirstString(row, ["etsy_store_link"]),
-    variations: parseVariations(row.variations),
+    variations,
   };
 
   if (row.shipping_template && typeof row.shipping_template === "object") {
