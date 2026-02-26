@@ -10,6 +10,19 @@ type VerifyState = 'loading' | 'ready' | 'error';
 const PaymentSuccess: React.FC = () => {
   const { t } = useI18n();
   const [state, setState] = useState<VerifyState>('loading');
+  const confettiPieces = useMemo(
+    () =>
+      Array.from({ length: 48 }, (_, index) => ({
+        id: index,
+        left: (index * 17) % 100,
+        delay: (index % 8) * 0.08,
+        duration: 2.4 + (index % 5) * 0.35,
+        drift: ((index % 9) - 4) * 12,
+        rotate: 220 + (index % 7) * 45,
+        color: ['#60a5fa', '#34d399', '#a78bfa', '#fbbf24', '#f472b6'][index % 5],
+      })),
+    []
+  );
 
   const sessionId = useMemo(() => {
     if (typeof window === 'undefined') {
@@ -62,11 +75,36 @@ const PaymentSuccess: React.FC = () => {
   }, [sessionId]);
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-[#0a0a0c] p-6">
+    <div className="relative min-h-screen w-full flex items-center justify-center bg-[#0a0a0c] p-6 overflow-hidden">
+      {state === 'ready' ? (
+        <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+          {confettiPieces.map((piece) => (
+            <motion.span
+              key={piece.id}
+              className="absolute top-0 h-3 w-2 rounded-sm"
+              style={{ left: `${piece.left}%`, backgroundColor: piece.color }}
+              initial={{ y: -30, x: 0, opacity: 0, rotate: 0 }}
+              animate={{
+                y: ['-5vh', '105vh'],
+                x: [0, piece.drift],
+                opacity: [0, 1, 1, 0],
+                rotate: [0, piece.rotate],
+              }}
+              transition={{
+                duration: piece.duration,
+                delay: piece.delay,
+                repeat: Infinity,
+                repeatDelay: 0.4,
+                ease: 'linear',
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="max-w-md w-full p-10 rounded-[48px] glass-card-pro border border-emerald-500/20 text-center shadow-2xl"
+        className="relative z-20 max-w-md w-full p-10 rounded-[48px] glass-card-pro border border-emerald-500/20 text-center shadow-2xl"
       >
         <div className="w-24 h-24 bg-emerald-500/10 rounded-[32px] flex items-center justify-center mx-auto mb-8 border border-emerald-500/20 shadow-[0_0_40px_rgba(16,185,129,0.1)]">
           {state === 'loading' && <Loader2 className="w-12 h-12 text-emerald-400 animate-spin" />}

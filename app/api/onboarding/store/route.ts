@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
-import { loadUserStoreQuota } from "@/lib/stores/quota";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -136,6 +135,15 @@ const insertStore = async (payload: {
   return reducedInsert.error.message || fullInsert.error.message || "Store creation failed";
 };
 
+const countUserStores = async (userId: string) => {
+  const { count } = await supabaseAdmin
+    .from("stores")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+
+  return typeof count === "number" ? count : 0;
+};
+
 export async function POST(request: NextRequest) {
   try {
     const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
@@ -159,23 +167,7 @@ export async function POST(request: NextRequest) {
     const category = asTrimmedString(body.category) || "Genel";
     const fallbackPrefix = asTrimmedString(body.fallbackStoreNamePrefix) || "Magazam";
     const requestedStoreName = asTrimmedString(body.storeName);
-    const quota = await loadUserStoreQuota(user.id);
-
-    if (!quota.canCreateStore) {
-      return NextResponse.json(
-        {
-          code: "STORE_LIMIT_REACHED",
-          error:
-            quota.plan === "turbo"
-              ? "Mağaza limitiniz doldu. Yeni mağaza için +$10 ek mağaza paketi satın alabilir veya mevcut mağazalarınızı düzenleyebilirsiniz."
-              : "Mağaza limitiniz doldu. Yeni mağaza için +$20 ek mağaza paketi satın alabilir veya planınızı yükseltebilirsiniz.",
-          quota,
-        },
-        { status: 409 }
-      );
-    }
-
-    const existingCount = requestedStoreName ? 0 : quota.totalStores;
+    const existingCount = requestedStoreName ? 0 : await countUserStores(user.id);
     const storeName = requestedStoreName || `${fallbackPrefix} ${existingCount + 1}`;
     const storeId = randomUUID();
     const priceCents = asSafePrice(body.priceCents);

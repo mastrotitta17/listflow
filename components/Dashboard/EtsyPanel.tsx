@@ -14,12 +14,14 @@ import {
   Package,
   Cog,
   X,
+  Check,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n/provider";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
 import type { Shop } from "@/types";
 
 type BillingPlan = "standard" | "pro" | "turbo";
+type BillingInterval = "month" | "year";
 
 type StoreOverviewRow = {
   id: string;
@@ -46,31 +48,48 @@ type StoreOverviewResponse = {
   error?: string;
 };
 
-type StoreUpgradeOption = {
-  plan: BillingPlan;
-  includedStores: number;
-  monthlyPriceCents: number;
-};
-
-type StoreQuotaPayload = {
-  plan: BillingPlan;
-  hasActiveSubscription: boolean;
-  includedStoreLimit: number;
-  totalStores: number;
-  purchasedExtraStores: number;
-  usedExtraStores: number;
-  remainingSlots: number;
-  canCreateStore: boolean;
-  extraStorePriceCents: number;
-  upgradeOptions: StoreUpgradeOption[];
-};
-
 type StoreActionMessage = {
   type: "success" | "error";
   text: string;
 };
 
+type ActivationModalState = {
+  shop: Shop;
+  plan: BillingPlan;
+  interval: BillingInterval;
+};
+
+type PlanFeature = {
+  text: string;
+  upcoming?: boolean;
+};
+
+type PlanDetails = {
+  cadence: string;
+  description: string;
+  features: PlanFeature[];
+};
+
 const DEFAULT_CRISP_WEBSITE_ID = "90902ea5-80af-4468-8f9d-d9a808ed1137";
+const PLAN_ORDER: BillingPlan[] = ["standard", "pro", "turbo"];
+const PLAN_PRICE_CENTS: Record<BillingPlan, { month: number; year: number }> = {
+  standard: { month: 2990, year: 26910 },
+  pro: { month: 4990, year: 44910 },
+  turbo: { month: 7990, year: 71910 },
+};
+const DISPLAY_DISCOUNT_PERCENT: Record<BillingInterval, number> = {
+  month: 50,
+  year: 50,
+};
+
+const resolveShopPlan = (value: string | null | undefined): BillingPlan => {
+  const normalized = (value ?? "").toLowerCase();
+  if (normalized === "pro" || normalized === "turbo") {
+    return normalized;
+  }
+
+  return "standard";
+};
 
 const EtsyPanel: React.FC = () => {
   const { shops, setShops } = useStore();
@@ -81,15 +100,13 @@ const EtsyPanel: React.FC = () => {
   const [shopName, setShopName] = useState("");
   const [selectedCat, setSelectedCat] = useState("");
   const [storeActionMessage, setStoreActionMessage] = useState<StoreActionMessage | null>(null);
+  const [activationModal, setActivationModal] = useState<ActivationModalState | null>(null);
+  const [activationSubmitting, setActivationSubmitting] = useState(false);
   const [hoveredTimerStoreId, setHoveredTimerStoreId] = useState<string | null>(null);
   const [pinnedTimerStoreId, setPinnedTimerStoreId] = useState<string | null>(null);
   const [deleteTargetShop, setDeleteTargetShop] = useState<Shop | null>(null);
   const [isDeletingStoreId, setIsDeletingStoreId] = useState<string | null>(null);
   const [nowTs, setNowTs] = useState<number>(Date.now());
-  const [storeQuota, setStoreQuota] = useState<StoreQuotaPayload | null>(null);
-  const [isOpeningUpgradePortal, setIsOpeningUpgradePortal] = useState(false);
-  const [isBuyingExtraStoreSlot, setIsBuyingExtraStoreSlot] = useState(false);
-  const isStoreCreationLocked = Boolean(storeQuota && !storeQuota.canCreateStore);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -111,15 +128,6 @@ const EtsyPanel: React.FC = () => {
     return `$${(priceCents / 100).toFixed(2)}`;
   };
 
-  const currencyFormatter = useMemo(
-    () =>
-      new Intl.NumberFormat(locale === "en" ? "en-US" : "tr-TR", {
-        style: "currency",
-        currency: "USD",
-      }),
-    [locale]
-  );
-
   const planLabel = (plan: string | null | undefined) => {
     const normalized = (plan ?? "").toLowerCase();
 
@@ -128,6 +136,69 @@ const EtsyPanel: React.FC = () => {
     if (normalized === "turbo") return t("dashboard.planTurbo");
 
     return t("dashboard.planUnknown");
+  };
+
+  const planDetails = useMemo<Record<BillingPlan, PlanDetails>>(
+    () => ({
+      standard: {
+        cadence: t("etsy.planDetailsStandardCadence"),
+        description: t("etsy.planDetailsStandardDescription"),
+        features: [
+          { text: t("etsy.planDetailsStandardFeature1") },
+          { text: t("etsy.planDetailsStandardFeature2") },
+          { text: t("etsy.planDetailsStandardFeature3") },
+          { text: t("etsy.planDetailsStandardFeature4") },
+          { text: t("etsy.planDetailsStandardFeature5") },
+          { text: t("etsy.planDetailsStandardFeature6"), upcoming: true },
+          { text: t("etsy.planDetailsStandardFeature7"), upcoming: true },
+        ],
+      },
+      pro: {
+        cadence: t("etsy.planDetailsProCadence"),
+        description: t("etsy.planDetailsProDescription"),
+        features: [
+          { text: t("etsy.planDetailsProFeature1") },
+          { text: t("etsy.planDetailsProFeature2") },
+          { text: t("etsy.planDetailsProFeature3") },
+          { text: t("etsy.planDetailsProFeature4") },
+          { text: t("etsy.planDetailsProFeature5") },
+          { text: t("etsy.planDetailsProFeature6"), upcoming: true },
+          { text: t("etsy.planDetailsProFeature7"), upcoming: true },
+          { text: t("etsy.planDetailsProFeature8"), upcoming: true },
+        ],
+      },
+      turbo: {
+        cadence: t("etsy.planDetailsTurboCadence"),
+        description: t("etsy.planDetailsTurboDescription"),
+        features: [
+          { text: t("etsy.planDetailsTurboFeature1") },
+          { text: t("etsy.planDetailsTurboFeature2") },
+          { text: t("etsy.planDetailsTurboFeature3") },
+          { text: t("etsy.planDetailsTurboFeature4") },
+          { text: t("etsy.planDetailsTurboFeature5") },
+          { text: t("etsy.planDetailsTurboFeature6"), upcoming: true },
+          { text: t("etsy.planDetailsTurboFeature7"), upcoming: true },
+        ],
+      },
+    }),
+    [t]
+  );
+
+  const formatUsd = (cents: number) =>
+    new Intl.NumberFormat(locale === "en" ? "en-US" : "tr-TR", {
+      style: "currency",
+      currency: "USD",
+    }).format(cents / 100);
+
+  const getOriginalCentsFromDiscounted = (discountedCents: number, interval: BillingInterval) => {
+    const discountPercent = DISPLAY_DISCOUNT_PERCENT[interval];
+    const divisor = 1 - discountPercent / 100;
+
+    if (divisor <= 0) {
+      return discountedCents;
+    }
+
+    return Math.round(discountedCents / divisor);
   };
 
   const mapOverviewRowToShop = useCallback(
@@ -186,64 +257,6 @@ const EtsyPanel: React.FC = () => {
     return { response, payload };
   }, []);
 
-  const requestStoreQuota = useCallback(async () => {
-    const response = await fetch("/api/stores/quota", {
-      cache: "no-store",
-      credentials: "include",
-    });
-
-    const payload = (await response.json().catch(() => ({}))) as {
-      quota?: StoreQuotaPayload;
-      error?: string;
-    };
-
-    return { response, payload };
-  }, []);
-
-  const loadStoreQuota = useCallback(async () => {
-    let { response, payload } = await requestStoreQuota();
-
-    if (response.status === 401) {
-      const synced = await syncServerSession();
-      if (synced) {
-        ({ response, payload } = await requestStoreQuota());
-      }
-    }
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error(locale === "en" ? "Session expired. Please sign in again." : "Oturum süresi doldu. Lütfen tekrar giriş yapın.");
-      }
-
-      throw new Error(payload.error || (locale === "en" ? "Store quota could not be loaded" : "Mağaza kotası yüklenemedi"));
-    }
-
-    setStoreQuota(payload.quota ?? null);
-  }, [locale, requestStoreQuota, syncServerSession]);
-
-  const getFreshStoreQuota = useCallback(async () => {
-    let { response, payload } = await requestStoreQuota();
-
-    if (response.status === 401) {
-      const synced = await syncServerSession();
-      if (synced) {
-        ({ response, payload } = await requestStoreQuota());
-      }
-    }
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error(locale === "en" ? "Session expired. Please sign in again." : "Oturum süresi doldu. Lütfen tekrar giriş yapın.");
-      }
-
-      throw new Error(payload.error || (locale === "en" ? "Store quota could not be loaded" : "Mağaza kotası yüklenemedi"));
-    }
-
-    const quota = payload.quota ?? null;
-    setStoreQuota(quota);
-    return quota;
-  }, [locale, requestStoreQuota, syncServerSession]);
-
   const loadStoresOverview = useCallback(async () => {
     let { response, payload } = await requestStoresOverview();
 
@@ -272,11 +285,10 @@ const EtsyPanel: React.FC = () => {
 
     const boot = async () => {
       try {
-        await Promise.all([loadStoresOverview(), loadStoreQuota()]);
+        await loadStoresOverview();
       } catch {
         if (mounted) {
           setShops([]);
-          setStoreQuota(null);
         }
       }
     };
@@ -286,37 +298,23 @@ const EtsyPanel: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [loadStoreQuota, loadStoresOverview, setShops]);
+  }, [loadStoresOverview, setShops]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      void Promise.all([loadStoresOverview(), loadStoreQuota()]).catch(() => undefined);
+      void loadStoresOverview().catch(() => undefined);
     }, 30_000);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [loadStoreQuota, loadStoresOverview]);
-
-  useEffect(() => {
-    if (showConnect && isStoreCreationLocked) {
-      setShowConnect(false);
-    }
-  }, [isStoreCreationLocked, showConnect]);
+  }, [loadStoresOverview]);
 
   const handleConnect = async (event: React.FormEvent) => {
     event.preventDefault();
     setStoreActionMessage(null);
 
     try {
-      if (isStoreCreationLocked) {
-        throw new Error(
-          locale === "en"
-            ? "Store limit reached. Buy an extra store slot or upgrade your plan."
-            : "Mağaza limitiniz doldu. Ek mağaza hakkı satın alın veya planınızı yükseltin."
-        );
-      }
-
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -335,15 +333,6 @@ const EtsyPanel: React.FC = () => {
       });
       if (!sessionSync.ok) {
         throw new Error("Oturum senkronize edilemedi.");
-      }
-
-      const latestQuota = await getFreshStoreQuota();
-      if (latestQuota && !latestQuota.canCreateStore) {
-        throw new Error(
-          latestQuota.plan === "turbo"
-            ? "Mağaza limitiniz doldu. Yeni mağaza için +$10 ek mağaza paketi satın alabilir veya mevcut mağazalarınızı düzenleyebilirsiniz."
-            : "Mağaza limitiniz doldu. Yeni mağaza için +$20 ek mağaza paketi satın alabilir veya planınızı yükseltebilirsiniz."
-        );
       }
 
       const normalizedPhone = phone.trim();
@@ -367,25 +356,10 @@ const EtsyPanel: React.FC = () => {
       const payload = (await response.json().catch(() => ({}))) as { error?: string; id?: string };
 
       if (!response.ok || !payload.id) {
-        if (response.status === 409) {
-          const limitPayload = payload as { code?: string; quota?: StoreQuotaPayload; error?: string };
-          if (limitPayload.code === "STORE_LIMIT_REACHED") {
-            if (limitPayload.quota) {
-              setStoreQuota(limitPayload.quota);
-            }
-            throw new Error(
-              limitPayload.error ||
-                (locale === "en"
-                  ? "Store limit reached. Buy an extra store slot or upgrade your plan."
-                  : "Mağaza limitiniz doldu. Ek mağaza hakkı satın alın veya planınızı yükseltin.")
-            );
-          }
-        }
-
         throw new Error(payload.error || "Mağaza eklenemedi");
       }
 
-      await Promise.all([loadStoresOverview(), loadStoreQuota()]);
+      await loadStoresOverview();
 
       setShowConnect(false);
       setPhone("");
@@ -400,79 +374,6 @@ const EtsyPanel: React.FC = () => {
         type: "error",
         text: error instanceof Error ? error.message : "Mağaza eklenemedi",
       });
-    }
-  };
-
-  const handleOpenUpgradePortal = async () => {
-    if (isOpeningUpgradePortal) {
-      return;
-    }
-
-    setIsOpeningUpgradePortal(true);
-    setStoreActionMessage(null);
-
-    try {
-      const response = await fetch("/api/settings/subscription/upgrade", {
-        method: "POST",
-      });
-      const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
-      if (!response.ok || !payload.url) {
-        throw new Error(
-          payload.error ||
-            (locale === "en" ? "Upgrade portal could not be opened." : "Plan yükseltme ekranı açılamadı.")
-        );
-      }
-
-      window.location.href = payload.url;
-    } catch (error) {
-      setStoreActionMessage({
-        type: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : locale === "en"
-              ? "Upgrade portal could not be opened."
-              : "Plan yükseltme ekranı açılamadı.",
-      });
-      setIsOpeningUpgradePortal(false);
-    }
-  };
-
-  const handleBuyExtraStoreSlot = async () => {
-    if (isBuyingExtraStoreSlot) {
-      return;
-    }
-
-    setIsBuyingExtraStoreSlot(true);
-    setStoreActionMessage(null);
-
-    try {
-      const response = await fetch("/api/billing/store-capacity-checkout", {
-        method: "POST",
-      });
-      const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
-
-      if (!response.ok || !payload.url) {
-        throw new Error(
-          payload.error ||
-            (locale === "en"
-              ? "Extra store checkout could not be opened."
-              : "Ek mağaza ödeme ekranı açılamadı.")
-        );
-      }
-
-      window.location.href = payload.url;
-    } catch (error) {
-      setStoreActionMessage({
-        type: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : locale === "en"
-              ? "Extra store checkout could not be opened."
-              : "Ek mağaza ödeme ekranı açılamadı.",
-      });
-      setIsBuyingExtraStoreSlot(false);
     }
   };
 
@@ -547,6 +448,86 @@ const EtsyPanel: React.FC = () => {
         });
       }
     }, 150);
+  };
+
+  const handleActivateStore = (shop: Shop) => {
+    setStoreActionMessage(null);
+    setActivationModal({
+      shop,
+      plan: resolveShopPlan(shop.plan),
+      interval: "month",
+    });
+  };
+
+  const handleStartActivationCheckout = async () => {
+    if (!activationModal) {
+      return;
+    }
+
+    setActivationSubmitting(true);
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error(locale === "en" ? "Session expired. Please sign in again." : "Oturum süresi doldu. Lütfen tekrar giriş yapın.");
+      }
+
+      const sessionSync = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          accessToken: session.access_token,
+          refreshToken: session.refresh_token,
+        }),
+      });
+
+      if (!sessionSync.ok) {
+        throw new Error(locale === "en" ? "Session sync failed." : "Oturum senkronize edilemedi.");
+      }
+
+      const response = await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          mode: "subscription",
+          plan: activationModal.plan,
+          interval: activationModal.interval,
+          shopId: activationModal.shop.id,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        url?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !payload.url) {
+        throw new Error(
+          payload.error ||
+            (locale === "en"
+              ? "Activation checkout could not be started."
+              : "Aktivasyon ödeme ekranı açılamadı.")
+        );
+      }
+
+      window.location.href = payload.url;
+    } catch (error) {
+      setStoreActionMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : locale === "en"
+              ? "Activation checkout could not be started."
+            : "Aktivasyon ödeme ekranı açılamadı.",
+      });
+      setActivationSubmitting(false);
+    }
   };
 
   const getRemainingSeconds = (shop: Shop) => {
@@ -670,76 +651,14 @@ const EtsyPanel: React.FC = () => {
         <div>
           <h1 className="text-3xl font-black mb-1 tracking-tight text-white">{t("etsy.title")}</h1>
           <p className="text-slate-500 text-sm font-medium">{t("etsy.subtitle")}</p>
-          {storeQuota ? (
-            <div className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-black tracking-wide text-slate-300">
-              <span>
-                {t("etsy.storeQuotaLabel")}: {storeQuota.totalStores}/{storeQuota.includedStoreLimit + storeQuota.purchasedExtraStores}
-              </span>
-              <span className="text-slate-500">•</span>
-              <span>
-                {t("etsy.storeQuotaRemaining")}: {Math.max(0, storeQuota.remainingSlots)}
-              </span>
-            </div>
-          ) : null}
         </div>
-        {!isStoreCreationLocked ? (
-          <button
-            onClick={() => setShowConnect(true)}
-            className="px-8 py-4 rounded-2xl bg-indigo-600 text-white font-black flex items-center gap-3 hover:shadow-[0_0_30px_rgba(79,70,229,0.3)] active:scale-95 transition-all text-sm uppercase tracking-widest cursor-pointer"
-          >
-            <Plus className="w-5 h-5" /> {t("etsy.addStore")}
-          </button>
-        ) : null}
+        <button
+          onClick={() => setShowConnect(true)}
+          className="px-8 py-4 rounded-2xl bg-indigo-600 text-white font-black flex items-center gap-3 hover:shadow-[0_0_30px_rgba(79,70,229,0.3)] active:scale-95 transition-all text-sm uppercase tracking-widest cursor-pointer"
+        >
+          <Plus className="w-5 h-5" /> {t("etsy.addStore")}
+        </button>
       </div>
-
-      {storeQuota && !storeQuota.canCreateStore ? (
-        <div className="mb-8 rounded-2xl border border-white/5 bg-white/5 p-4">
-          <p className="text-xs font-black uppercase tracking-widest text-amber-300 mb-2">
-            {t("etsy.storeLimitReachedTitle")}
-          </p>
-          <p className="text-sm text-amber-100 mb-4">
-            {t("etsy.storeLimitReachedText")}{" "}
-            <span className="font-black">{currencyFormatter.format(storeQuota.extraStorePriceCents / 100)}</span>
-          </p>
-
-          <div className="flex flex-wrap gap-3 mb-4">
-            <button
-              type="button"
-              onClick={() => void handleBuyExtraStoreSlot()}
-              disabled={isBuyingExtraStoreSlot}
-              className="px-4 py-2 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-black uppercase tracking-widest hover:bg-emerald-700 transition-all disabled:opacity-60 cursor-pointer inline-flex items-center gap-2"
-            >
-              {isBuyingExtraStoreSlot ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              {isBuyingExtraStoreSlot ? t("etsy.buyExtraStoreLoading") : t("etsy.buyExtraStore")}
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleOpenUpgradePortal()}
-              disabled={isOpeningUpgradePortal}
-              className="px-4 py-2 rounded-xl border border-white/20 bg-indigo-600 text-white text-xs font-black uppercase tracking-widest hover:bg-indigo-700 transition-all disabled:opacity-60 cursor-pointer inline-flex items-center gap-2"
-            >
-              {isOpeningUpgradePortal ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              {isOpeningUpgradePortal ? t("etsy.upgradePlanLoading") : t("etsy.upgradePlan")}
-            </button>
-          </div>
-
-          {storeQuota.upgradeOptions.length ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {storeQuota.upgradeOptions.map((option) => (
-                <div key={option.plan} className="rounded-xl border border-white/10 bg-[#0d1016] px-3 py-3">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-indigo-300 mb-1">
-                    {planLabel(option.plan)}
-                  </p>
-                  <p className="text-xs text-slate-300 mb-1">
-                    {option.includedStores} {t("etsy.storeLimitUnit")}
-                  </p>
-                  <p className="text-sm font-black text-white">{currencyFormatter.format(option.monthlyPriceCents / 100)}</p>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
         <button
@@ -796,7 +715,7 @@ const EtsyPanel: React.FC = () => {
             {shops.map((shop, index) => {
               const showTimer = hoveredTimerStoreId === shop.id || pinnedTimerStoreId === shop.id;
               const automationText = getAutomationText(shop);
-              const isStoreActiveByPlan = shop.isPaid || Boolean(storeQuota?.hasActiveSubscription);
+              const isStoreActiveByPlan = shop.isPaid;
               const showAutomationIndicator = isStoreActiveByPlan && Boolean(shop.hasActiveAutomationWebhook);
 
               return (
@@ -870,6 +789,22 @@ const EtsyPanel: React.FC = () => {
                     <p className="text-base font-black text-white">{shop.orderCount}</p>
                   </div>
 
+                  <div className="pt-1">
+                    {shop.isPaid ? (
+                      <span className="inline-flex items-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-emerald-300">
+                        {t("etsy.paymentDone")}
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleActivateStore(shop)}
+                        className="w-full rounded-xl border border-indigo-500/40 bg-indigo-600/80 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-white hover:bg-indigo-600 transition-all disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer inline-flex items-center justify-center gap-2"
+                      >
+                        {t("etsy.activatePay")}
+                      </button>
+                    )}
+                  </div>
+
                 </motion.div>
               );
             })}
@@ -924,7 +859,130 @@ const EtsyPanel: React.FC = () => {
       </AnimatePresence>
 
       <AnimatePresence>
-        {showConnect && !isStoreCreationLocked && (
+        {activationModal && (
+          <div className="fixed inset-0 z-[125] flex items-center justify-center px-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => !activationSubmitting && setActivationModal(null)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-xl"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 20 }}
+              className="relative w-full max-w-5xl rounded-[32px] glass-card-pro border border-white/10 p-8 shadow-2xl max-h-[90vh] overflow-y-auto"
+            >
+              <h3 className="text-2xl font-black text-white mb-1">{t("etsy.activateModalTitle")}</h3>
+              <p className="text-slate-300 text-sm mb-5">{t("etsy.activateModalSubtitle")}</p>
+              <p className="text-[11px] text-indigo-300 font-black uppercase tracking-widest mb-4">
+                {activationModal.shop.name}
+              </p>
+
+              <div className="mb-5 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActivationModal((prev) => (prev ? { ...prev, interval: "month" } : prev))}
+                  className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest border transition-all cursor-pointer ${
+                    activationModal.interval === "month"
+                      ? "bg-indigo-600 text-white border-indigo-500/60"
+                      : "bg-white/5 text-slate-300 border-white/10"
+                  }`}
+                >
+                  {t("etsy.billingMonthly")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActivationModal((prev) => (prev ? { ...prev, interval: "year" } : prev))}
+                  className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest border transition-all cursor-pointer ${
+                    activationModal.interval === "year"
+                      ? "bg-indigo-600 text-white border-indigo-500/60"
+                      : "bg-white/5 text-slate-300 border-white/10"
+                  }`}
+                >
+                  {t("etsy.billingYearly")}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+                {PLAN_ORDER.map((planKey) => {
+                  const selected = activationModal.plan === planKey;
+                  const amount = PLAN_PRICE_CENTS[planKey][activationModal.interval];
+                  const originalAmount = getOriginalCentsFromDiscounted(amount, activationModal.interval);
+                  const discountPercent = DISPLAY_DISCOUNT_PERCENT[activationModal.interval];
+                  const details = planDetails[planKey];
+                  return (
+                    <button
+                      key={planKey}
+                      type="button"
+                      onClick={() => setActivationModal((prev) => (prev ? { ...prev, plan: planKey } : prev))}
+                      className={`rounded-2xl border p-4 text-left transition-all cursor-pointer ${
+                        selected
+                          ? "border-indigo-400/60 bg-indigo-500/20"
+                          : "border-white/10 bg-white/5 hover:border-indigo-400/30"
+                      }`}
+                    >
+                      <p className="text-[10px] text-indigo-300 font-black uppercase tracking-widest mb-1">
+                        {planLabel(planKey)}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mb-1">{details.cadence}</p>
+                      <p className="text-[11px] text-slate-300 mb-2">{details.description}</p>
+                      <div className="flex items-end gap-2 mb-2">
+                        <p className="text-white text-3xl font-black leading-none">{formatUsd(amount)}</p>
+                        <p className="text-slate-500 text-sm line-through font-bold">{formatUsd(originalAmount)}</p>
+                      </div>
+                      <p className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-emerald-300">
+                        %{discountPercent}
+                      </p>
+                      <ul className="mt-3 space-y-1.5">
+                        {details.features.map((feature) => (
+                          <li key={feature.text} className="flex items-start gap-2">
+                            <span className="mt-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-400/35 bg-indigo-500/10 text-indigo-300">
+                              <Check className="h-2.5 w-2.5" />
+                            </span>
+                            <span className="text-[11px] text-slate-200 leading-snug">
+                              {feature.text}
+                              {feature.upcoming ? (
+                                <span className="ml-1 inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.18em] text-amber-300">
+                                  {t("common.comingSoon")}
+                                </span>
+                              ) : null}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setActivationModal(null)}
+                  disabled={activationSubmitting}
+                  className="flex-1 py-3 rounded-xl glass-pro border border-white/10 text-slate-300 font-black text-xs uppercase tracking-widest hover:text-white transition-all cursor-pointer disabled:opacity-60"
+                >
+                  {t("etsy.cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleStartActivationCheckout()}
+                  disabled={activationSubmitting}
+                  className="flex-1 py-3 rounded-xl bg-indigo-600 text-white font-black text-xs uppercase tracking-widest hover:bg-indigo-500 transition-all cursor-pointer disabled:opacity-60 inline-flex items-center justify-center gap-2"
+                >
+                  {activationSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  {activationSubmitting ? t("etsy.activatePayLoading") : t("etsy.activatePay")}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showConnect && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center px-6">
             <motion.div
               initial={{ opacity: 0 }}
@@ -1011,7 +1069,6 @@ const EtsyPanel: React.FC = () => {
                   </button>
                   <button
                     type="submit"
-                    disabled={isStoreCreationLocked}
                     className="flex-1 py-4 rounded-2xl bg-indigo-600 text-white font-black text-xs uppercase tracking-widest shadow-xl hover:scale-[1.02] active:scale-95 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
                   >
                     Mağazayı Ekle
