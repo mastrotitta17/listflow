@@ -123,10 +123,7 @@ const EtsyPanel: React.FC = () => {
     };
   }, []);
 
-  const topCategories = useMemo(() => {
-    const roots = categories.filter((category) => !category.parentId);
-    return roots.length > 0 ? roots : categories;
-  }, [categories]);
+  const topCategories = useMemo(() => categories, [categories]);
 
   const selectedParentCategory = useMemo(
     () => topCategories.find((category) => category.id === selectedParentCategoryId) ?? topCategories[0] ?? null,
@@ -138,22 +135,13 @@ const EtsyPanel: React.FC = () => {
       return [];
     }
 
-    const parentKeys = [selectedParentCategory.dbId, selectedParentCategory.id, selectedParentCategory.slug]
-      .map((value) => (typeof value === "string" ? value.trim() : ""))
-      .filter(Boolean);
-
-    if (!parentKeys.length) {
-      return [];
-    }
-
-    return categories.filter((category) => {
-      const parentId = typeof category.parentId === "string" ? category.parentId.trim() : "";
-      if (!parentId) {
-        return false;
-      }
-      return parentKeys.includes(parentId);
-    });
-  }, [categories, selectedParentCategory]);
+    return (selectedParentCategory.subProducts ?? [])
+      .map((subProduct) => ({
+        id: subProduct.id,
+        name: subProduct.name,
+      }))
+      .filter((item) => Boolean(item.id) && Boolean(item.name));
+  }, [selectedParentCategory]);
 
   const resolvedSubCategory = useMemo(() => {
     if (!availableSubCategories.length) {
@@ -164,9 +152,7 @@ const EtsyPanel: React.FC = () => {
       return availableSubCategories[0];
     }
 
-    return (
-      availableSubCategories.find((subcategory) => subcategory.id === selectedSubCategoryId) ?? availableSubCategories[0]
-    );
+    return availableSubCategories.find((subcategory) => subcategory.id === selectedSubCategoryId) ?? availableSubCategories[0];
   }, [availableSubCategories, selectedSubCategoryId]);
 
   useEffect(() => {
@@ -418,10 +404,7 @@ const EtsyPanel: React.FC = () => {
         (selectedParentCategory?.dbId && selectedParentCategory.dbId.trim()) ||
         (selectedParentCategory?.id && selectedParentCategory.id.trim()) ||
         null;
-      const subCategoryId =
-        (resolvedSubCategory?.dbId && resolvedSubCategory.dbId.trim()) ||
-        (resolvedSubCategory?.id && resolvedSubCategory.id.trim()) ||
-        null;
+      const subCategoryId = (resolvedSubCategory?.id && resolvedSubCategory.id.trim()) || null;
       const response = await fetch("/api/onboarding/store", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
