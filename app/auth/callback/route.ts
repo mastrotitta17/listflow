@@ -25,6 +25,15 @@ export async function GET(request: NextRequest) {
   const sessionKey = requestUrl.searchParams.get("session_key") ?? null;
 
   if (!code) {
+    // Implicit flow: tokens are in the URL fragment (#access_token=...).
+    // The server cannot read the fragment, but if we have a session_key we can
+    // redirect to extension-done WITH the session_key so the client-side page
+    // can pick up the tokens from the fragment and complete the extension OAuth flow.
+    if (isValidSessionKey(sessionKey)) {
+      const redirectUrl = new URL(nextPath, request.url);
+      redirectUrl.searchParams.set("session_key", sessionKey);
+      return NextResponse.redirect(redirectUrl);
+    }
     return NextResponse.redirect(buildRedirectWithError(request.url, nextPath, "missing_code"));
   }
 
