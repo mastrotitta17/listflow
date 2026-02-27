@@ -1,0 +1,23 @@
+﻿
+> listflow@0.1.0 build
+> next build
+
+Ôû▓ Next.js 16.1.6 (Turbopack)
+- Environments: .env
+
+node.exe : ÔÜá The "middleware" file convention is deprecated. Please use "proxy" instead. Learn
+ more: https://nextjs.org/docs/messages/middleware-to-proxy
+At C:\Users\cetin\AppData\Roaming\npm\npm.ps1:24 char:5
++     & "node$exe"  "$basedir/node_modules/npm/bin/npm-cli.js" $args
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ÔÜá The "middle...leware-to-proxy:String) [], Remo 
+   teException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  Creating an optimized production build ...
+Ô£ô Compiled successfully in 3.1s
+  Running TypeScript ...
+  Collecting page data using 23 workers ...
+Ô¿» Invalid segment configuration export detected. This can cause unexpected behavior from the c
+onfigs not being applied. You should see the relevant failures in the logs above. Please fix the
+m to continue.

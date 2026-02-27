@@ -11,7 +11,8 @@
       "Bash(ls /c/Users/cetin/PROJELER/listflow/.env*)",
       "Bash(ls /c/Users/cetin/PROJELER/listflow/env*)",
       "Bash(npx supabase migration repair --status reverted 20260226031500)",
-      "Bash(npm run db:push)"
+      "Bash(npm run db:push)",
+      "Bash(__NEW_LINE_de63bd13a337fd74__ echo \"\")"
     ]
   }
 }

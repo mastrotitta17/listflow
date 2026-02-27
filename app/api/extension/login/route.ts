@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { bootstrapProfile } from "@/lib/auth/bootstrap";
 import { buildExtensionStateSnapshot } from "@/lib/extension/snapshot";
 import { supabaseServer } from "@/lib/supabase/admin";
+import { serverEnv } from "@/lib/env/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +43,46 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check if MFA upgrade is required for this session
+    const userClient = createClient(
+      serverEnv.NEXT_PUBLIC_SUPABASE_URL,
+      serverEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      { auth: { persistSession: false, autoRefreshToken: false } }
+    );
+    await userClient.auth.setSession({
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
+    });
+
+    const [factorsResult, aalResult] = await Promise.all([
+      userClient.auth.mfa.listFactors(),
+      userClient.auth.mfa.getAuthenticatorAssuranceLevel(),
+    ]);
+
+    type MfaFactor = { id: string; factor_type: string; status: string };
+    const verifiedTotp = ((factorsResult.data?.all ?? []) as MfaFactor[]).find(
+      (f) => f.factor_type === "totp" && f.status === "verified"
+    ) ?? null;
+
+    const needsMfa =
+      Boolean(verifiedTotp) &&
+      aalResult.data?.nextLevel === "aal2" &&
+      aalResult.data?.currentLevel !== "aal2";
+
+    if (needsMfa && verifiedTotp) {
+      return NextResponse.json(
+        {
+          ok: true,
+          mfa_required: true,
+          factor_id: verifiedTotp.id,
+          temp_access_token: data.session.access_token,
+          temp_refresh_token: data.session.refresh_token,
+        },
+        { headers: { "cache-control": "no-store" } }
+      );
+    }
+
+    // No MFA required — proceed normally
     await bootstrapProfile({
       user: data.user,
       fullName:
@@ -63,11 +105,7 @@ export async function POST(request: NextRequest) {
         expiresAt: data.session.expires_at ?? null,
         state,
       },
-      {
-        headers: {
-          "cache-control": "no-store",
-        },
-      }
+      { headers: { "cache-control": "no-store" } }
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Extension login failed";

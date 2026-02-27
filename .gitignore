@@ -11,6 +11,9 @@
 !.yarn/versions
 
 /listflowEklenti
+/normalisting
+/eklentivaryasyon
+
 
 # testing
 /coverage

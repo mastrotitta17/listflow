@@ -5,6 +5,8 @@ import { detectLocale } from "@/lib/i18n/detect-locale";
 import { I18nProvider } from "@/lib/i18n/provider";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
+import { SpeedInsights } from "@vercel/speed-insights/next"
+import { Analytics } from '@vercel/analytics/next';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -35,6 +37,8 @@ export default async function RootLayout({
       >
         <I18nProvider locale={locale}>
           {children}
+          <SpeedInsights />
+          <Analytics />
           <Toaster richColors closeButton position="top-right" />
         </I18nProvider>
       </body>

@@ -140,7 +140,7 @@ const ReferralPanel: React.FC = () => {
   const isEn = locale === "en";
 
   const referralUrl = data?.code
-    ? `${typeof window !== "undefined" ? window.location.origin : "https://listflow.pro"}/login?ref=${data.code}`
+    ? `https://listflow.pro/login?ref=${data.code}`
     : "";
 
   const fetchData = useCallback(async () => {
