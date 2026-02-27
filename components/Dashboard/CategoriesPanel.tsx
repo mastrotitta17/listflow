@@ -27,6 +27,7 @@ import type { Category, SubProduct } from "@/types";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
 
 type FeedbackMessage = {
   type: "success" | "error";
@@ -142,6 +143,53 @@ const CategoriesPanel: React.FC<CategoriesPanelProps> = ({ routeCategorySlug = n
     const routeValue = (category.routeId || category.slug || category.id || "").trim();
     return routeValue || category.id;
   };
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    toast.error(error);
+  }, [error]);
+
+  useEffect(() => {
+    if (!panelMessage) {
+      return;
+    }
+
+    if (panelMessage.type === "error") {
+      toast.error(panelMessage.text);
+      return;
+    }
+
+    toast.success(panelMessage.text);
+  }, [panelMessage]);
+
+  useEffect(() => {
+    if (!catalogMessage) {
+      return;
+    }
+
+    if (catalogMessage.type === "error") {
+      toast.error(catalogMessage.text);
+      return;
+    }
+
+    toast.success(catalogMessage.text);
+  }, [catalogMessage]);
+
+  useEffect(() => {
+    if (!createMessage) {
+      return;
+    }
+
+    if (createMessage.type === "error") {
+      toast.error(createMessage.text);
+      return;
+    }
+
+    toast.success(createMessage.text);
+  }, [createMessage]);
 
   useEffect(() => {
     const handleResize = () => {

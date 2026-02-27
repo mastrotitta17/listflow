@@ -74,6 +74,7 @@ export const trMessages = {
       AMAZON_AUTOMATION: "AMAZON OTOMASYON",
       ORDERS: "SİPARİŞLER",
       SETTINGS: "AYARLAR",
+      REFERRAL: "REFERRAL PROGRAMI",
     },
     userFallback: "Kullanıcı",
     planPrefix: "Plan",

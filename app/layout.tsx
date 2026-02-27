@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { cookies, headers } from "next/headers";
 import { detectLocale } from "@/lib/i18n/detect-locale";
 import { I18nProvider } from "@/lib/i18n/provider";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -32,7 +33,10 @@ export default async function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <I18nProvider locale={locale}>{children}</I18nProvider>
+        <I18nProvider locale={locale}>
+          {children}
+          <Toaster richColors closeButton position="top-right" />
+        </I18nProvider>
       </body>
     </html>
   );

@@ -13,7 +13,8 @@ export enum DashboardSection {
   EBAY_AUTOMATION = 'EBAY_AUTOMATION',
   AMAZON_AUTOMATION = 'AMAZON_AUTOMATION',
   ORDERS = 'ORDERS',
-  SETTINGS = 'SETTINGS'
+  SETTINGS = 'SETTINGS',
+  REFERRAL = 'REFERRAL'
 }
 
 export interface Variation {
@@ -78,6 +79,13 @@ export interface Order {
   category: string;
   date: string;
   address: string;
+  receiverName?: string | null;
+  receiverPhone?: string | null;
+  receiverCountryCode?: string | null;
+  receiverState?: string | null;
+  receiverCity?: string | null;
+  receiverTown?: string | null;
+  receiverPostalCode?: string | null;
   isPaid: boolean;
   note?: string;
   ioss?: string;
@@ -85,6 +93,15 @@ export interface Order {
   price: number;
   storeId?: string | null;
   paymentStatus?: string | null;
+  navlungoStatus?: string | null;
+  navlungoError?: string | null;
+  navlungoStoreId?: string | null;
+  navlungoSearchId?: string | null;
+  navlungoQuoteReference?: string | null;
+  navlungoShipmentId?: string | null;
+  navlungoShipmentReference?: string | null;
+  navlungoTrackingUrl?: string | null;
+  navlungoLastSyncedAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }

@@ -819,6 +819,111 @@ const upsertSubscriptionFromStripe = async (
     plan,
     stripeCustomerId,
   });
+
+  // Qualify referral conversion when subscription becomes active/trialing
+  if (
+    userId &&
+    options?.triggerActivationDispatch === true &&
+    (subscription.status === "active" || subscription.status === "trialing")
+  ) {
+    try {
+      await qualifyReferralConversion(userId);
+    } catch {
+      // Referral qualification should never block subscription sync
+    }
+  }
+};
+
+const qualifyReferralConversion = async (referredUserId: string) => {
+  const { data: conversion } = await supabaseAdmin
+    .from("referral_conversions")
+    .select("id, referrer_user_id, status")
+    .eq("referred_user_id", referredUserId)
+    .eq("status", "pending")
+    .maybeSingle<{ id: string; referrer_user_id: string; status: string }>();
+
+  if (!conversion) return;
+
+  await supabaseAdmin
+    .from("referral_conversions")
+    .update({
+      status: "qualified",
+      subscribed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", conversion.id);
+
+  const { count: qualifiedCount } = await supabaseAdmin
+    .from("referral_conversions")
+    .select("id", { count: "exact", head: true })
+    .eq("referrer_user_id", conversion.referrer_user_id)
+    .eq("status", "qualified");
+
+  const total = qualifiedCount ?? 0;
+
+  const milestones = [
+    { count: 5, type: "discount_20pct" as const },
+    { count: 10, type: "cash_250" as const },
+  ];
+
+  for (const milestone of milestones) {
+    if (total >= milestone.count) {
+      const { data: existingReward } = await supabaseAdmin
+        .from("referral_rewards")
+        .select("id")
+        .eq("user_id", conversion.referrer_user_id)
+        .eq("milestone", milestone.count)
+        .maybeSingle<{ id: string }>();
+
+      if (!existingReward) {
+        if (milestone.type === "discount_20pct") {
+          try {
+            const stripe = getStripe();
+            const coupon = await stripe.coupons.create({
+              percent_off: 20,
+              duration: "once",
+              name: "Referral Reward – 20% off",
+              metadata: {
+                referrer_user_id: conversion.referrer_user_id,
+                milestone: "5",
+              },
+            });
+            const promoCode = await stripe.promotionCodes.create({
+              promotion: { type: "coupon", coupon: coupon.id },
+              max_redemptions: 1,
+              metadata: {
+                referrer_user_id: conversion.referrer_user_id,
+                milestone: "5",
+              },
+            });
+            await supabaseAdmin.from("referral_rewards").insert({
+              user_id: conversion.referrer_user_id,
+              reward_type: milestone.type,
+              milestone: milestone.count,
+              stripe_coupon_id: coupon.id,
+              stripe_promotion_code_id: promoCode.id,
+              promo_code: promoCode.code,
+              status: "issued",
+            });
+          } catch {
+            await supabaseAdmin.from("referral_rewards").insert({
+              user_id: conversion.referrer_user_id,
+              reward_type: milestone.type,
+              milestone: milestone.count,
+              status: "pending",
+            });
+          }
+        } else {
+          await supabaseAdmin.from("referral_rewards").insert({
+            user_id: conversion.referrer_user_id,
+            reward_type: milestone.type,
+            milestone: milestone.count,
+            status: "pending",
+          });
+        }
+      }
+    }
+  }
 };
 
 export async function POST(request: NextRequest) {

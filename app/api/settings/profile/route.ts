@@ -26,6 +26,33 @@ type SettingsSubscriptionResponseRow = {
   isActive: boolean;
 };
 
+type PaymentRow = {
+  id: string;
+  stripe_subscription_id?: string | null;
+  stripe_invoice_id?: string | null;
+  amount_cents?: number | null;
+  currency?: string | null;
+  status?: string | null;
+  created_at?: string | null;
+};
+
+type SettingsSubscriptionInvoiceRow = {
+  id: string;
+  stripeSubscriptionId: string | null;
+  stripeInvoiceId: string | null;
+  amountCents: number;
+  currency: string | null;
+  status: string | null;
+  createdAt: string | null;
+};
+
+type SettingsSubscriptionMonthRow = {
+  monthKey: string;
+  totalAmountCents: number;
+  currency: string | null;
+  invoices: SettingsSubscriptionInvoiceRow[];
+};
+
 type UpdateProfileBody = {
   fullName?: unknown;
   email?: unknown;
@@ -41,6 +68,15 @@ const isMissingColumnError = (error: { message?: string } | null | undefined, co
 
   const message = (error.message ?? "").toLowerCase();
   return message.includes("column") && message.includes(column.toLowerCase());
+};
+
+const isMissingRelationError = (error: { message?: string } | null | undefined, relation: string) => {
+  if (!error) {
+    return false;
+  }
+
+  const message = (error.message ?? "").toLowerCase();
+  return message.includes(`relation`) && message.includes(relation.toLowerCase()) && message.includes("does not exist");
 };
 
 const isRecoverableProfileColumnError = (error: { message?: string } | null | undefined) => {
@@ -131,6 +167,113 @@ const mapSubscriptions = (rows: SettingsSubscriptionRow[]) => {
   }));
 };
 
+const isRecoverablePaymentColumnError = (error: { message?: string } | null | undefined) => {
+  if (!error) {
+    return false;
+  }
+
+  return (
+    isMissingColumnError(error, "stripe_subscription_id") ||
+    isMissingColumnError(error, "stripe_invoice_id") ||
+    isMissingColumnError(error, "currency") ||
+    isMissingColumnError(error, "status") ||
+    isMissingColumnError(error, "created_at")
+  );
+};
+
+const loadSubscriptionInvoicesByMonth = async (userId: string) => {
+  const selectCandidates = [
+    "id,stripe_subscription_id,stripe_invoice_id,amount_cents,currency,status,created_at",
+    "id,stripe_subscription_id,amount_cents,currency,status,created_at",
+    "id,stripe_subscription_id,amount_cents,currency,created_at",
+  ] as const;
+
+  let rows: PaymentRow[] = [];
+  let loaded = false;
+  let lastError: { message?: string } | null = null;
+
+  for (const select of selectCandidates) {
+    const result = await supabaseAdmin
+      .from("payments")
+      .select(select)
+      .eq("user_id", userId)
+      .not("stripe_subscription_id", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (!result.error) {
+      rows = (result.data ?? []) as unknown as PaymentRow[];
+      loaded = true;
+      break;
+    }
+
+    lastError = result.error;
+
+    if (isMissingRelationError(result.error, "payments")) {
+      return [] as SettingsSubscriptionMonthRow[];
+    }
+
+    if (!isRecoverablePaymentColumnError(result.error)) {
+      throw new Error(result.error.message);
+    }
+  }
+
+  if (!loaded) {
+    if (lastError && !isRecoverablePaymentColumnError(lastError)) {
+      throw new Error(lastError.message);
+    }
+
+    return [] as SettingsSubscriptionMonthRow[];
+  }
+
+  const grouped = new Map<string, SettingsSubscriptionMonthRow>();
+
+  for (const row of rows) {
+    const stripeSubscriptionId = row.stripe_subscription_id ?? null;
+    if (!stripeSubscriptionId) {
+      continue;
+    }
+
+    const createdAt = row.created_at ?? null;
+    const parsed = createdAt ? new Date(createdAt) : null;
+    if (!parsed || Number.isNaN(parsed.getTime())) {
+      continue;
+    }
+
+    const monthKey = `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}`;
+    const amountCents = typeof row.amount_cents === "number" ? row.amount_cents : 0;
+    const currency = row.currency ?? null;
+
+    if (!grouped.has(monthKey)) {
+      grouped.set(monthKey, {
+        monthKey,
+        totalAmountCents: 0,
+        currency,
+        invoices: [],
+      });
+    }
+
+    const month = grouped.get(monthKey)!;
+    month.totalAmountCents += amountCents;
+
+    if (month.currency && currency && month.currency.toLowerCase() !== currency.toLowerCase()) {
+      month.currency = null;
+    }
+
+    month.invoices.push({
+      id: row.id,
+      stripeSubscriptionId,
+      stripeInvoiceId: row.stripe_invoice_id ?? null,
+      amountCents,
+      currency,
+      status: row.status ?? null,
+      createdAt,
+    });
+  }
+
+  return Array.from(grouped.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+};
+
 const ensureAuthorizedUser = async (request: NextRequest) => {
   const accessToken = getAccessToken(request);
   if (!accessToken) {
@@ -152,9 +295,10 @@ export async function GET(request: NextRequest) {
       return auth.error;
     }
 
-    const [profile, subscriptions] = await Promise.all([
+    const [profile, subscriptions, subscriptionMonths] = await Promise.all([
       selectProfile(auth.user.id),
       loadUserSubscriptions(auth.user.id),
+      loadSubscriptionInvoicesByMonth(auth.user.id),
     ]);
 
     const mappedSubscriptions = mapSubscriptions(subscriptions);
@@ -170,6 +314,7 @@ export async function GET(request: NextRequest) {
         createdAt: profile?.created_at ?? null,
       },
       subscriptions: mappedSubscriptions,
+      subscriptionMonths,
       hasActiveSubscription,
     });
   } catch (error) {

@@ -10,6 +10,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "sonner";
 
 type BillingPlan = "standard" | "pro" | "turbo";
 type BillingInterval = "month" | "year";
@@ -151,6 +152,22 @@ export default function AdminStripePage() {
   const [savingPlan, setSavingPlan] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    toast.error(error);
+  }, [error]);
+
+  useEffect(() => {
+    if (!info) {
+      return;
+    }
+
+    toast.success(info);
+  }, [info]);
 
   const copy = async (value?: string | null) => {
     if (!value) return;

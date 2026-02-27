@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowUpRight,
@@ -22,8 +23,6 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useStore } from "../store";
-import { View } from "../types";
 import { useI18n } from "@/lib/i18n/provider";
 
 type FeatureCard = {
@@ -65,9 +64,36 @@ const coreFeatureIcons: LucideIcon[] = [Layers, Braces, Package, Globe2];
 const extraFeatureIcons: LucideIcon[] = [ShieldCheck, Workflow];
 
 const LandingPage: React.FC = () => {
-  const { setView } = useStore();
+  const router = useRouter();
   const { t, messages, locale } = useI18n();
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const styleId = "listflow-landing-hide-crisp";
+    let hideStyle = document.getElementById(styleId) as HTMLStyleElement | null;
+
+    if (!hideStyle) {
+      hideStyle = document.createElement("style");
+      hideStyle.id = styleId;
+      hideStyle.textContent = "#crisp-chatbox, #crisp-client, .crisp-client { display: none !important; }";
+      document.head.appendChild(hideStyle);
+    }
+
+    const crispWindow = window as Window & { $crisp?: unknown[] };
+    if (!Array.isArray(crispWindow.$crisp)) {
+      crispWindow.$crisp = [];
+    }
+    crispWindow.$crisp.push(["do", "chat:hide"]);
+    crispWindow.$crisp.push(["do", "chat:close"]);
+
+    return () => {
+      hideStyle?.remove();
+    };
+  }, []);
 
   const copy: LandingCopy =
     locale === "en"
@@ -105,21 +131,48 @@ const LandingPage: React.FC = () => {
           plans: [
             {
               name: "Starter",
-              cadence: "Every 8 hours",
-              detail: "Stable launch rhythm for new stores",
-              highlights: ["4 stores included", "+$20 per extra store", "AI trend-backed product ideas"],
+              cadence: "Automatic Product Upload Every 8 Hours",
+              detail: "Ideal starter package for beginners and users who want to test the system.",
+              highlights: [
+                "Automatic product listing every 8 hours",
+                "Start automation from one selected category",
+                "SEO-friendly Etsy title + description built on trend keywords",
+                "When an order arrives, products are shipped from suppliers in Turkey",
+                "Basic order and operations tracking",
+                "No manual intervention required, the system runs automatically",
+                "One-on-one store setup service is not included",
+                "Best fit for users who already have a store and want to launch fast",
+              ],
             },
             {
               name: "Pro",
-              cadence: "Every 4 hours",
-              detail: "Most popular plan for scaling sellers",
-              highlights: ["6 stores included", "+$20 per extra store", "Faster listing flow"],
+              cadence: "Automatic Product Upload Every 4 Hours + 1:1 Setup",
+              detail: "For users who want to grow and build their business professionally.",
+              highlights: [
+                "Automatic product listing every 4 hours",
+                "Choose products from your preferred category",
+                "Free one-on-one Etsy store setup support",
+                "Trend keyword analysis + SEO-friendly title & description",
+                "Sales-focused product positioning",
+                "Supplier fulfillment from Turkey for incoming orders",
+                "Faster indexing and better visibility advantage",
+                "Not a template package, this is strategic growth",
+              ],
             },
             {
               name: "Turbo",
-              cadence: "Every 2 hours",
-              detail: "Maximum output for aggressive growth",
-              highlights: ["8 stores included", "+$10 per extra store", "High-frequency product rollout"],
+              cadence: "Upload Every 2 Hours - Fast Results Package",
+              detail: "For users who want aggressive growth and faster outcomes.",
+              highlights: [
+                "Automatic product listing every 2 hours",
+                "Category + niche optimization",
+                "Free one-on-one setup and strategic store configuration",
+                "Advanced trend analysis and high-demand product selection",
+                "Competitor-based market positioning",
+                "Priority technical support",
+                "Fast supplier fulfillment from Turkey for orders",
+                "Fast testing and fast scaling model",
+              ],
             },
           ],
           finalTitle: "Turn Etsy into a repeatable growth machine",
@@ -169,21 +222,48 @@ const LandingPage: React.FC = () => {
           plans: [
             {
               name: "Starter",
-              cadence: "8 saatte bir",
-              detail: "Yeni mağazalar için dengeli başlangıç",
-              highlights: ["4 mağaza dahil", "Ek mağaza: +$20", "AI trend destekli ürün fikirleri"],
+              cadence: "8 Saatte Bir Otomatik Ürün Yükleme",
+              detail: "Yeni başlayanlar ve sistemi test etmek isteyenler için ideal başlangıç paketi.",
+              highlights: [
+                "8 saatte bir otomatik ürün listeleme",
+                "Seçtiğin 1 kategori üzerinden otomasyon başlatma",
+                "Etsy’de aranan trend anahtar kelimelerle SEO uyumlu başlık + açıklama",
+                "Sipariş geldiğinde ürünler Türkiye’deki tedarikçiden gönderilir",
+                "Temel sipariş ve operasyon takibi",
+                "Manuel müdahale gerektirmez, sistem otomatik çalışır",
+                "Birebir mağaza kurulum hizmeti dahil değildir.",
+                "Kendi mağazası olan ve hızlı başlamak isteyenler için uygundur.",
+              ],
             },
             {
               name: "Pro",
-              cadence: "4 saatte bir",
-              detail: "Büyüme isteyen satıcılar için en popüler plan",
-              highlights: ["6 mağaza dahil", "Ek mağaza: +$20", "Daha hızlı listeleme akışı"],
+              cadence: "4 Saatte Bir Otomatik Ürün Yükleme + Birebir Kurulum",
+              detail: "Büyümek ve işi profesyonel kurmak isteyenler için.",
+              highlights: [
+                "4 saatte bir otomatik ürün listeleme",
+                "İstediğin kategoriden ürün seçebilme",
+                "Birebir Etsy mağaza açılış ve kurulum desteği (ücretsiz)",
+                "Trend kelime analizi + SEO uyumlu başlık & açıklama",
+                "Satış odaklı ürün konumlandırma",
+                "Siparişlerde Türkiye’den tedarikçi gönderimi",
+                "Daha hızlı indeks alma ve görünürlük avantajı",
+                "Hazır sistem değil, stratejik büyüme paketi.",
+              ],
             },
             {
               name: "Turbo",
-              cadence: "2 saatte bir",
-              detail: "Agresif büyüme için maksimum üretim",
-              highlights: ["8 mağaza dahil", "Ek mağaza: +$10", "Yüksek frekanslı ürün yayını"],
+              cadence: "2 Saatte Bir Yükleme - Hızlı Sonuç Paketi",
+              detail: "Agresif büyüme ve hızlı sonuç almak isteyenler için.",
+              highlights: [
+                "2 saatte bir otomatik ürün listeleme",
+                "Kategori + niş optimizasyonu",
+                "Birebir mağaza kurulum ve stratejik yapılandırma (ücretsiz)",
+                "Gelişmiş trend analizi ve yüksek talep ürün seçimi",
+                "Rakip analizine göre konumlandırma",
+                "Öncelikli teknik destek",
+                "Siparişlerde Türkiye’den hızlı tedarikçi gönderimi",
+                "Hızlı test - hızlı ölçekleme mantığı",
+              ],
             },
           ],
           finalTitle: "Etsy mağazanı sürdürülebilir satış motoruna dönüştür",
@@ -281,7 +361,7 @@ const LandingPage: React.FC = () => {
               {mobileNavOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
             </button>
             <button
-              onClick={() => setView(View.AUTH)}
+              onClick={() => router.push("/login")}
               className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-white transition-all hover:border-indigo-400/35 hover:bg-indigo-500/10 md:px-6 md:py-3 md:text-[11px]"
             >
               {t("landing.login")}
@@ -336,7 +416,7 @@ const LandingPage: React.FC = () => {
 
             <div className="mt-10 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <button
-                onClick={() => setView(View.AUTH)}
+                onClick={() => router.push("/login")}
                 className="inline-flex items-center gap-2 rounded-2xl border border-indigo-400/50 bg-indigo-600 px-8 py-4 text-xs font-black uppercase tracking-[0.2em] text-white shadow-[0_0_35px_rgba(79,70,229,0.35)] transition-all hover:bg-indigo-500"
               >
                 {t("landing.startNow")}
@@ -541,7 +621,7 @@ const LandingPage: React.FC = () => {
                 <ArrowUpRight className="h-4 w-4" />
               </Link>
               <button
-                onClick={() => setView(View.AUTH)}
+                onClick={() => router.push("/login")}
                 className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-7 py-4 text-xs font-black uppercase tracking-[0.2em] text-white transition-all hover:bg-white/15"
               >
                 {copy.finalSecondaryCta}

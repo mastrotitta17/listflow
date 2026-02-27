@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../../lib/supabaseClient';
 import {
@@ -25,6 +25,94 @@ import {
 import { useI18n } from '@/lib/i18n/provider';
 import { useCategoriesRepository } from '@/lib/repositories/categories';
 import { useOrdersRepository } from '@/lib/repositories/orders';
+import { toast } from 'sonner';
+import { Select } from '@/components/ui/select';
+
+type GeoCountryOption = {
+  code: string;
+  name: string;
+};
+
+type GeoStateOption = {
+  code: string;
+  name: string;
+};
+
+type GeoCityOption = {
+  name: string;
+};
+
+type FilterStatus = 'all' | 'paid' | 'unpaid';
+
+type FilterDropdownProps = {
+  value: FilterStatus;
+  onChange: (v: FilterStatus) => void;
+  open: boolean;
+  onToggle: () => void;
+  locale: string;
+  filterLabel: string;
+};
+
+const FilterDropdown: React.FC<FilterDropdownProps> = ({ value, onChange, open, onToggle, locale, filterLabel }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const isEn = locale === 'en';
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onToggle();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open, onToggle]);
+
+  const options: { value: FilterStatus; label: string }[] = [
+    { value: 'all',    label: isEn ? 'All Orders'    : 'Tüm Siparişler'   },
+    { value: 'paid',   label: isEn ? 'Paid'          : 'Ödendi'           },
+    { value: 'unpaid', label: isEn ? 'Unpaid'        : 'Ödenmedi'         },
+  ];
+
+  const activeLabel = options.find((o) => o.value === value)?.label ?? filterLabel;
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`px-5 py-3 rounded-2xl glass border flex items-center gap-2 font-bold text-xs hover:bg-zinc-100 dark:hover:bg-white/5 transition-all uppercase tracking-wider cursor-pointer ${
+          value !== 'all'
+            ? 'border-indigo-500/60 text-indigo-400 dark:text-indigo-400'
+            : 'border-zinc-200 dark:border-white/10'
+        }`}
+      >
+        <Filter className="w-4 h-4" />
+        {value !== 'all' ? activeLabel : filterLabel}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 z-50 w-44 rounded-2xl border border-white/10 bg-[#0d111b] shadow-[0_16px_48px_rgba(5,10,28,0.8)] overflow-hidden">
+          {options.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onChange(opt.value)}
+              className={`w-full text-left px-4 py-3 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-between ${
+                value === opt.value
+                  ? 'bg-indigo-600/20 text-indigo-300'
+                  : 'text-slate-400 hover:bg-white/5 hover:text-white'
+              }`}
+            >
+              {opt.label}
+              {value === opt.value && <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const OrdersPanel: React.FC = () => {
   const { orders, loading, error, createOrder, deleteOrder } = useOrdersRepository();
@@ -32,6 +120,8 @@ const OrdersPanel: React.FC = () => {
   const { t, locale } = useI18n();
   const { categories } = useCategoriesRepository(locale);
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'paid' | 'unpaid'>('all');
+  const [filterOpen, setFilterOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
   const [deleteTargetOrder, setDeleteTargetOrder] = useState<{ id: string; label: string } | null>(null);
@@ -41,6 +131,13 @@ const OrdersPanel: React.FC = () => {
   const [selectedVarId, setSelectedVarId] = useState('');
   const [productLink, setProductLink] = useState('');
   const [address, setAddress] = useState('');
+  const [receiverName, setReceiverName] = useState('');
+  const [receiverPhone, setReceiverPhone] = useState('');
+  const [receiverCountryCode, setReceiverCountryCode] = useState(locale === 'tr' ? 'TR' : 'US');
+  const [receiverState, setReceiverState] = useState('');
+  const [receiverCity, setReceiverCity] = useState('');
+  const [receiverTown, setReceiverTown] = useState('');
+  const [receiverPostalCode, setReceiverPostalCode] = useState('');
   const [note, setNote] = useState('');
   const [ioss, setIoss] = useState('');
   const [labelNumber, setLabelNumber] = useState('');
@@ -48,6 +145,37 @@ const OrdersPanel: React.FC = () => {
   const [selectedStoreId, setSelectedStoreId] = useState('');
   const [storeOptionsLoading, setStoreOptionsLoading] = useState(false);
   const [storeOptionsError, setStoreOptionsError] = useState<string | null>(null);
+  const [countryOptions, setCountryOptions] = useState<GeoCountryOption[]>([]);
+  const [stateOptions, setStateOptions] = useState<GeoStateOption[]>([]);
+  const [cityOptions, setCityOptions] = useState<GeoCityOption[]>([]);
+  const [geoLoadingCountries, setGeoLoadingCountries] = useState(false);
+  const [geoLoadingStates, setGeoLoadingStates] = useState(false);
+  const [geoLoadingCities, setGeoLoadingCities] = useState(false);
+  const [geoError, setGeoError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    toast.error(error);
+  }, [error]);
+
+  useEffect(() => {
+    if (!storeOptionsError) {
+      return;
+    }
+
+    toast.error(storeOptionsError);
+  }, [storeOptionsError]);
+
+  useEffect(() => {
+    if (!geoError) {
+      return;
+    }
+
+    toast.error(geoError);
+  }, [geoError]);
 
   const currentCategory = useMemo(() => categories.find((category) => category.id === selectedCatId), [categories, selectedCatId]);
   const currentSubProduct = useMemo(() => currentCategory?.subProducts.find((subProduct) => subProduct.id === selectedSubId), [currentCategory, selectedSubId]);
@@ -101,6 +229,122 @@ const OrdersPanel: React.FC = () => {
     }
   }, [t]);
 
+  const loadCountryOptions = useCallback(async () => {
+    setGeoLoadingCountries(true);
+    setGeoError(null);
+
+    try {
+      const response = await fetch('/api/geo/countries', {
+        method: 'GET',
+        cache: 'force-cache',
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        rows?: GeoCountryOption[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error || (locale === 'en' ? 'Countries could not be loaded.' : 'Ülke listesi yüklenemedi.'));
+      }
+
+      setCountryOptions(payload.rows ?? []);
+    } catch (loadError) {
+      setCountryOptions([]);
+      setGeoError(loadError instanceof Error ? loadError.message : (locale === 'en' ? 'Countries could not be loaded.' : 'Ülke listesi yüklenemedi.'));
+    } finally {
+      setGeoLoadingCountries(false);
+    }
+  }, [locale]);
+
+  const loadStateOptions = useCallback(async (countryCode: string) => {
+    setGeoLoadingStates(true);
+    setGeoError(null);
+
+    try {
+      const response = await fetch(`/api/geo/states?country=${encodeURIComponent(countryCode)}`, {
+        method: 'GET',
+        cache: 'force-cache',
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        rows?: GeoStateOption[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error || (locale === 'en' ? 'States could not be loaded.' : 'Eyalet listesi yüklenemedi.'));
+      }
+
+      setStateOptions(payload.rows ?? []);
+      return payload.rows ?? [];
+    } catch (loadError) {
+      setStateOptions([]);
+      setGeoError(loadError instanceof Error ? loadError.message : (locale === 'en' ? 'States could not be loaded.' : 'Eyalet listesi yüklenemedi.'));
+      return [];
+    } finally {
+      setGeoLoadingStates(false);
+    }
+  }, [locale]);
+
+  const loadCityOptions = useCallback(async (args: { countryCode: string; stateCode?: string }) => {
+    setGeoLoadingCities(true);
+    setGeoError(null);
+
+    try {
+      const query = new URLSearchParams({
+        country: args.countryCode,
+        limit: '5000',
+      });
+
+      if (args.stateCode) {
+        query.set('state', args.stateCode);
+      }
+
+      const response = await fetch(`/api/geo/cities?${query.toString()}`, {
+        method: 'GET',
+        cache: 'force-cache',
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        rows?: GeoCityOption[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error || (locale === 'en' ? 'Cities could not be loaded.' : 'Şehir listesi yüklenemedi.'));
+      }
+
+      setCityOptions(payload.rows ?? []);
+      return payload.rows ?? [];
+    } catch (loadError) {
+      setCityOptions([]);
+      setGeoError(loadError instanceof Error ? loadError.message : (locale === 'en' ? 'Cities could not be loaded.' : 'Şehir listesi yüklenemedi.'));
+      return [];
+    } finally {
+      setGeoLoadingCities(false);
+    }
+  }, [locale]);
+
+  const hydrateGeoByCountry = useCallback(async (countryCode: string) => {
+    const normalizedCountryCode = countryCode.trim().toUpperCase();
+
+    if (!normalizedCountryCode) {
+      setStateOptions([]);
+      setCityOptions([]);
+      return;
+    }
+
+    const states = await loadStateOptions(normalizedCountryCode);
+
+    if (states.length > 0) {
+      setCityOptions([]);
+      return;
+    }
+
+    await loadCityOptions({ countryCode: normalizedCountryCode });
+  }, [loadCityOptions, loadStateOptions]);
+
   useEffect(() => {
     if (categories.length === 0) {
       if (selectedCatId) {
@@ -126,7 +370,35 @@ const OrdersPanel: React.FC = () => {
     }
 
     void loadStoreOptions();
-  }, [loadStoreOptions, showModal]);
+    if (countryOptions.length === 0) {
+      void loadCountryOptions();
+    }
+    void hydrateGeoByCountry(receiverCountryCode);
+  }, [countryOptions.length, hydrateGeoByCountry, loadCountryOptions, loadStoreOptions, receiverCountryCode, showModal]);
+
+  const handleCountryChange = (nextCountryCode: string) => {
+    const normalizedCountryCode = nextCountryCode.trim().toUpperCase();
+    setReceiverCountryCode(normalizedCountryCode);
+    setReceiverState('');
+    setReceiverCity('');
+    setReceiverTown('');
+    void hydrateGeoByCountry(normalizedCountryCode);
+  };
+
+  const handleStateChange = (nextStateCode: string) => {
+    setReceiverState(nextStateCode);
+    setReceiverCity('');
+    setReceiverTown('');
+    void loadCityOptions({
+      countryCode: receiverCountryCode,
+      stateCode: nextStateCode || undefined,
+    });
+  };
+
+  const handleCityChange = (nextCity: string) => {
+    setReceiverCity(nextCity);
+    setReceiverTown((previousValue) => previousValue || nextCity);
+  };
 
   const calculatedPrice = useMemo(() => {
     const baseMaliyet = currentVariation?.maliyet ?? currentSubProduct?.maliyet ?? 0;
@@ -134,31 +406,44 @@ const OrdersPanel: React.FC = () => {
   }, [currentSubProduct, currentVariation]);
 
   const filteredOrders = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
+    let result = orders;
 
-    if (!term) {
-      return orders;
+    // Status filter
+    if (filterStatus === 'paid') {
+      result = result.filter((order) => order.isPaid);
+    } else if (filterStatus === 'unpaid') {
+      result = result.filter((order) => !order.isPaid);
     }
 
-    return orders.filter((order) => {
-      return [
-        order.subProductName,
-        order.variantName,
-        order.category,
-        order.address,
-        order.labelNumber,
-        order.productLink,
-      ]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(term));
-    });
-  }, [orders, searchTerm]);
+    // Search filter
+    const term = searchTerm.trim().toLowerCase();
+    if (term) {
+      result = result.filter((order) =>
+        [
+          order.productName,
+          order.subProductName,
+          order.variantName,
+          order.category,
+          order.address,
+          order.labelNumber,
+          order.productLink,
+          order.receiverName,
+          order.receiverCity,
+          order.note,
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(term))
+      );
+    }
+
+    return result;
+  }, [orders, searchTerm, filterStatus]);
 
   const handleSendOrder = async (event: React.FormEvent) => {
     event.preventDefault();
 
     if (!currentCategory || !currentSubProduct) {
-      alert('Kategori ve ürün seçimi zorunlu.');
+      toast.error('Kategori ve ürün seçimi zorunlu.');
       return;
     }
 
@@ -166,14 +451,26 @@ const OrdersPanel: React.FC = () => {
       selectedStoreId || (storeOptions.length === 1 ? storeOptions[0].id : '');
 
     if (!resolvedStoreId) {
-      alert(t('orders.storeRequired'));
+      toast.error(t('orders.storeRequired'));
+      return;
+    }
+
+    const resolvedReceiverTown = receiverTown.trim() || receiverCity.trim();
+
+    if (!receiverName.trim() || !receiverPhone.trim() || !receiverCountryCode.trim() || !receiverCity.trim() || !resolvedReceiverTown || !receiverPostalCode.trim()) {
+      toast.error(locale === 'en' ? 'Receiver details are required for shipment.' : 'Navlungo sevkiyatı için alıcı bilgileri zorunludur.');
+      return;
+    }
+
+    if (currentSubProduct.variations?.length && !selectedVarId) {
+      toast.error(locale === 'en' ? 'Please select a variation.' : 'Lütfen bir varyasyon seçin.');
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      await createOrder({
+      const createResult = await createOrder({
         storeId: resolvedStoreId,
         category: currentCategory.name,
         subProductName: currentSubProduct.name,
@@ -181,6 +478,13 @@ const OrdersPanel: React.FC = () => {
         productLink,
         date: new Date().toISOString().split('T')[0],
         address,
+        receiverName: receiverName.trim(),
+        receiverPhone: receiverPhone.trim(),
+        receiverCountryCode: receiverCountryCode.trim().toUpperCase(),
+        receiverState: receiverState.trim() || undefined,
+        receiverCity: receiverCity.trim(),
+        receiverTown: resolvedReceiverTown,
+        receiverPostalCode: receiverPostalCode.trim(),
         note,
         ioss,
         labelNumber,
@@ -188,6 +492,15 @@ const OrdersPanel: React.FC = () => {
       });
 
       setAddress('');
+      setReceiverName('');
+      setReceiverPhone('');
+      setReceiverCountryCode(locale === 'tr' ? 'TR' : 'US');
+      setReceiverState('');
+      setReceiverCity('');
+      setReceiverTown('');
+      setStateOptions([]);
+      setCityOptions([]);
+      setReceiverPostalCode('');
       setNote('');
       setIoss('');
       setLabelNumber('');
@@ -198,8 +511,21 @@ const OrdersPanel: React.FC = () => {
         setSelectedStoreId('');
       }
       setShowModal(false);
+      toast.success(locale === 'en' ? 'Order created successfully.' : 'Sipariş başarıyla oluşturuldu.');
+
+      if (createResult.navlungo?.status === 'started') {
+        toast.success(
+          locale === 'en'
+            ? 'Shipping process has started in the background via Navlungo.'
+            : 'Sevkiyat süreci arka planda Navlungo üzerinden başlatıldı.'
+        );
+      } else if (createResult.navlungo?.status === 'failed') {
+        toast.error(createResult.navlungo.message || (locale === 'en' ? 'Navlungo shipment start failed.' : 'Navlungo sevkiyatı başlatılamadı.'));
+      } else if (createResult.navlungo?.status === 'skipped' && createResult.navlungo.message) {
+        toast.message(createResult.navlungo.message);
+      }
     } catch (saveError) {
-      alert(saveError instanceof Error ? saveError.message : 'Sipariş kaydedilemedi.');
+      toast.error(saveError instanceof Error ? saveError.message : 'Sipariş kaydedilemedi.');
     } finally {
       setIsSubmitting(false);
     }
@@ -241,7 +567,7 @@ const OrdersPanel: React.FC = () => {
       window.location.href = data.url;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Ödeme başlatılamadı.';
-      alert(message);
+      toast.error(message);
     }
   };
 
@@ -257,7 +583,7 @@ const OrdersPanel: React.FC = () => {
       setDeleteTargetOrder(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : t('orders.deleteFailed');
-      alert(message);
+      toast.error(message);
     } finally {
       setDeletingOrderId(null);
     }
@@ -289,9 +615,14 @@ const OrdersPanel: React.FC = () => {
             className="w-full pl-12 pr-4 py-3 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
           />
         </div>
-        <button className="px-5 py-3 rounded-2xl glass border border-zinc-200 dark:border-white/10 flex items-center gap-2 font-bold text-xs hover:bg-zinc-100 dark:hover:bg-white/5 transition-all uppercase tracking-wider cursor-pointer">
-          <Filter className="w-4 h-4" /> {t('orders.filter')}
-        </button>
+        <FilterDropdown
+          value={filterStatus}
+          onChange={(v) => { setFilterStatus(v); setFilterOpen(false); }}
+          open={filterOpen}
+          onToggle={() => setFilterOpen((prev) => !prev)}
+          locale={locale}
+          filterLabel={t('orders.filter')}
+        />
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-3 p-5 custom-scrollbar">
@@ -436,7 +767,7 @@ const OrdersPanel: React.FC = () => {
               initial={{ opacity: 0, y: 50, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 50, scale: 0.95 }}
-              className="relative w-full max-w-2xl p-6 lg:p-10 rounded-[40px] glass-card shadow-2xl overflow-y-auto max-h-full custom-scrollbar bg-[#0a0a0c]"
+              className="relative w-full max-w-4xl p-6 lg:p-10 rounded-[40px] glass-card shadow-2xl overflow-y-auto max-h-full custom-scrollbar bg-[#0a0a0c]"
             >
               <div className="flex items-center gap-3 mb-8">
                 <div className="p-3 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-500/30">
@@ -449,72 +780,69 @@ const OrdersPanel: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">{t('orders.storeLabel')}</label>
-                    <select
-                      required={storeOptions.length > 1}
+                    <Select
                       value={selectedStoreId}
-                      onChange={(e) => setSelectedStoreId(e.target.value)}
+                      onChange={(event) => setSelectedStoreId(event.target.value)}
                       disabled={storeOptionsLoading || storeOptions.length === 0}
-                      className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none text-sm appearance-none bg-transparent disabled:opacity-60"
+                      className="h-[54px] rounded-2xl disabled:opacity-60"
                     >
-                      <option value="" className="dark:bg-zinc-900">
+                      <option value="">
                         {storeOptionsLoading ? t('orders.storeLoading') : t('orders.storePlaceholder')}
                       </option>
                       {storeOptions.map((store) => (
-                        <option key={store.id} value={store.id} className="dark:bg-zinc-900">
+                        <option key={store.id} value={store.id}>
                           {store.name}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                     {storeOptionsError ? <p className="text-[10px] text-red-400 px-1">{storeOptionsError}</p> : null}
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Kategori Seç</label>
-                    <select
+                    <Select
                       value={selectedCatId}
-                      onChange={(e) => {
-                        setSelectedCatId(e.target.value);
+                      onChange={(event) => {
+                        setSelectedCatId(event.target.value);
                         setSelectedSubId('');
                         setSelectedVarId('');
                       }}
-                      className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none text-sm appearance-none bg-transparent"
+                      className="h-[54px] rounded-2xl"
                     >
                       {categories.map((category) => (
-                        <option key={category.id} value={category.id} className="dark:bg-zinc-900">{category.name}</option>
+                        <option key={category.id} value={category.id}>{category.name}</option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Ürün Seç</label>
-                    <select
-                      required
+                    <Select
                       value={selectedSubId}
-                      onChange={(e) => {
-                        setSelectedSubId(e.target.value);
+                      onChange={(event) => {
+                        setSelectedSubId(event.target.value);
                         setSelectedVarId('');
                       }}
-                      className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none text-sm appearance-none bg-transparent"
+                      className="h-[54px] rounded-2xl"
                     >
-                      <option value="" className="dark:bg-zinc-900">Seçiniz...</option>
+                      <option value="">Seçiniz...</option>
                       {currentCategory?.subProducts.map((subProduct) => (
-                        <option key={subProduct.id} value={subProduct.id} className="dark:bg-zinc-900">{subProduct.name}</option>
+                        <option key={subProduct.id} value={subProduct.id}>{subProduct.name}</option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
                   <div className={`space-y-2 transition-opacity duration-300 ${currentSubProduct?.variations ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Varyasyon / Boyut</label>
                     <div className="relative">
-                      <Layers className="absolute left-4 top-3.5 w-4 h-4 text-zinc-400" />
-                      <select
-                        required={Boolean(currentSubProduct?.variations)}
+                      <Layers className="pointer-events-none absolute left-4 top-4 w-4 h-4 text-zinc-400" />
+                      <Select
                         value={selectedVarId}
-                        onChange={(e) => setSelectedVarId(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none text-sm appearance-none bg-transparent"
+                        onChange={(event) => setSelectedVarId(event.target.value)}
+                        className="h-[54px] rounded-2xl pl-10"
                       >
-                        <option value="" className="dark:bg-zinc-900">Varyasyon...</option>
+                        <option value="">Varyasyon...</option>
                         {currentSubProduct?.variations?.map((variation) => (
-                          <option key={variation.id} value={variation.id} className="dark:bg-zinc-900">{variation.name}</option>
+                          <option key={variation.id} value={variation.id}>{variation.name}</option>
                         ))}
-                      </select>
+                      </Select>
                     </div>
                   </div>
                 </div>
@@ -541,9 +869,167 @@ const OrdersPanel: React.FC = () => {
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
                     rows={2}
-                    placeholder="Tam Adres: Alıcı Adı, Sokak, No, Şehir, Posta Kodu, Ülke..."
+                    placeholder={locale === 'en' ? 'Street address: House no, street, apartment...' : 'Sokak adresi: Ev no, sokak, daire...'}
                     className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm resize-none"
                   />
+                </div>
+
+                <div className="p-4 rounded-2xl border border-indigo-500/20 bg-indigo-500/5 space-y-4">
+                  <p className="text-[10px] font-black text-indigo-300 uppercase tracking-[0.24em]">
+                    {locale === 'en' ? 'Navlungo Receiver Details' : 'Navlungo Alıcı Bilgileri'}
+                  </p>
+                  <p className="text-[11px] text-indigo-200/80">
+                    {locale === 'en'
+                      ? 'Enter receiver details according to destination country for global shipping.'
+                      : 'Dünya geneli gönderim için alıcı bilgilerini hedef ülkeye uygun girin.'}
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
+                        {locale === 'en' ? 'Receiver Name' : 'Alıcı Ad Soyad'}
+                      </label>
+                      <input
+                        required
+                        value={receiverName}
+                        onChange={(e) => setReceiverName(e.target.value)}
+                        type="text"
+                        placeholder={locale === 'en' ? 'John Doe' : 'Mehmet Demir'}
+                        className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
+                        {locale === 'en' ? 'Receiver Phone' : 'Alıcı Telefon'}
+                      </label>
+                      <input
+                        required
+                        value={receiverPhone}
+                        onChange={(e) => setReceiverPhone(e.target.value)}
+                        type="text"
+                        placeholder="+905551112233"
+                        className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
+                        {locale === 'en' ? 'Country (ISO2)' : 'Ülke (ISO2)'}
+                      </label>
+                      <Select
+                        value={receiverCountryCode}
+                        onChange={(event) => handleCountryChange(event.target.value)}
+                        disabled={geoLoadingCountries}
+                        className="h-[54px] rounded-2xl"
+                      >
+                        <option value="">{geoLoadingCountries ? (locale === 'en' ? 'Loading countries...' : 'Ülkeler yükleniyor...') : (locale === 'en' ? 'Select country...' : 'Ülke seçin...')}</option>
+                        {countryOptions.map((country) => (
+                          <option key={country.code} value={country.code}>
+                            {country.name} ({country.code})
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
+                        {locale === 'en' ? 'State' : 'Eyalet / Bölge'}
+                      </label>
+                      {stateOptions.length > 0 ? (
+                        <Select
+                          value={receiverState}
+                          onChange={(event) => handleStateChange(event.target.value)}
+                          disabled={geoLoadingStates}
+                          className="h-[54px] rounded-2xl"
+                        >
+                          <option value="">
+                            {geoLoadingStates
+                              ? (locale === 'en' ? 'Loading states...' : 'Eyaletler yükleniyor...')
+                              : (locale === 'en' ? 'Select state...' : 'Eyalet seçin...')}
+                          </option>
+                          {stateOptions.map((stateOption) => (
+                            <option key={stateOption.code} value={stateOption.code}>
+                              {stateOption.name}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <input
+                          value={receiverState}
+                          onChange={(e) => setReceiverState(e.target.value)}
+                          type="text"
+                          placeholder={locale === 'en' ? 'NY' : 'Marmara'}
+                          className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                        />
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
+                        {locale === 'en' ? 'City' : 'Şehir'}
+                      </label>
+                      {cityOptions.length > 0 ? (
+                        <Select
+                          value={receiverCity}
+                          onChange={(event) => handleCityChange(event.target.value)}
+                          disabled={geoLoadingCities || (stateOptions.length > 0 && !receiverState)}
+                          className="h-[54px] rounded-2xl"
+                        >
+                          <option value="">
+                            {geoLoadingCities
+                              ? (locale === 'en' ? 'Loading cities...' : 'Şehirler yükleniyor...')
+                              : stateOptions.length > 0 && !receiverState
+                                ? (locale === 'en' ? 'Select state first...' : 'Önce eyalet seçin...')
+                                : (locale === 'en' ? 'Select city...' : 'Şehir seçin...')}
+                          </option>
+                          {cityOptions.map((city) => (
+                            <option key={city.name} value={city.name}>
+                              {city.name}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <input
+                          required
+                          value={receiverCity}
+                          onChange={(e) => setReceiverCity(e.target.value)}
+                          type="text"
+                          placeholder={locale === 'en' ? 'Istanbul' : 'İstanbul'}
+                          className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                        />
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
+                        {locale === 'en' ? 'Town / District' : 'İlçe'}
+                      </label>
+                      <input
+                        required
+                        value={receiverTown}
+                        onChange={(e) => setReceiverTown(e.target.value)}
+                        type="text"
+                        placeholder={locale === 'en' ? 'Brooklyn' : 'Şişli'}
+                        className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
+                        {locale === 'en' ? 'Postal Code' : 'Posta Kodu'}
+                      </label>
+                      <input
+                        required
+                        value={receiverPostalCode}
+                        onChange={(e) => setReceiverPostalCode(e.target.value)}
+                        type="text"
+                        placeholder="34000"
+                        className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div className="space-y-2">

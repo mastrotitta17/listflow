@@ -59,15 +59,9 @@ const Footer = () => {
             <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] mb-4">{t("footer.sitemap")}</h3>
             <div className="flex flex-col gap-2 text-sm font-bold text-slate-400">
               <Link href="/" className="hover:text-white transition-colors">{t("footer.links.home")}</Link>
-              <button
-                type="button"
-                onClick={() => {
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                className="text-left hover:text-white transition-colors cursor-pointer"
-              >
+              <Link href="/login" className="hover:text-white transition-colors">
                 {t("footer.links.auth")}
-              </button>
+              </Link>
               <button
                 type="button"
                 onClick={() => {

@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { AnimatePresence } from "framer-motion";
 import LandingPage from "@/components/LandingPage";
-import AuthPage from "@/components/AuthPage";
 import Dashboard from "@/components/Dashboard/Dashboard";
 import Footer from "@/components/Footer";
 import CrispChat from "@/components/CrispChat";
@@ -56,7 +55,7 @@ export default function Home() {
         if (session) {
           setView(View.DASHBOARD);
         } else if (useStore.getState().currentView === View.DASHBOARD) {
-          setView(View.AUTH);
+          setView(View.LANDING);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
@@ -83,7 +82,7 @@ export default function Home() {
       if (session) {
         setView(View.DASHBOARD);
       } else if (useStore.getState().currentView === View.DASHBOARD) {
-        setView(View.AUTH);
+        setView(View.LANDING);
       }
     });
 
@@ -124,7 +123,6 @@ export default function Home() {
     <div className="min-h-screen bg-[#0a0a0c]">
       <AnimatePresence mode="wait">
         {currentView === View.LANDING && <LandingPage key="landing" />}
-        {currentView === View.AUTH && <AuthPage key="auth" />}
         {currentView === View.DASHBOARD && <Dashboard key="dashboard" />}
       </AnimatePresence>
       {currentView === View.DASHBOARD ? <CrispChat /> : null}

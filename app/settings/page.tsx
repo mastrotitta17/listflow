@@ -1,6 +1,5 @@
-import DashboardRouteView from "@/components/Dashboard/DashboardRouteView";
-import { DashboardSection } from "@/types";
+import { redirect } from "next/navigation";
 
 export default function SettingsPage() {
-  return <DashboardRouteView section={DashboardSection.SETTINGS} />;
+  redirect("/settings/profile");
 }

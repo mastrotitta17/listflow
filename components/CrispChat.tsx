@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Script from "next/script";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -26,6 +26,7 @@ const pushCrisp = (command: unknown[]) => {
 
 export default function CrispChat() {
   const websiteId = process.env.NEXT_PUBLIC_CRISP_WEBSITE_ID ?? DEFAULT_CRISP_WEBSITE_ID;
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -40,9 +41,14 @@ export default function CrispChat() {
       }
 
       if (!user) {
+        setIsAuthenticated(false);
+        pushCrisp(["do", "chat:hide"]);
+        pushCrisp(["do", "chat:close"]);
         pushCrisp(["do", "session:reset", [false]]);
         return;
       }
+
+      setIsAuthenticated(true);
 
       const email = typeof user.email === "string" ? user.email.trim() : "";
       let fullName =
@@ -81,6 +87,8 @@ export default function CrispChat() {
           },
         ],
       ]);
+
+      pushCrisp(["do", "chat:show"]);
     };
 
     void syncVisitorIdentity();
@@ -97,7 +105,7 @@ export default function CrispChat() {
     };
   }, []);
 
-  if (!websiteId) {
+  if (!websiteId || !isAuthenticated) {
     return null;
   }
 

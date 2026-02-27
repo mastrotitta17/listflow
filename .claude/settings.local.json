@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install qrcode.react --save)",
+      "Bash(node -e \"const q = require\\(''qrcode.react''\\); console.log\\(Object.keys\\(q\\)\\)\")",
+      "Bash(npx tsc --noEmit)",
+      "Bash(node -e \"const Stripe = require\\(''stripe''\\); const s = new Stripe\\(''sk_test_x''\\); console.log\\(typeof s.promotionCodes.create\\)\")",
+      "Bash(npx supabase --version)",
+      "Bash(npx supabase db push --dry-run)",
+      "Bash(npx supabase migration list)",
+      "Bash(ls /c/Users/cetin/PROJELER/listflow/.env*)",
+      "Bash(ls /c/Users/cetin/PROJELER/listflow/env*)",
+      "Bash(npx supabase migration repair --status reverted 20260226031500)",
+      "Bash(npm run db:push)"
+    ]
+  }
+}

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
-import { Check, ChevronDown, ChevronUp } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const EMPTY_VALUE = "__empty__";
@@ -19,6 +19,8 @@ export type SelectProps = {
   required?: boolean;
   name?: string;
   id?: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
 };
 
 type ParsedOption = {
@@ -113,10 +115,15 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
       disabled,
       required,
       name,
-      id
+      id,
+      searchable = true,
+      searchPlaceholder = "Ara / Search...",
     },
     ref
   ) => {
+    const [open, setOpen] = React.useState(false);
+    const [searchQuery, setSearchQuery] = React.useState("");
+
     const options = React.useMemo(() => {
       const parsed: ParsedOption[] = [];
       collectOptions(children, parsed);
@@ -132,6 +139,19 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
     const normalizedDefaultValue =
       defaultValue !== undefined ? (defaultValue === "" ? EMPTY_VALUE : defaultValue) : undefined;
     const actualValue = normalizedValue === EMPTY_VALUE ? "" : normalizedValue ?? "";
+    const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase("en");
+
+    const filteredSelectableOptions = React.useMemo(() => {
+      if (!normalizedSearchQuery) {
+        return selectableOptions;
+      }
+
+      return selectableOptions.filter((option) =>
+        option.label.toLocaleLowerCase("en").includes(normalizedSearchQuery)
+      );
+    }, [normalizedSearchQuery, selectableOptions]);
+
+    const shouldShowSearch = searchable && selectableOptions.length > 0;
 
     return (
       <div className="w-full">
@@ -144,6 +164,13 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
           }}
           disabled={disabled}
           name={name}
+          open={open}
+          onOpenChange={(nextOpen) => {
+            setOpen(nextOpen);
+            if (!nextOpen) {
+              setSearchQuery("");
+            }
+          }}
         >
           <SelectPrimitive.Trigger
             ref={ref}
@@ -167,6 +194,21 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
               <SelectPrimitive.ScrollUpButton className="flex h-6 items-center justify-center text-slate-400">
                 <ChevronUp className="h-4 w-4" />
               </SelectPrimitive.ScrollUpButton>
+              {shouldShowSearch ? (
+                <div className="border-b border-white/10 px-2 py-2">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-500" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      placeholder={searchPlaceholder}
+                      className="w-full rounded-md border border-white/10 bg-[#11131b] py-1.5 pl-8 pr-2 text-xs text-white outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500/70"
+                    />
+                  </div>
+                </div>
+              ) : null}
               <SelectPrimitive.Viewport className="max-h-64 overflow-y-auto p-1 custom-scrollbar">
                 {hasEmptyOption ? (
                   <SelectPrimitive.Item
@@ -181,7 +223,7 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
                   </SelectPrimitive.Item>
                 ) : null}
 
-                {selectableOptions.map((option) => (
+                {filteredSelectableOptions.map((option) => (
                   <SelectPrimitive.Item
                     key={option.value}
                     value={option.value}
@@ -192,8 +234,13 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
                     <SelectPrimitive.ItemIndicator className="absolute right-2 inline-flex items-center">
                       <Check className="h-4 w-4" />
                     </SelectPrimitive.ItemIndicator>
-                  </SelectPrimitive.Item>
+                    </SelectPrimitive.Item>
                 ))}
+                {filteredSelectableOptions.length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-slate-400">
+                    Sonuç bulunamadı.
+                  </div>
+                ) : null}
               </SelectPrimitive.Viewport>
               <SelectPrimitive.ScrollDownButton className="flex h-6 items-center justify-center text-slate-400">
                 <ChevronUp className="h-4 w-4 rotate-180" />

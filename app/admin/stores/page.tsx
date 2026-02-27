@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 
 type LastTrigger = {
   status: string | null;
@@ -303,6 +304,38 @@ export default function AdminStoresPage() {
       return fullName.includes(needle) || email.includes(needle) || userId.includes(needle);
     });
   }, [users, userSearch]);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    toast.error(error);
+  }, [error]);
+
+  useEffect(() => {
+    if (!successMessage) {
+      return;
+    }
+
+    toast.success(successMessage);
+  }, [successMessage]);
+
+  useEffect(() => {
+    if (!usersError) {
+      return;
+    }
+
+    toast.error(usersError);
+  }, [usersError]);
+
+  useEffect(() => {
+    if (!categoriesError) {
+      return;
+    }
+
+    toast.error(categoriesError);
+  }, [categoriesError]);
 
   const loadOverview = useCallback(async () => {
     setLoading(true);

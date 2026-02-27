@@ -8,10 +8,12 @@ import CategoriesPanel from './CategoriesPanel';
 import EtsyPanel from './EtsyPanel';
 import OrdersPanel from './OrdersPanel';
 import SettingsPanel from './SettingsPanel';
+import ComingSoonAutomationPanel from './ComingSoonAutomationPanel';
+import ReferralPanel from './ReferralPanel';
 import { useStore } from '../../store';
 import { DashboardSection } from '../../types';
 import { supabase } from '../../lib/supabaseClient';
-import { Menu, User } from 'lucide-react';
+import { Loader2, Menu, ShieldCheck, User } from 'lucide-react';
 import { useI18n } from '@/lib/i18n/provider';
 
 type SubscriptionSummary = {
@@ -21,6 +23,12 @@ type SubscriptionSummary = {
 
 type ProfileSummary = {
   full_name?: string | null;
+};
+
+type MfaFactor = {
+  id: string;
+  factor_type: string;
+  status: string;
 };
 
 const PLAN_PRIORITY = ["turbo", "pro", "standard"] as const;
@@ -39,13 +47,18 @@ const Dashboard: React.FC<DashboardProps> = ({
   disableTour = false,
 }) => {
   const { dashboardSection, setDashboardSection } = useStore();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [userName, setUserName] = useState<string>('...');
   const [planLabel, setPlanLabel] = useState<string>(t("dashboard.planLoading"));
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [tourVisible, setTourVisible] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState(0);
   const [tourUserId, setTourUserId] = useState<string | null>(null);
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaVerifying, setMfaVerifying] = useState(false);
+  const [mfaError, setMfaError] = useState<string | null>(null);
   const activeSection = routeSection ?? dashboardSection;
 
   const tourSteps = useMemo(
@@ -108,11 +121,50 @@ const Dashboard: React.FC<DashboardProps> = ({
       return label;
     }, [t]);
 
+  const evaluateMfaRequirement = useCallback(async () => {
+      try {
+        const [factorsResponse, aalResponse] = await Promise.all([
+          supabase.auth.mfa.listFactors(),
+          supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
+        ]);
+
+        if (factorsResponse.error || aalResponse.error) {
+          setMfaRequired(false);
+          setMfaFactorId(null);
+          setMfaCode("");
+          setMfaError(null);
+          return;
+        }
+
+        const allFactors = ((factorsResponse.data?.all ?? []) as MfaFactor[]).filter(
+          (factor) => factor.factor_type === "totp"
+        );
+        const verifiedTotpFactor = allFactors.find((factor) => factor.status === "verified") ?? null;
+        const shouldRequireMfa =
+          Boolean(verifiedTotpFactor) &&
+          aalResponse.data?.nextLevel === "aal2" &&
+          aalResponse.data?.currentLevel !== "aal2";
+
+        setMfaRequired(shouldRequireMfa);
+        setMfaFactorId(shouldRequireMfa ? verifiedTotpFactor?.id ?? null : null);
+        if (!shouldRequireMfa) {
+          setMfaCode("");
+          setMfaError(null);
+        }
+      } catch {
+        setMfaRequired(false);
+        setMfaFactorId(null);
+        setMfaCode("");
+        setMfaError(null);
+      }
+    }, []);
+
   const fetchUser = useCallback(async (mountedRef: { value: boolean }) => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
           setTourUserId(user.id);
+          await evaluateMfaRequirement();
 
           if (mountedRef.value && !disableTour && !routeSection && shouldShowTourForUser(user)) {
             setDashboardSection(DashboardSection.CATEGORIES);
@@ -183,14 +235,22 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (mountedRef.value) {
           setUserName(t("dashboard.userFallback"));
           setPlanLabel(t("dashboard.planUnknown"));
+          setMfaRequired(false);
+          setMfaFactorId(null);
+          setMfaCode("");
+          setMfaError(null);
         }
       } catch {
         if (mountedRef.value) {
           setUserName(t("dashboard.userFallback"));
           setPlanLabel(t("dashboard.planUnknown"));
+          setMfaRequired(false);
+          setMfaFactorId(null);
+          setMfaCode("");
+          setMfaError(null);
         }
       }
-    }, [disableTour, resolvePlanLabel, routeSection, setDashboardSection, shouldShowTourForUser, t]);
+    }, [disableTour, evaluateMfaRequirement, resolvePlanLabel, routeSection, setDashboardSection, shouldShowTourForUser, t]);
 
   useEffect(() => {
     const mountedRef = { value: true };
@@ -243,8 +303,58 @@ const Dashboard: React.FC<DashboardProps> = ({
       crispWindow.$crisp = [];
     }
 
-    crispWindow.$crisp.push(["do", tourVisible ? "chat:hide" : "chat:show"]);
-  }, [tourVisible]);
+    crispWindow.$crisp.push(["do", tourVisible || mfaRequired ? "chat:hide" : "chat:show"]);
+  }, [mfaRequired, tourVisible]);
+
+  useEffect(() => {
+    if (!mfaRequired) {
+      return;
+    }
+
+    setTourVisible(false);
+  }, [mfaRequired]);
+
+  const handleMfaVerify = async () => {
+    if (!mfaFactorId) {
+      setMfaError(t("auth.genericError"));
+      return;
+    }
+
+    const code = mfaCode.trim();
+    if (!/^\d{6}$/.test(code)) {
+      setMfaError(locale === "en" ? "Enter a valid 6-digit code." : "Geçerli bir 6 haneli kod girin.");
+      return;
+    }
+
+    setMfaVerifying(true);
+    setMfaError(null);
+
+    try {
+      const result = await supabase.auth.mfa.challengeAndVerify({
+        factorId: mfaFactorId,
+        code,
+      });
+
+      if (result.error) {
+        throw result.error;
+      }
+
+      setMfaRequired(false);
+      setMfaFactorId(null);
+      setMfaCode("");
+      setMfaError(null);
+    } catch (error) {
+      setMfaError(error instanceof Error ? error.message : t("auth.genericError"));
+    } finally {
+      setMfaVerifying(false);
+    }
+  };
+
+  const handleMfaLogout = async () => {
+    await supabase.auth.signOut();
+    await fetch("/api/auth/session", { method: "DELETE" });
+    window.location.href = "/login";
+  };
 
   const markTourCompleted = async () => {
     setTourVisible(false);
@@ -299,18 +409,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       case DashboardSection.META_AUTOMATION:
       case DashboardSection.EBAY_AUTOMATION:
       case DashboardSection.AMAZON_AUTOMATION:
-        return (
-          <div className="h-full w-full flex items-center justify-center">
-            <div className="glass-card-pro border border-white/10 rounded-[32px] p-10 max-w-xl w-full text-center">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300 mb-3">
-                {t("dashboard.sections." + activeSection)}
-              </p>
-              <p className="text-slate-300 font-semibold">{t("common.comingSoon")}</p>
-            </div>
-          </div>
-        );
+        return <ComingSoonAutomationPanel section={activeSection} />;
       case DashboardSection.ORDERS: return <OrdersPanel />;
       case DashboardSection.SETTINGS: return <SettingsPanel />;
+      case DashboardSection.REFERRAL: return <ReferralPanel />;
       default: return null;
     }
   };
@@ -368,6 +470,78 @@ const Dashboard: React.FC<DashboardProps> = ({
     </div>
 
     <AnimatePresence>
+      {mfaRequired ? (
+        <div className="fixed inset-0 z-[2147483647] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            className="relative w-full max-w-md rounded-3xl border border-indigo-400/30 bg-[#101727] p-6 shadow-[0_30px_90px_rgba(5,10,28,0.85)]"
+          >
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/20 text-indigo-200">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-black uppercase tracking-widest text-indigo-300">
+                  {locale === "en" ? "Security Check" : "Güvenlik Kontrolü"}
+                </p>
+                <h3 className="text-lg font-black text-white">
+                  {locale === "en" ? "Enter Authenticator Code" : "Authenticator Kodunu Gir"}
+                </h3>
+              </div>
+            </div>
+
+            <p className="mb-4 text-sm text-slate-300">
+              {locale === "en"
+                ? "Your account has two-factor authentication enabled. Verify with your 6-digit code to continue."
+                : "Hesabınızda iki aşamalı doğrulama aktif. Devam etmek için 6 haneli kodunuzu doğrulayın."}
+            </p>
+
+            <input
+              value={mfaCode}
+              onChange={(event) => setMfaCode(event.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
+              inputMode="numeric"
+              maxLength={6}
+              className="mb-3 w-full rounded-2xl border border-white/15 bg-[#0d1424] px-4 py-3 text-center text-lg font-black tracking-[0.35em] text-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/40"
+              placeholder="000000"
+            />
+
+            {mfaError ? (
+              <p className="mb-3 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-200">
+                {mfaError}
+              </p>
+            ) : null}
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => void handleMfaVerify()}
+                disabled={mfaVerifying}
+                className="flex-1 rounded-xl bg-indigo-600 py-3 text-xs font-black uppercase tracking-widest text-white transition-all hover:bg-indigo-500 disabled:opacity-60 cursor-pointer"
+              >
+                {mfaVerifying ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {t("common.loading")}...
+                  </span>
+                ) : (
+                  locale === "en" ? "Verify" : "Doğrula"
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleMfaLogout()}
+                className="rounded-xl border border-white/15 px-4 py-3 text-xs font-black uppercase tracking-widest text-slate-300 transition-all hover:text-white cursor-pointer"
+              >
+                {locale === "en" ? "Sign Out" : "Çıkış Yap"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      ) : null}
+
       {tourVisible ? (
         <div className="fixed inset-0 z-[2147483647] pointer-events-none">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px]" />

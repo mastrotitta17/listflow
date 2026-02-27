@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import Footer from "@/components/Footer";
+import { Select } from "@/components/ui/select";
 import { buildOAuthRedirectTo } from "@/lib/auth/oauth-client";
 import { useI18n } from "@/lib/i18n/provider";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
@@ -1393,23 +1394,23 @@ const PricingPage = () => {
 
                       <label className="block">
                         <span className="mb-2 ml-1 block text-[10px] font-black uppercase tracking-widest text-slate-500">{copy.storeCategory}</span>
-                        <select
+                        <Select
                           value={storeCategoryId}
                           onChange={(event) => setStoreCategoryId(event.target.value)}
-                          className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="h-[54px] rounded-2xl border-white/10 bg-white/5"
                         >
                           {categories.length ? (
                             categories.map((category) => (
-                              <option key={category.id} value={category.id} className="bg-[#0d1016]">
+                              <option key={category.id} value={category.id}>
                                 {category.name}
                               </option>
                             ))
                           ) : (
-                            <option value="" className="bg-[#0d1016]">
+                            <option value="">
                               {copy.storeDefaultCategory}
                             </option>
                           )}
-                        </select>
+                        </Select>
                       </label>
 
                       <div className="grid grid-cols-2 gap-3">

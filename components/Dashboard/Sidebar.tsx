@@ -1,30 +1,139 @@
 "use client";
 
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../../store';
 import { DashboardSection, View } from '../../types';
 import { supabase } from '../../lib/supabaseClient';
 import { useI18n } from '@/lib/i18n/provider';
 import { useRouter } from 'next/navigation';
-import { 
-  Layers, 
-  Store, 
-  Sparkles,
+import {
+  Gift,
   Globe2,
-  Workflow,
+  Layers,
+  LogOut,
+  Package,
+  Rocket,
+  Settings,
   ShieldCheck,
-  Package, 
-  Settings, 
-  LogOut, 
-  Rocket
+  Sparkles,
+  Star,
+  Store,
+  Users,
+  Workflow,
+  Zap,
 } from 'lucide-react';
 
 type SidebarProps = {
   activeSection?: DashboardSection;
   mobileOpen?: boolean;
   onClose?: () => void;
+};
+
+// ── Mini referral card shown above the Settings button ────────────────────────
+const ReferralCard: React.FC<{
+  onClick: () => void;
+}> = ({ onClick }) => {
+  const [qualified, setQualified] = useState<number | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch("/api/referral");
+        if (!res.ok) return;
+        const data = (await res.json()) as { stats?: { qualifiedCount?: number } };
+        setQualified(data.stats?.qualifiedCount ?? 0);
+      } catch {
+        // silent
+      }
+    };
+    void load();
+  }, []);
+
+  const progress5 = Math.min((qualified ?? 0) / 5, 1);
+  const milestone5Done = (qualified ?? 0) >= 5;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full cursor-pointer group"
+    >
+      <div className="relative rounded-2xl overflow-hidden border border-indigo-500/25 bg-linear-to-br from-indigo-900/35 via-[#0d111b] to-cyan-900/15 px-4 py-3.5 transition-all duration-300 hover:border-indigo-500/50 hover:shadow-[0_8px_32px_rgba(99,102,241,0.25)]">
+        {/* Glow blobs */}
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute -top-4 -right-4 h-16 w-16 rounded-full bg-indigo-500/20 blur-xl group-hover:bg-indigo-500/30 transition-all" />
+          <div className="absolute -bottom-4 -left-4 h-12 w-12 rounded-full bg-cyan-500/10 blur-xl" />
+        </div>
+
+        {/* Content */}
+        <div className="relative flex items-center gap-3">
+          {/* Icon */}
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-indigo-600/25 border border-indigo-500/30 group-hover:scale-110 transition-transform">
+            <Gift className="h-4 w-4 text-indigo-300" />
+          </div>
+
+          {/* Text */}
+          <div className="flex-1 min-w-0 text-left">
+            <div className="flex items-center gap-1.5">
+              <p className="text-[11px] font-black tracking-tight text-white leading-none">
+                Referral
+              </p>
+              {/* Floating sparkle */}
+              <motion.div
+                animate={{ rotate: [0, 20, -20, 0], scale: [1, 1.2, 1] }}
+                transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
+              >
+                <Sparkles className="h-3 w-3 text-amber-400" />
+              </motion.div>
+            </div>
+            <p className="text-[9px] text-slate-500 font-bold mt-0.5 leading-none">
+              {milestone5Done ? "🎉 Ödül Kazandın!" : `${qualified ?? "…"}/5 arkadaş`}
+            </p>
+          </div>
+
+          {/* Users icon */}
+          <Users className="h-4 w-4 text-slate-600 group-hover:text-slate-400 transition-colors shrink-0" />
+        </div>
+
+        {/* Progress bar */}
+        <div className="relative mt-3 h-1.5 w-full rounded-full bg-white/5">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${progress5 * 100}%` }}
+            transition={{ duration: 1, ease: "easeOut", delay: 0.3 }}
+            className={`h-full rounded-full ${milestone5Done ? "bg-linear-to-r from-indigo-500 to-cyan-400" : "bg-indigo-600"}`}
+          />
+          {/* Stars on progress bar */}
+          {[1, 2, 3, 4, 5].map((n) => (
+            <div
+              key={n}
+              className="absolute top-1/2 -translate-y-1/2"
+              style={{ left: `${(n / 5) * 100 - 2}%` }}
+            >
+              <Star
+                className={`h-2.5 w-2.5 ${
+                  (qualified ?? 0) >= n ? "text-indigo-300 fill-indigo-300" : "text-slate-700"
+                }`}
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* Rewards badge row */}
+        <div className="relative mt-2.5 flex items-center gap-2">
+          <div className="flex items-center gap-1 rounded-full bg-indigo-600/15 border border-indigo-500/20 px-2 py-0.5">
+            <Zap className="h-2.5 w-2.5 text-indigo-400" />
+            <span className="text-[9px] font-black text-indigo-300">%20 indirim</span>
+          </div>
+          <div className="flex items-center gap-1 rounded-full bg-amber-600/15 border border-amber-500/20 px-2 py-0.5">
+            <span className="text-[9px] font-black text-amber-300">$250 nakit</span>
+          </div>
+        </div>
+      </div>
+    </button>
+  );
 };
 
 const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, onClose }) => {
@@ -50,7 +159,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
       case DashboardSection.ORDERS:
         return "/orders";
       case DashboardSection.SETTINGS:
-        return "/settings";
+        return "/settings/profile";
+      case DashboardSection.REFERRAL:
+        return "/referral";
       default:
         return "/";
     }
@@ -66,6 +177,11 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
       "/amazon-automation",
       "/orders",
       "/settings",
+      "/settings/profile",
+      "/settings/subscription",
+      "/settings/security",
+      "/settings/account",
+      "/referral",
     ];
 
     for (const path of staticPaths) {
@@ -81,8 +197,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
       console.error("Çıkış yapılırken hata:", error.message);
     }
     onClose?.();
-    setView(View.AUTH);
-    router.push("/");
+    setView(View.LANDING);
+    router.push("/login");
   };
 
   const menuItems = [
@@ -112,14 +228,14 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
       >
       {/* Brand Logo Section */}
       <div
-        className="flex items-center gap-4 px-2 py-6 mb-10 group cursor-pointer"
+        className="flex items-center gap-4 px-2 py-6 mb-5 group cursor-pointer"
         onClick={() => {
           onClose?.();
           setView(View.LANDING);
           router.push("/");
         }}
       >
-        <div className="w-10 h-10 bg-indigo-600 rounded-[12px] flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:rotate-6 transition-all border border-indigo-400/30">
+        <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:rotate-6 transition-all border border-indigo-400/30">
           <Rocket className="text-white w-5 h-5" />
         </div>
         <div>
@@ -140,8 +256,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
                 onClose?.();
               }}
               className={`w-full flex items-center gap-4 px-5 py-4 rounded-[18px] transition-all duration-300 relative group cursor-pointer group/coming ${
-                isActive 
-                  ? 'bg-indigo-600/15 border border-indigo-500/40 text-white' 
+                isActive
+                  ? 'bg-indigo-600/15 border border-indigo-500/40 text-white'
                   : 'hover:bg-white/5 text-slate-400 hover:text-white'
               }`}
             >
@@ -153,7 +269,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
                 </span>
               )}
               {isActive && (
-                <motion.div 
+                <motion.div
                   layoutId="activeSideIndicator"
                   className="absolute right-0 w-1 h-5 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.5)]"
                 />
@@ -165,6 +281,15 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
 
       {/* Footer Section */}
       <div className="mt-auto space-y-2 pt-6 border-t border-indigo-500/10">
+        {/* ── Referral Card ── */}
+        <ReferralCard
+          onClick={() => {
+            setDashboardSection(DashboardSection.REFERRAL);
+            router.push("/referral");
+            onClose?.();
+          }}
+        />
+
         <button
           onClick={() => {
             setDashboardSection(DashboardSection.SETTINGS);
@@ -172,8 +297,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
             onClose?.();
           }}
           className={`w-full flex items-center gap-4 px-5 py-4 rounded-[18px] transition-all cursor-pointer ${
-            effectiveSection === DashboardSection.SETTINGS 
-              ? 'bg-indigo-600/15 border border-indigo-500/40 text-white' 
+            effectiveSection === DashboardSection.SETTINGS
+              ? 'bg-indigo-600/15 border border-indigo-500/40 text-white'
               : 'hover:bg-white/5 text-slate-500 hover:text-white font-bold'
           }`}
         >
@@ -182,7 +307,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
         </button>
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-4 px-5 py-4 rounded-[18px] hover:bg-red-500/10 text-slate-500 hover:text-red-400 transition-all group font-bold cursor-pointer"
+          className="w-full flex items-center gap-4 px-5 py-4 mb-6 rounded-[18px] hover:bg-red-500/10 text-slate-500 hover:text-red-400 transition-all group font-bold cursor-pointer"
         >
           <LogOut className="w-4.5 h-4.5 group-hover:-translate-x-1 transition-transform" />
           <span className="text-[14px]">{t("sidebar.logout")}</span>

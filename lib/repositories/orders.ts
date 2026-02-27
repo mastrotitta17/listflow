@@ -7,6 +7,12 @@ type OrdersResponse = {
   rows?: Order[];
   row?: Order;
   id?: string;
+  navlungo?: {
+    status?: "started" | "failed" | "skipped";
+    reason?: string;
+    message?: string;
+    trackingUrl?: string;
+  };
   error?: string;
 };
 
@@ -18,10 +24,22 @@ export type CreateOrderInput = {
   productLink: string;
   date: string;
   address: string;
+  receiverName: string;
+  receiverPhone: string;
+  receiverCountryCode: string;
+  receiverState?: string;
+  receiverCity: string;
+  receiverTown: string;
+  receiverPostalCode: string;
   note?: string;
   ioss?: string;
   labelNumber: string;
   price: number;
+};
+
+export type CreateOrderResult = {
+  order: Order | null;
+  navlungo: OrdersResponse["navlungo"] | null;
 };
 
 export const useOrdersRepository = () => {
@@ -58,7 +76,7 @@ export const useOrdersRepository = () => {
     void loadOrders();
   }, [loadOrders]);
 
-  const createOrder = useCallback(async (input: CreateOrderInput) => {
+  const createOrder = useCallback(async (input: CreateOrderInput): Promise<CreateOrderResult> => {
     const response = await fetch("/api/orders", {
       method: "POST",
       headers: {
@@ -75,11 +93,17 @@ export const useOrdersRepository = () => {
 
     if (payload.row) {
       setOrders((previous) => [payload.row as Order, ...previous]);
-      return payload.row as Order;
+      return {
+        order: payload.row as Order,
+        navlungo: payload.navlungo ?? null,
+      };
     }
 
     await loadOrders();
-    return null;
+    return {
+      order: null,
+      navlungo: payload.navlungo ?? null,
+    };
   }, [loadOrders]);
 
   const deleteOrder = useCallback(async (orderId: string) => {

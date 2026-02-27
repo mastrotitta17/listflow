@@ -74,6 +74,7 @@ export const enMessages = {
       AMAZON_AUTOMATION: "AMAZON AUTOMATION",
       ORDERS: "ORDERS",
       SETTINGS: "SETTINGS",
+      REFERRAL: "REFERRAL PROGRAM",
     },
     userFallback: "User",
     planPrefix: "Plan",

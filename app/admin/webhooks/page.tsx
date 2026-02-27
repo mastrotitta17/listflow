@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
 
 type ExecuteResult = {
   status?: number;
@@ -375,6 +376,22 @@ export default function AdminWebhookConsolePage() {
   const [info, setInfo] = useState<string | null>(null);
   const directCronLastLoadedAtRef = useRef(0);
   const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    toast.error(error);
+  }, [error]);
+
+  useEffect(() => {
+    if (!info) {
+      return;
+    }
+
+    toast.info(info);
+  }, [info]);
 
   const configMap = useMemo(() => new Map(configs.map((item) => [item.id, item])), [configs]);
   const productMap = useMemo(() => new Map(products.map((item) => [item.id, item])), [products]);

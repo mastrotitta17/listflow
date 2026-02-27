@@ -20,6 +20,7 @@ import { useI18n } from "@/lib/i18n/provider";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
 import { Select } from "@/components/ui/select";
 import type { Shop } from "@/types";
+import { toast } from "sonner";
 
 type BillingPlan = "standard" | "pro" | "turbo";
 type BillingInterval = "month" | "year";
@@ -104,6 +105,19 @@ const EtsyPanel: React.FC = () => {
   const [deleteTargetShop, setDeleteTargetShop] = useState<Shop | null>(null);
   const [isDeletingStoreId, setIsDeletingStoreId] = useState<string | null>(null);
   const [nowTs, setNowTs] = useState<number>(Date.now());
+
+  useEffect(() => {
+    if (!storeActionMessage) {
+      return;
+    }
+
+    if (storeActionMessage.type === "error") {
+      toast.error(storeActionMessage.text);
+      return;
+    }
+
+    toast.success(storeActionMessage.text);
+  }, [storeActionMessage]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -752,18 +766,6 @@ const EtsyPanel: React.FC = () => {
         <div className="px-4 mb-4">
           <h2 className="text-[10px] font-black text-indigo-400/60 uppercase tracking-[0.3em]">{t("etsy.storesTitle")}</h2>
         </div>
-
-        {storeActionMessage && (
-          <div
-            className={`rounded-2xl border px-4 py-3 text-sm ${
-              storeActionMessage.type === "error"
-                ? "border-red-500/30 bg-red-500/10 text-red-200"
-                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-            }`}
-          >
-            {storeActionMessage.text}
-          </div>
-        )}
 
         {shops.length === 0 ? (
           <div className="py-20 glass-pro rounded-[40px] text-center border border-dashed border-indigo-500/20">

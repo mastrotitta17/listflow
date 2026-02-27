@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
 
 type VariationDraft = {
   localId: string;
@@ -432,6 +433,22 @@ export default function AdminCategoriesClient() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    toast.error(error);
+  }, [error]);
+
+  useEffect(() => {
+    if (!successMessage) {
+      return;
+    }
+
+    toast.success(successMessage);
+  }, [successMessage]);
 
   const resetCreateForm = () => {
     setCategoryCode("");

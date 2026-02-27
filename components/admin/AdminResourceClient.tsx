@@ -18,6 +18,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
 
 type Row = Record<string, unknown>;
 type FieldType = "text" | "number" | "textarea" | "select" | "boolean" | "array" | "json";
@@ -762,6 +763,22 @@ export default function AdminResourceClient({
     setEditingRowId(null);
     setEditValues({});
   }, [config]);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    toast.error(error);
+  }, [error]);
+
+  useEffect(() => {
+    if (!info) {
+      return;
+    }
+
+    toast.success(info);
+  }, [info]);
 
   const loadRows = useCallback(async () => {
     setLoading(true);

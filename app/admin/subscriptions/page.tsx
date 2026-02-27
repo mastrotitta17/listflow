@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -20,6 +20,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DataTable } from "@/components/ui/data-table";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 
 type RevenuePoint = {
   monthKey: string;
@@ -198,6 +199,52 @@ export default function AdminSubscriptionsPage() {
   const [coverageSyncing, setCoverageSyncing] = useState(false);
   const [coverageError, setCoverageError] = useState<string | null>(null);
   const [coverageInfo, setCoverageInfo] = useState<string | null>(null);
+  const lastTrendWarningsRef = useRef("");
+  const lastCoverageWarningsRef = useRef("");
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    toast.error(error);
+  }, [error]);
+
+  useEffect(() => {
+    if (!coverageError) {
+      return;
+    }
+
+    toast.error(coverageError);
+  }, [coverageError]);
+
+  useEffect(() => {
+    if (!coverageInfo) {
+      return;
+    }
+
+    toast.success(coverageInfo);
+  }, [coverageInfo]);
+
+  useEffect(() => {
+    const joined = trendWarnings.join(" | ").trim();
+    if (!joined || joined === lastTrendWarningsRef.current) {
+      return;
+    }
+
+    lastTrendWarningsRef.current = joined;
+    toast.warning(joined);
+  }, [trendWarnings]);
+
+  useEffect(() => {
+    const joined = coverageWarnings.join(" | ").trim();
+    if (!joined || joined === lastCoverageWarningsRef.current) {
+      return;
+    }
+
+    lastCoverageWarningsRef.current = joined;
+    toast.warning(joined);
+  }, [coverageWarnings]);
 
   useEffect(() => {
     let mounted = true;
