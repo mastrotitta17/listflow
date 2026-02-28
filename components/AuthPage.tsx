@@ -7,7 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useStore } from "../store";
 import { View } from "../types";
 import { supabase } from "../lib/supabaseClient";
-import { ArrowLeft, Loader2, Lock, Mail, Rocket, ShieldCheck, User } from "lucide-react";
+import { ArrowLeft, Loader2, Lock, Mail, Rocket, ShieldCheck, User as UserIcon } from "lucide-react";
 import { useI18n } from "@/lib/i18n/provider";
 import { buildOAuthRedirectTo } from "@/lib/auth/oauth-client";
 import { toast } from "sonner";
@@ -662,7 +662,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
                       {t("auth.name")}
                     </label>
                     <div className="relative">
-                      <User className="absolute left-4 top-3.5 h-5 w-5 text-slate-500" />
+                      <UserIcon className="absolute left-4 top-3.5 h-5 w-5 text-slate-500" />
                       <input
                         type="text"
                         required
