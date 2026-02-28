@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { notFoundResponse, requireAdminRequest } from "@/lib/auth/admin-request";
-import { serverEnv } from "@/lib/env/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
+import { resolvePublicSiteUrl } from "@/lib/url/public-site";
 
 export const runtime = "nodejs";
 
@@ -190,12 +190,12 @@ const insertFallbackSubscription = async (params: {
   return false;
 };
 
-const generateAdminMagicLink = async (email: string) => {
+const generateAdminMagicLink = async (email: string, appUrl: string) => {
   const generateResult = await supabaseAdmin.auth.admin.generateLink({
     type: "magiclink",
     email,
     options: {
-      redirectTo: `${serverEnv.APP_URL}/legacy-onboarding`,
+      redirectTo: `${appUrl}/legacy-onboarding`,
     },
   });
 
@@ -207,12 +207,12 @@ const generateAdminMagicLink = async (email: string) => {
   return typeof properties.action_link === "string" ? properties.action_link : null;
 };
 
-const dispatchMagicLinkEmail = async (email: string) => {
+const dispatchMagicLinkEmail = async (email: string, appUrl: string) => {
   const result = await supabaseAdmin.auth.signInWithOtp({
     email,
     options: {
       shouldCreateUser: false,
-      emailRedirectTo: `${serverEnv.APP_URL}/legacy-onboarding`,
+      emailRedirectTo: `${appUrl}/legacy-onboarding`,
     },
   });
 
@@ -229,6 +229,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const appUrl = resolvePublicSiteUrl(request);
     const body = (await request.json().catch(() => ({}))) as OnboardLegacyBody;
 
     const email = normalizeEmail(body.email);
@@ -359,8 +360,8 @@ export async function POST(request: NextRequest) {
     let emailDispatched = false;
     let emailDispatchError: string | null = null;
     if (strategy === "magic_link") {
-      actionLink = await generateAdminMagicLink(email);
-      const emailDispatch = await dispatchMagicLinkEmail(email);
+      actionLink = await generateAdminMagicLink(email, appUrl);
+      const emailDispatch = await dispatchMagicLinkEmail(email, appUrl);
       emailDispatched = emailDispatch.ok;
       emailDispatchError = emailDispatch.error;
     }

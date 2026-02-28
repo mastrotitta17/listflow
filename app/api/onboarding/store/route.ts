@@ -295,22 +295,23 @@ const updateSubscriptionAsProAndBindStore = async (args: {
       .eq("user_id", args.userId)
       .select("id")
       .maybeSingle<{ id: string }>();
+    const updateError = result.error;
 
-    if (!result.error && result.data?.id) {
+    if (!updateError && result.data?.id) {
       return;
     }
 
-    if (!result.error && !result.data?.id) {
+    if (!updateError && !result.data?.id) {
       lastError = "Subscription record not found for user.";
       continue;
     }
 
-    if (isRecoverableColumnError(result.error, ["store_id", "shop_id", "plan", "updated_at"])) {
-      lastError = result.error.message;
+    if (isRecoverableColumnError(updateError, ["store_id", "shop_id", "plan", "updated_at"])) {
+      lastError = updateError.message;
       continue;
     }
 
-    throw new Error(result.error.message);
+    throw new Error(updateError.message);
   }
 
   throw new Error(lastError ?? "Subscription could not be linked to store.");
@@ -331,13 +332,14 @@ const setStoreAsPro = async (args: { storeId: string; userId: string }) => {
       .update(payload)
       .eq("id", args.storeId)
       .eq("user_id", args.userId);
+    const updateError = result.error;
 
-    if (!result.error) {
+    if (!updateError) {
       return;
     }
 
-    if (!isRecoverableColumnError(result.error, ["price_cents", "status", "updated_at"])) {
-      throw new Error(result.error.message);
+    if (!isRecoverableColumnError(updateError, ["price_cents", "status", "updated_at"])) {
+      throw new Error(updateError.message);
     }
   }
 };
