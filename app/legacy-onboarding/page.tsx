@@ -77,6 +77,15 @@ const recoverSessionFromUrl = async () => {
   }
 
   const url = new URL(window.location.href);
+  const authCode = url.searchParams.get("code");
+  if (authCode) {
+    const exchanged = await supabase.auth.exchangeCodeForSession(authCode);
+    if (!exchanged.error && exchanged.data.session) {
+      stripUrlAuthArtifacts();
+      return exchanged.data.session;
+    }
+  }
+
   const tokenHash = url.searchParams.get("token_hash");
   const tokenType = url.searchParams.get("type");
 
