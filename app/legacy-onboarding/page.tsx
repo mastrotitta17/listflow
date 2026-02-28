@@ -34,6 +34,8 @@ const syncServerSession = async (session: Session | null) => {
   await fetch("/api/auth/session", { method: "DELETE" });
 };
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const stripUrlAuthArtifacts = () => {
   if (typeof window === "undefined") {
     return;
@@ -115,6 +117,28 @@ const recoverSessionFromUrl = async () => {
     if (!setSession.error && setSession.data.session) {
       stripUrlAuthArtifacts();
       return setSession.data.session;
+    }
+  }
+
+  return null;
+};
+
+const resolveStableSession = async () => {
+  const initial = await supabase.auth.getSession();
+  if (initial.data.session) {
+    return initial.data.session;
+  }
+
+  const recovered = await recoverSessionFromUrl();
+  if (recovered) {
+    return recovered;
+  }
+
+  for (const delayMs of [250, 500, 1000]) {
+    await wait(delayMs);
+    const retried = await supabase.auth.getSession();
+    if (retried.data.session) {
+      return retried.data.session;
     }
   }
 
@@ -221,19 +245,7 @@ export default function LegacyOnboardingPage() {
 
     const bootstrap = async () => {
       try {
-        let {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!session) {
-          session = await recoverSessionFromUrl();
-        }
-
-        if (!session) {
-          await new Promise((resolve) => setTimeout(resolve, 250));
-          const retried = await supabase.auth.getSession();
-          session = retried.data.session;
-        }
+        const session = await resolveStableSession();
 
         await syncServerSession(session);
 
@@ -281,7 +293,12 @@ export default function LegacyOnboardingPage() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (_event, incomingSession) => {
+      let session = incomingSession;
+      if (!session) {
+        session = await resolveStableSession();
+      }
+
       await syncServerSession(session);
 
       if (!session?.user) {
