@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Session, User } from "@supabase/supabase-js";
+import type { EmailOtpType, Session, User } from "@supabase/supabase-js";
 import { Loader2, Rocket, ShieldCheck, Store } from "lucide-react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
@@ -32,6 +32,84 @@ const syncServerSession = async (session: Session | null) => {
   }
 
   await fetch("/api/auth/session", { method: "DELETE" });
+};
+
+const stripUrlAuthArtifacts = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  const removableParams = [
+    "token_hash",
+    "type",
+    "code",
+    "authError",
+    "access_token",
+    "refresh_token",
+    "expires_in",
+    "expires_at",
+    "token_type",
+  ];
+
+  let changed = false;
+  for (const key of removableParams) {
+    if (url.searchParams.has(key)) {
+      url.searchParams.delete(key);
+      changed = true;
+    }
+  }
+
+  if (url.hash) {
+    changed = true;
+  }
+
+  if (changed) {
+    const query = url.searchParams.toString();
+    const next = `${url.pathname}${query ? `?${query}` : ""}`;
+    window.history.replaceState({}, "", next);
+  }
+};
+
+const recoverSessionFromUrl = async () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  const tokenHash = url.searchParams.get("token_hash");
+  const tokenType = url.searchParams.get("type");
+
+  if (tokenHash && tokenType) {
+    const verify = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: tokenType as EmailOtpType,
+    });
+
+    if (!verify.error && verify.data.session) {
+      stripUrlAuthArtifacts();
+      return verify.data.session;
+    }
+  }
+
+  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+  const hashParams = new URLSearchParams(hash);
+  const accessToken = hashParams.get("access_token");
+  const refreshToken = hashParams.get("refresh_token");
+
+  if (accessToken && refreshToken) {
+    const setSession = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+
+    if (!setSession.error && setSession.data.session) {
+      stripUrlAuthArtifacts();
+      return setSession.data.session;
+    }
+  }
+
+  return null;
 };
 
 const getUserMetadata = (user: User | null | undefined) => {
@@ -134,9 +212,19 @@ export default function LegacyOnboardingPage() {
 
     const bootstrap = async () => {
       try {
-        const {
+        let {
           data: { session },
         } = await supabase.auth.getSession();
+
+        if (!session) {
+          session = await recoverSessionFromUrl();
+        }
+
+        if (!session) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          const retried = await supabase.auth.getSession();
+          session = retried.data.session;
+        }
 
         await syncServerSession(session);
 

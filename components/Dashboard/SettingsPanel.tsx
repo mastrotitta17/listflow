@@ -144,6 +144,9 @@ const SettingsPanel: React.FC = () => {
   const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
 
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isOpeningSubscriptionPortal, setIsOpeningSubscriptionPortal] = useState(false);
   const [isOpeningUpgradePortal, setIsOpeningUpgradePortal] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
@@ -359,6 +362,42 @@ const SettingsPanel: React.FC = () => {
       setInfoMessage(error instanceof Error ? error.message : t("settings.saveFailed"));
     } finally {
       setIsSavingProfile(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    const password = newPassword.trim();
+    const passwordConfirm = newPasswordConfirm.trim();
+
+    if (password.length < 8) {
+      setInfoMessage(isEn ? "Password must be at least 8 characters." : "Şifre en az 8 karakter olmalı.");
+      return;
+    }
+
+    if (password !== passwordConfirm) {
+      setInfoMessage(isEn ? "Passwords do not match." : "Şifreler eşleşmiyor.");
+      return;
+    }
+
+    setIsChangingPassword(true);
+    setInfoMessage(null);
+
+    try {
+      const update = await supabase.auth.updateUser({
+        password,
+      });
+
+      if (update.error) {
+        throw update.error;
+      }
+
+      setNewPassword("");
+      setNewPasswordConfirm("");
+      setInfoMessage(isEn ? "Password has been updated." : "Şifre güncellendi.");
+    } catch (error) {
+      setInfoMessage(error instanceof Error ? error.message : isEn ? "Password could not be updated." : "Şifre güncellenemedi.");
+    } finally {
+      setIsChangingPassword(false);
     }
   };
 
@@ -726,6 +765,42 @@ const SettingsPanel: React.FC = () => {
           {isSavingProfile ? `${t("common.loading")}...` : t("settings.saveProfile")}
         </button>
       </form>
+
+      <div className="mt-5 rounded-2xl border border-zinc-200/80 p-4 dark:border-white/10 dark:bg-white/[0.02]">
+        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-400">
+          {isEn ? "Change Password" : "Şifre Değiştir"}
+        </p>
+        <p className="mt-1 text-xs text-zinc-500">
+          {isEn ? "Create a new password for your account." : "Hesabınız için yeni bir şifre oluşturun."}
+        </p>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <input
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+            type="password"
+            placeholder={isEn ? "New password" : "Yeni şifre"}
+            className="w-full rounded-2xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-indigo-500 dark:border-white/10 dark:bg-white/5"
+          />
+          <input
+            value={newPasswordConfirm}
+            onChange={(event) => setNewPasswordConfirm(event.target.value)}
+            type="password"
+            placeholder={isEn ? "Confirm new password" : "Yeni şifre tekrar"}
+            className="w-full rounded-2xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-indigo-500 dark:border-white/10 dark:bg-white/5"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void handleChangePassword()}
+          disabled={isChangingPassword}
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 py-3 text-xs font-black uppercase tracking-widest text-indigo-100 transition-all hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+        >
+          {isChangingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+          {isChangingPassword ? `${t("common.loading")}...` : isEn ? "Update Password" : "Şifreyi Güncelle"}
+        </button>
+      </div>
     </section>
   );
 
