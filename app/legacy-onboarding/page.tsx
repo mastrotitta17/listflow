@@ -183,6 +183,34 @@ export default function LegacyOnboardingPage() {
   const [selectedSubCategoryId, setSelectedSubCategoryId] = useState("");
   const [storeCurrency, setStoreCurrency] = useState<StoreCurrency>("USD");
 
+  const saveLegacyProfile = async (args: { fullName: string; phone: string; password?: string }) => {
+    const response = await fetch("/api/legacy-onboarding/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fullName: args.fullName,
+        phone: args.phone || null,
+        password: args.password,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      profile?: { fullName?: string | null; phone?: string | null };
+    };
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Profil güncellenemedi.");
+    }
+
+    if (typeof payload.profile?.fullName === "string") {
+      setFullName(payload.profile.fullName);
+    }
+    if (typeof payload.profile?.phone === "string") {
+      setPhone(payload.profile.phone);
+    }
+  };
+
   const topCategories = useMemo(() => categories, [categories]);
 
   const selectedParentCategory = useMemo(
@@ -344,48 +372,18 @@ export default function LegacyOnboardingPage() {
 
     setSettingPassword(true);
     try {
-      const metadata = getUserMetadata(currentUser);
-
-      const update = await supabase.auth.updateUser({
+      await saveLegacyProfile({
+        fullName: normalizedName,
+        phone: normalizedPhone,
         password,
-        data: {
-          ...metadata,
-          full_name: normalizedName,
-          display_name: normalizedName,
-          phone: normalizedPhone || null,
-          legacy_password_set: true,
-        },
       });
-
-      if (update.error) {
-        throw update.error;
-      }
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (session?.access_token) {
-        await fetch("/api/auth/bootstrap", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            accessToken: session.access_token,
-            refreshToken: session.refresh_token,
-            fullName: normalizedName,
-            locale,
-          }),
-        });
-      }
 
       setPasswordSet(true);
       setCurrentStep(2);
       setPassword("");
       setPasswordConfirm("");
-      setCurrentUser(update.data.user ?? currentUser);
+      const refreshed = await resolveStableSession();
+      setCurrentUser(refreshed?.user ?? currentUser);
       toast.success("Şifre oluşturuldu. Şimdi mağaza kurulumunu tamamlayın.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Şifre oluşturulamadı.";
@@ -424,9 +422,7 @@ export default function LegacyOnboardingPage() {
 
     setCreatingStore(true);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const session = await resolveStableSession();
 
       if (!session?.access_token) {
         throw new Error("Oturum bulunamadı. Tekrar giriş yapın.");
@@ -434,35 +430,9 @@ export default function LegacyOnboardingPage() {
 
       await syncServerSession(session);
 
-      const metadata = getUserMetadata(currentUser);
-      const metadataUpdate = await supabase.auth.updateUser({
-        data: {
-          ...metadata,
-          full_name: normalizedName,
-          display_name: normalizedName,
-          phone: normalizedPhone || null,
-          legacy_password_set: true,
-        },
-      });
-
-      if (metadataUpdate.error) {
-        throw metadataUpdate.error;
-      }
-
-      setCurrentUser(metadataUpdate.data.user ?? currentUser);
-
-      await fetch("/api/auth/bootstrap", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          accessToken: session.access_token,
-          refreshToken: session.refresh_token,
-          fullName: normalizedName,
-          locale,
-        }),
+      await saveLegacyProfile({
+        fullName: normalizedName,
+        phone: normalizedPhone,
       });
 
       const response = await fetch("/api/onboarding/store", {

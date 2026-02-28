@@ -33,6 +33,7 @@ type MfaFactor = {
 
 const PLAN_PRIORITY = ["turbo", "pro", "standard"] as const;
 const TOUR_STORAGE_KEY_PREFIX = "listflow:dashboard-tour:v1:";
+const TOUR_SESSION_KEY_PREFIX = "listflow:dashboard-tour-session:v1:";
 const TOUR_SIDE_PATTERN: Array<"left" | "right"> = ["left", "right", "left", "right", "left"];
 
 type DashboardProps = {
@@ -54,6 +55,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [tourVisible, setTourVisible] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState(0);
   const [tourUserId, setTourUserId] = useState<string | null>(null);
+  const [tourDismissedInSession, setTourDismissedInSession] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState("");
@@ -94,16 +96,27 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const shouldShowTourForUser = useCallback((user: { id: string; user_metadata?: unknown }) => {
       try {
+        const metadata =
+          typeof user.user_metadata === "object" && user.user_metadata !== null
+            ? (user.user_metadata as Record<string, unknown>)
+            : {};
+        if (metadata.dashboard_tour_completed === true) {
+          return false;
+        }
+
         const localTourKey = `${TOUR_STORAGE_KEY_PREFIX}${user.id}`;
+        const sessionTourKey = `${TOUR_SESSION_KEY_PREFIX}${user.id}`;
         const localTourCompleted =
           typeof window !== "undefined" && window.localStorage.getItem(localTourKey) === "1";
+        const sessionTourCompleted =
+          typeof window !== "undefined" && window.sessionStorage.getItem(sessionTourKey) === "1";
 
-        return !localTourCompleted;
+        return !localTourCompleted && !sessionTourCompleted;
       } catch {
         // If storage is unavailable, still show tour once in session.
-        return true;
+        return !tourDismissedInSession;
       }
-    }, []);
+    }, [tourDismissedInSession]);
 
   const resolvePlanLabel = useCallback((plan: string | null | undefined, status: string | null | undefined) => {
       const normalizedPlan = (plan ?? "").toLowerCase();
@@ -166,7 +179,13 @@ const Dashboard: React.FC<DashboardProps> = ({
           setTourUserId(user.id);
           await evaluateMfaRequirement();
 
-          if (mountedRef.value && !disableTour && !routeSection && shouldShowTourForUser(user)) {
+          if (
+            mountedRef.value &&
+            !disableTour &&
+            !routeSection &&
+            !tourDismissedInSession &&
+            shouldShowTourForUser(user)
+          ) {
             setDashboardSection(DashboardSection.CATEGORIES);
             setTourStepIndex(0);
             setTourVisible(true);
@@ -250,7 +269,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setMfaError(null);
         }
       }
-    }, [disableTour, evaluateMfaRequirement, resolvePlanLabel, routeSection, setDashboardSection, shouldShowTourForUser, t]);
+    }, [disableTour, evaluateMfaRequirement, resolvePlanLabel, routeSection, setDashboardSection, shouldShowTourForUser, t, tourDismissedInSession]);
 
   useEffect(() => {
     const mountedRef = { value: true };
@@ -314,6 +333,14 @@ const Dashboard: React.FC<DashboardProps> = ({
     setTourVisible(false);
   }, [mfaRequired]);
 
+  useEffect(() => {
+    if (!disableTour && !routeSection) {
+      return;
+    }
+
+    setTourVisible(false);
+  }, [disableTour, routeSection]);
+
   const handleMfaVerify = async () => {
     if (!mfaFactorId) {
       setMfaError(t("auth.genericError"));
@@ -358,9 +385,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const markTourCompleted = async () => {
     setTourVisible(false);
+    setTourDismissedInSession(true);
+    setTourStepIndex(0);
+    setMobileSidebarOpen(false);
 
     if (tourUserId && typeof window !== "undefined") {
-      window.localStorage.setItem(`${TOUR_STORAGE_KEY_PREFIX}${tourUserId}`, "1");
+      try {
+        window.localStorage.setItem(`${TOUR_STORAGE_KEY_PREFIX}${tourUserId}`, "1");
+        window.sessionStorage.setItem(`${TOUR_SESSION_KEY_PREFIX}${tourUserId}`, "1");
+      } catch {
+        // no-op
+      }
     }
 
     try {
@@ -400,6 +435,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleTourBack = () => {
     setTourStepIndex((prev) => Math.max(prev - 1, 0));
   };
+
+  const isTourActive = tourVisible && !disableTour && !routeSection && !mfaRequired;
 
   const renderContent = () => {
     switch (activeSection) {
@@ -542,7 +579,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       ) : null}
 
-      {tourVisible ? (
+      {isTourActive ? (
         <div className="fixed inset-0 z-[2147483647] pointer-events-none">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px]" />
           <motion.div

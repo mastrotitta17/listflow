@@ -115,6 +115,11 @@ export const enMessages = {
     orders: "My Orders",
     settings: "Settings",
     logout: "Sign Out",
+    referralCardTitle: "Referral",
+    referralCardUnlocked: "🎉 Reward Unlocked!",
+    referralCardFriendsSuffix: "friends",
+    referralCardDiscount: "20% off",
+    referralCardCash: "$250 cash",
   },
   payment: {
     title: "Payment Successful!",

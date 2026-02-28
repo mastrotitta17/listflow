@@ -9,6 +9,7 @@ import {
   BadgeCheck,
   CalendarClock,
   CreditCard,
+  Globe2,
   KeyRound,
   Loader2,
   QrCode,
@@ -118,7 +119,7 @@ const resolveSettingsSection = (pathname: string | null): SettingsSectionKey => 
 };
 
 const SettingsPanel: React.FC = () => {
-  const { t, locale } = useI18n();
+  const { t, locale, setLocale } = useI18n();
   const pathname = usePathname();
   const isEn = locale === "en";
 
@@ -1120,7 +1121,36 @@ const SettingsPanel: React.FC = () => {
                     : "Profil tutarlılığı, 2FA doğrulaması ve abonelik görünürlüğü hesap güvenini doğrudan artırır."}
                 </p>
 
-                <div className="mt-5 flex flex-wrap gap-2">
+                <div className="mt-5 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-indigo-200">
+                    <Globe2 className="h-3.5 w-3.5" />
+                    {isEn ? "Language" : "Dil"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setLocale("tr")}
+                    className={`rounded-xl border px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                      locale === "tr"
+                        ? "bg-indigo-600 text-white border-indigo-500/40"
+                        : "bg-white/5 text-slate-300 border-white/10 hover:text-white"
+                    }`}
+                  >
+                    TR
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLocale("en")}
+                    className={`rounded-xl border px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                      locale === "en"
+                        ? "bg-indigo-600 text-white border-indigo-500/40"
+                        : "bg-white/5 text-slate-300 border-white/10 hover:text-white"
+                    }`}
+                  >
+                    EN
+                  </button>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
                   <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-200">
                     <BadgeCheck className="h-3.5 w-3.5" />
                     {profileMeta.role === "admin" ? (isEn ? "Admin Account" : "Admin Hesabı") : (isEn ? "User Account" : "Kullanıcı Hesabı")}

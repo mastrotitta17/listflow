@@ -115,6 +115,11 @@ export const trMessages = {
     orders: "Siparişlerim",
     settings: "Ayarlar",
     logout: "Çıkış Yap",
+    referralCardTitle: "Referral",
+    referralCardUnlocked: "🎉 Ödül Kazandın!",
+    referralCardFriendsSuffix: "arkadaş",
+    referralCardDiscount: "%20 indirim",
+    referralCardCash: "$250 nakit",
   },
   payment: {
     title: "Ödeme Başarılı!",

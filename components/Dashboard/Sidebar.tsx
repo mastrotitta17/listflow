@@ -35,6 +35,7 @@ type SidebarProps = {
 const ReferralCard: React.FC<{
   onClick: () => void;
 }> = ({ onClick }) => {
+  const { t } = useI18n();
   const [qualified, setQualified] = useState<number | null>(null);
 
   useEffect(() => {
@@ -78,7 +79,7 @@ const ReferralCard: React.FC<{
           <div className="flex-1 min-w-0 text-left">
             <div className="flex items-center gap-1.5">
               <p className="text-[11px] font-black tracking-tight text-white leading-none">
-                Referral
+                {t("sidebar.referralCardTitle")}
               </p>
               {/* Floating sparkle */}
               <motion.div
@@ -89,7 +90,9 @@ const ReferralCard: React.FC<{
               </motion.div>
             </div>
             <p className="text-[9px] text-slate-500 font-bold mt-0.5 leading-none">
-              {milestone5Done ? "🎉 Ödül Kazandın!" : `${qualified ?? "…"}/5 arkadaş`}
+              {milestone5Done
+                ? t("sidebar.referralCardUnlocked")
+                : `${qualified ?? "…"}/5 ${t("sidebar.referralCardFriendsSuffix")}`}
             </p>
           </div>
 
@@ -125,10 +128,10 @@ const ReferralCard: React.FC<{
         <div className="relative mt-2.5 flex items-center gap-2">
           <div className="flex items-center gap-1 rounded-full bg-indigo-600/15 border border-indigo-500/20 px-2 py-0.5">
             <Zap className="h-2.5 w-2.5 text-indigo-400" />
-            <span className="text-[9px] font-black text-indigo-300">%20 indirim</span>
+            <span className="text-[9px] font-black text-indigo-300">{t("sidebar.referralCardDiscount")}</span>
           </div>
           <div className="flex items-center gap-1 rounded-full bg-amber-600/15 border border-amber-500/20 px-2 py-0.5">
-            <span className="text-[9px] font-black text-amber-300">$250 nakit</span>
+            <span className="text-[9px] font-black text-amber-300">{t("sidebar.referralCardCash")}</span>
           </div>
         </div>
       </div>

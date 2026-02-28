@@ -8,6 +8,7 @@ import {
   Copy,
   Gift,
   Loader2,
+  Rocket,
   Share2,
   Sparkles,
   Trophy,
@@ -348,18 +349,23 @@ const ReferralPanel: React.FC = () => {
                   className="cursor-pointer group relative"
                   title={isEn ? "Click to enlarge" : "Büyütmek için tıkla"}
                 >
-                  <div className="rounded-2xl border-2 border-indigo-500/30 bg-white p-3 shadow-[0_0_40px_rgba(99,102,241,0.25)] group-hover:shadow-[0_0_60px_rgba(99,102,241,0.4)] transition-all duration-300">
+                  <div className="relative h-[220px] w-[220px] rounded-[22px] bg-white p-4 shadow-[0_0_40px_rgba(99,102,241,0.25)] group-hover:shadow-[0_0_60px_rgba(99,102,241,0.4)] transition-all duration-300">
                     {data?.code ? (
-                      <QRCodeSVG
-                        value={referralUrl}
-                        size={160}
-                        bgColor="#ffffff"
-                        fgColor="#1e1b4b"
-                        level="M"
-                        includeMargin={false}
-                      />
+                      <>
+                        <QRCodeSVG
+                          value={referralUrl}
+                          size={188}
+                          bgColor="#ffffff"
+                          fgColor="#1e1b4b"
+                          level="M"
+                          includeMargin={false}
+                        />
+                        <div className="pointer-events-none absolute left-1/2 top-1/2 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-xl border border-indigo-300/40 bg-indigo-600 shadow-[0_0_20px_rgba(79,70,229,0.5)]">
+                          <Rocket className="h-5 w-5 text-white" />
+                        </div>
+                      </>
                     ) : (
-                      <div className="h-40 w-40 flex items-center justify-center">
+                      <div className="h-full w-full flex items-center justify-center">
                         <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
                       </div>
                     )}
@@ -702,14 +708,19 @@ const ReferralPanel: React.FC = () => {
                     {/* White QR background */}
                     <div className="relative rounded-2xl bg-white p-4 shadow-[0_0_60px_rgba(99,102,241,0.35)]">
                       {data?.code && (
-                        <QRCodeSVG
-                          value={referralUrl}
-                          size={220}
-                          bgColor="#ffffff"
-                          fgColor="#1e1b4b"
-                          level="M"
-                          includeMargin={false}
-                        />
+                        <>
+                          <QRCodeSVG
+                            value={referralUrl}
+                            size={220}
+                            bgColor="#ffffff"
+                            fgColor="#1e1b4b"
+                            level="M"
+                            includeMargin={false}
+                          />
+                          <div className="pointer-events-none absolute left-1/2 top-1/2 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-2xl border border-indigo-300/40 bg-indigo-600 shadow-[0_0_20px_rgba(79,70,229,0.5)]">
+                            <Rocket className="h-6 w-6 text-white" />
+                          </div>
+                        </>
                       )}
                     </div>
                     {/* Corner accents */}
