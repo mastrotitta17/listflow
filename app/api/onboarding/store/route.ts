@@ -297,11 +297,11 @@ const updateSubscriptionAsProAndBindStore = async (args: {
       .maybeSingle<{ id: string }>();
     const updateError = result.error;
 
-    if (!updateError && result.data?.id) {
-      return;
-    }
+    if (!updateError) {
+      if (result.data?.id) {
+        return;
+      }
 
-    if (!updateError && !result.data?.id) {
       lastError = "Subscription record not found for user.";
       continue;
     }
