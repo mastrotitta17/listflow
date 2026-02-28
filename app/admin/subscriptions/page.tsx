@@ -18,6 +18,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
@@ -103,6 +105,20 @@ type CoverageResponse = {
     failed: number;
     failures: Array<{ stripeSubscriptionId: string; reason: string }>;
   };
+  error?: string;
+};
+
+type OnboardStrategy = "magic_link" | "set_password";
+
+type OnboardLegacyResponse = {
+  success?: boolean;
+  email?: string;
+  userId?: string;
+  linkedSubscriptions?: number;
+  insertedFallback?: boolean;
+  actionLink?: string | null;
+  emailDispatched?: boolean;
+  emailDispatchError?: string | null;
   error?: string;
 };
 
@@ -199,6 +215,12 @@ export default function AdminSubscriptionsPage() {
   const [coverageSyncing, setCoverageSyncing] = useState(false);
   const [coverageError, setCoverageError] = useState<string | null>(null);
   const [coverageInfo, setCoverageInfo] = useState<string | null>(null);
+  const [onboardDialogOpen, setOnboardDialogOpen] = useState(false);
+  const [onboardSubmitting, setOnboardSubmitting] = useState(false);
+  const [onboardStrategy, setOnboardStrategy] = useState<OnboardStrategy>("magic_link");
+  const [onboardPassword, setOnboardPassword] = useState("");
+  const [onboardTarget, setOnboardTarget] = useState<SubscriptionCoverageRow | null>(null);
+  const [generatedMagicLink, setGeneratedMagicLink] = useState<string | null>(null);
   const lastTrendWarningsRef = useRef("");
   const lastCoverageWarningsRef = useRef("");
 
@@ -358,6 +380,121 @@ export default function AdminSubscriptionsPage() {
     }
   };
 
+  const openOnboardDialog = useCallback((row: SubscriptionCoverageRow) => {
+    if (!row.userEmail) {
+      toast.error("Bu satır için Stripe e-posta adresi bulunamadı.");
+      return;
+    }
+
+    setOnboardTarget(row);
+    setOnboardStrategy("magic_link");
+    setOnboardPassword("");
+    setGeneratedMagicLink(null);
+    setOnboardDialogOpen(true);
+  }, []);
+
+  const copyGeneratedMagicLink = useCallback(async () => {
+    if (!generatedMagicLink) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(generatedMagicLink);
+      toast.success("Magic link panoya kopyalandı.");
+    } catch {
+      toast.error("Magic link kopyalanamadı. Manuel kopyalayın.");
+    }
+  }, [generatedMagicLink]);
+
+  const runLegacyOnboarding = useCallback(async () => {
+    if (!onboardTarget?.userEmail) {
+      toast.error("Onboard için Stripe e-posta adresi gerekli.");
+      return;
+    }
+
+    if (onboardStrategy === "set_password" && onboardPassword.trim().length < 8) {
+      toast.error("Şifre en az 8 karakter olmalı.");
+      return;
+    }
+
+    setOnboardSubmitting(true);
+
+    try {
+      const response = await fetch("/api/admin/subscriptions/onboard-legacy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: onboardTarget.userEmail,
+          strategy: onboardStrategy,
+          password: onboardStrategy === "set_password" ? onboardPassword.trim() : undefined,
+          stripeMode: onboardTarget.stripeMode,
+          stripeSubscriptionId: onboardTarget.stripeSubscriptionId,
+          stripeCustomerId: onboardTarget.stripeCustomerId,
+          storeId: onboardTarget.storeId,
+          shopId: onboardTarget.shopId,
+          plan: onboardTarget.plan,
+          status: onboardTarget.status,
+          currentPeriodEnd: onboardTarget.currentPeriodEnd,
+        }),
+      });
+
+      const payload = (await response.json()) as OnboardLegacyResponse;
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error || "Legacy onboarding başarısız.");
+      }
+
+      const linkedCount = payload.linkedSubscriptions ?? 0;
+      const fallbackInfo = payload.insertedFallback ? " (fallback insert yapıldı)" : "";
+      const magicMailInfo =
+        onboardStrategy === "magic_link"
+          ? payload.emailDispatched
+            ? " | Magic link maili gönderildi."
+            : ` | Mail gönderimi başarısız: ${payload.emailDispatchError ?? "bilinmeyen hata"}. Linki manuel paylaş.`
+          : "";
+      toast.success(`Onboarding tamamlandı. Eşlenen abonelik: ${linkedCount}${fallbackInfo}${magicMailInfo}`);
+
+      if (payload.actionLink) {
+        setGeneratedMagicLink(payload.actionLink);
+        try {
+          await navigator.clipboard.writeText(payload.actionLink);
+          toast.success("Magic link üretildi ve panoya kopyalandı.");
+        } catch {
+          toast.warning("Magic link üretildi. Elle kopyalayın.");
+        }
+      } else {
+        setGeneratedMagicLink(null);
+      }
+
+      await loadCoverage(coverageMode, currencyFilter);
+
+      if (onboardStrategy === "set_password") {
+        setOnboardDialogOpen(false);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Legacy onboarding başarısız.";
+      toast.error(message);
+    } finally {
+      setOnboardSubmitting(false);
+    }
+  }, [
+    coverageMode,
+    currencyFilter,
+    loadCoverage,
+    onboardPassword,
+    onboardStrategy,
+    onboardTarget,
+  ]);
+
+  const handleOnboardDialogOpenChange = useCallback((open: boolean) => {
+    setOnboardDialogOpen(open);
+
+    if (!open) {
+      setOnboardSubmitting(false);
+      setOnboardPassword("");
+      setGeneratedMagicLink(null);
+    }
+  }, []);
+
   const chartCurrency = useMemo(() => {
     if (currencyFilter !== "all") {
       return currencyFilter;
@@ -487,8 +624,27 @@ export default function AdminSubscriptionsPage() {
         header: "Güncellendi",
         cell: ({ row }) => <span className="text-xs">{formatDate(row.original.updatedAt || row.original.createdAt)}</span>,
       },
+      {
+        id: "actions",
+        header: "Onboarding",
+        cell: ({ row }) => {
+          const hasStripeLink = Boolean(row.original.stripeSubscriptionId || row.original.stripeCustomerId);
+          const canOnboard = Boolean(row.original.userEmail) && hasStripeLink;
+
+          return (
+            <Button
+              size="sm"
+              variant={canOnboard ? "default" : "secondary"}
+              disabled={!canOnboard}
+              onClick={() => openOnboardDialog(row.original)}
+            >
+              Onboard
+            </Button>
+          );
+        },
+      },
     ],
-    []
+    [openOnboardDialog]
   );
 
   return (
@@ -774,6 +930,82 @@ export default function AdminSubscriptionsPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={onboardDialogOpen} onOpenChange={handleOnboardDialogOpenChange}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Legacy Kullanıcı Onboarding</DialogTitle>
+            <DialogDescription>
+              Stripe-only aboneliği site kullanıcısına bağla. Magic link veya admin şifre tanımlama seçeneklerinden birini kullan.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <p className="text-xs text-slate-400">Stripe E-posta</p>
+              <Input value={onboardTarget?.userEmail ?? ""} readOnly disabled />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-xs text-slate-400">Stripe Subscription</p>
+              <Input value={onboardTarget?.stripeSubscriptionId ?? "-"} readOnly disabled />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-xs text-slate-400">Onboarding Yöntemi</p>
+              <Select
+                value={onboardStrategy}
+                onChange={(event) => setOnboardStrategy(event.target.value as OnboardStrategy)}
+                disabled={onboardSubmitting}
+              >
+                <option value="magic_link">Magic Link Üret</option>
+                <option value="set_password">Şifre Belirle</option>
+              </Select>
+            </div>
+
+            {onboardStrategy === "set_password" ? (
+              <div className="space-y-1">
+                <p className="text-xs text-slate-400">Yeni Şifre</p>
+                <Input
+                  type="password"
+                  value={onboardPassword}
+                  onChange={(event) => setOnboardPassword(event.target.value)}
+                  placeholder="En az 8 karakter"
+                  disabled={onboardSubmitting}
+                />
+              </div>
+            ) : null}
+
+            {generatedMagicLink ? (
+              <div className="space-y-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3">
+                <p className="text-xs text-emerald-300">
+                  Magic link üretildi. İstersen tekrar kopyalayabilirsin.
+                </p>
+                <Input value={generatedMagicLink} readOnly />
+                <div className="flex justify-end">
+                  <Button type="button" variant="secondary" onClick={() => void copyGeneratedMagicLink()}>
+                    Magic Link Kopyala
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => handleOnboardDialogOpenChange(false)}
+              disabled={onboardSubmitting}
+            >
+              Kapat
+            </Button>
+            <Button type="button" onClick={() => void runLegacyOnboarding()} disabled={onboardSubmitting || !onboardTarget?.userEmail}>
+              {onboardSubmitting ? "Onboarding..." : "Onboarding'i Başlat"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

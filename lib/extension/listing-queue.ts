@@ -32,15 +32,11 @@ const PENDING_STATUSES = new Set([
   "new",
   "draft",
   "todo",
-  "failed",
-  "error",
-  "retry",
 ]);
 const STALE_PROCESSING_TTL_MS = 60 * 1000;
 const SELF_RETRY_PROCESSING_TTL_MS = 3 * 1000;
 const STUCK_PROCESSING_FORCE_RECOVER_MS = 2 * 60 * 1000;
 const ORPHAN_PROCESSING_RECOVER_MS = 30 * 1000;
-const SUCCESS_STATUSES = new Set(["completed", "done", "success"]);
 
 const normalizeString = (value: unknown) => {
   if (typeof value !== "string") {
@@ -112,6 +108,15 @@ const parseDateMs = (value: unknown) => {
   return Number.isNaN(ms) ? null : ms;
 };
 
+const hasRowCompletionProof = (row: RowRecord) => {
+  const listingId = readFirstString(row, ["etsy_listing_id"]);
+  const listingUrl = readFirstString(row, ["etsy_listing_url", "etsy_store_link"]);
+  const completedAt = parseDateMs(row.completed_at);
+  const hasUrlProof = Boolean(listingUrl && !/\/listing-editor\//i.test(listingUrl));
+  const hasIdProof = Boolean(listingId);
+  return Boolean(completedAt || hasIdProof || hasUrlProof);
+};
+
 const sortByOldestFirst = (a: RowRecord, b: RowRecord) => {
   const aMs =
     parseDateMs(a.created_at) ??
@@ -164,6 +169,10 @@ const inferStatusFieldName = (row: RowRecord) => {
 };
 
 const isRowPending = (row: RowRecord, options: { userId?: string } = {}) => {
+  if (hasRowCompletionProof(row)) {
+    return false;
+  }
+
   const statusField = inferStatusFieldName(row);
   if (!statusField) {
     return true;
@@ -172,18 +181,6 @@ const isRowPending = (row: RowRecord, options: { userId?: string } = {}) => {
   const status = normalizeStatus(row[statusField]);
   if (PENDING_STATUSES.has(status)) {
     return true;
-  }
-
-  // Bazı pipeline'larda status yanlışlıkla completed/done gelebiliyor.
-  // Etsy publish referansı yoksa bu kaydı yeniden yüklenebilir kabul et.
-  if (SUCCESS_STATUSES.has(status)) {
-    const listingId = readFirstString(row, ["etsy_listing_id"]);
-    const listingUrl = readFirstString(row, ["etsy_listing_url", "etsy_store_link"]);
-    const hasUrlProof = Boolean(listingUrl && !/\/listing-editor\//i.test(listingUrl));
-    const hasIdProof = Boolean(listingId);
-    if (!hasUrlProof && !hasIdProof) {
-      return true;
-    }
   }
 
   if (status === "processing") {
@@ -289,6 +286,11 @@ const buildUpdatePayloadForReport = (
   addIfPresent(row, "updated_at", nowIso, payload);
   addIfPresent(row, "processed_at", nowIso, payload);
   addIfPresent(row, "completed_at", args.status === "completed" ? nowIso : row.completed_at, payload);
+  if (args.status !== "processing") {
+    addIfPresent(row, "claimed_at", null, payload);
+    addIfPresent(row, "claimed_by_user_id", null, payload);
+    addIfPresent(row, "claimed_by", null, payload);
+  }
   addIfPresent(row, "last_error", args.error ?? null, payload);
   addIfPresent(row, "error", args.error ?? null, payload);
   addIfPresent(row, "etsy_listing_id", args.etsyListingId ?? row.etsy_listing_id ?? null, payload);
@@ -792,6 +794,7 @@ type ReportArgs = {
   error?: string | null;
   etsyListingId?: string | null;
   etsyListingUrl?: string | null;
+  publishProof?: string | null;
 };
 
 const loadListingByIdentifier = async (identifier: ListingIdentifier) => {
@@ -827,6 +830,11 @@ const resolveIdentifierFromArgs = (args: ReportArgs): ListingIdentifier | null =
 };
 
 const hasCompletionProof = (args: ReportArgs) => {
+  const publishProof = normalizeString(args.publishProof);
+  if (publishProof) {
+    return true;
+  }
+
   const etsyListingId = normalizeString(args.etsyListingId);
   if (etsyListingId) {
     return true;

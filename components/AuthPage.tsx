@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
 import { motion } from "framer-motion";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useStore } from "../store";
@@ -53,6 +54,19 @@ type MfaFactor = {
   id: string;
   factor_type: string;
   status: string;
+};
+
+const isLegacyOnboardingRequired = (user: User | null | undefined) => {
+  if (!user) {
+    return false;
+  }
+
+  const metadata =
+    typeof user.user_metadata === "object" && user.user_metadata !== null
+      ? (user.user_metadata as Record<string, unknown>)
+      : null;
+
+  return Boolean(metadata?.legacy_onboarding_required);
 };
 
 const GoogleIcon = () => (
@@ -193,6 +207,12 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
         return;
       }
 
+      if (isLegacyOnboardingRequired(session.user)) {
+        setView(View.DASHBOARD);
+        router.replace("/legacy-onboarding");
+        return;
+      }
+
       setView(View.DASHBOARD);
       router.replace("/categories");
     };
@@ -260,7 +280,13 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
     });
   };
 
-  const handleSuccessfulAuth = () => {
+  const handleSuccessfulAuth = (user: User | null | undefined) => {
+    if (isLegacyOnboardingRequired(user)) {
+      setView(View.DASHBOARD);
+      router.replace("/legacy-onboarding");
+      return;
+    }
+
     setView(View.DASHBOARD);
 
     if (standalone) {
@@ -305,7 +331,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
           }
 
           await bootstrapProfile(data.session.access_token, data.session.refresh_token ?? undefined);
-          handleSuccessfulAuth();
+          handleSuccessfulAuth(data.user ?? data.session.user);
         }
       } else {
         const { data, error: signUpError } = await supabase.auth.signUp({
@@ -338,7 +364,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
             }
           }
 
-          handleSuccessfulAuth();
+          handleSuccessfulAuth(data.user ?? data.session.user);
           return;
         }
 
@@ -425,7 +451,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
       setMfaFactorId(null);
       setMfaCode("");
       setMfaHintEmail("");
-      handleSuccessfulAuth();
+      handleSuccessfulAuth(session?.user ?? null);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : t("auth.genericError");
       setError({ message, type: "error" });

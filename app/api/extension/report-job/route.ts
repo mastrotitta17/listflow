@@ -13,6 +13,9 @@ type ReportJobBody = {
   listing_id?: unknown;
   listing_key?: unknown;
   error?: unknown;
+  result?: {
+    publish_proof?: unknown;
+  } | null;
   etsy_refs?: {
     listing_id?: unknown;
     listing_url?: unknown;
@@ -69,6 +72,7 @@ export async function POST(request: NextRequest) {
     const listingKey = toTrimmed(body.listing_key);
     const listingUrl = toTrimmed(body.etsy_refs?.listing_url);
     const reportError = toTrimmed(body.error) || null;
+    const publishProof = toTrimmed(body.result?.publish_proof) || null;
 
     const result = await applyListingJobReport({
       userId: auth.user.id,
@@ -78,6 +82,7 @@ export async function POST(request: NextRequest) {
       error: reportError,
       etsyListingId: toTrimmed(body.etsy_refs?.listing_id) || null,
       etsyListingUrl: listingUrl || null,
+      publishProof,
     });
 
     return NextResponse.json(
