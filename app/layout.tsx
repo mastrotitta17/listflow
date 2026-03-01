@@ -4,6 +4,7 @@ import { cookies, headers } from "next/headers";
 import { detectLocale } from "@/lib/i18n/detect-locale";
 import { I18nProvider } from "@/lib/i18n/provider";
 import { Toaster } from "@/components/ui/sonner";
+import RuntimeErrorNoiseFilter from "@/components/RuntimeErrorNoiseFilter";
 import "./globals.css";
 import { SpeedInsights } from "@vercel/speed-insights/next"
 import { Analytics } from '@vercel/analytics/next';
@@ -36,6 +37,7 @@ export default async function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <I18nProvider locale={locale}>
+          <RuntimeErrorNoiseFilter />
           {children}
           <SpeedInsights />
           <Analytics />

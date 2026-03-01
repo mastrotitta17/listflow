@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 
 type Row = Record<string, unknown>;
-type FieldType = "text" | "number" | "textarea" | "select" | "boolean" | "array" | "json";
+type FieldType = "text" | "number" | "textarea" | "select" | "boolean" | "array" | "json" | "learn_sections";
 type FormState = Record<string, string | boolean>;
 type OptionsSource = "users" | "stores" | "categories" | "subscriptions" | "webhook_configs";
 type StoreLookup = {
@@ -66,6 +66,44 @@ type ResourceConfig = {
   updateEnabled?: boolean;
   deleteEnabled?: boolean;
   fields: FieldConfig[];
+};
+
+type LearnSectionEditorItem = {
+  heading: string;
+  body: string;
+  bullets: string[];
+};
+
+const normalizeLearnSections = (raw: string | boolean): LearnSectionEditorItem[] => {
+  if (typeof raw !== "string" || !raw.trim()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+
+        const record = item as Record<string, unknown>;
+        const heading = typeof record.heading === "string" ? record.heading : "";
+        const body = typeof record.body === "string" ? record.body : "";
+        const bullets = Array.isArray(record.bullets)
+          ? record.bullets.map((bullet) => (typeof bullet === "string" ? bullet.trim() : "")).filter(Boolean)
+          : [];
+
+        return { heading, body, bullets };
+      })
+      .filter((section): section is LearnSectionEditorItem => Boolean(section));
+  } catch {
+    return [];
+  }
 };
 
 const RESOURCE_CONFIG: Record<string, ResourceConfig> = {
@@ -184,6 +222,74 @@ const RESOURCE_CONFIG: Record<string, ResourceConfig> = {
       { key: "stripe_customer_id", label: "Stripe Customer ID", type: "text", placeholder: "cus_..." },
       { key: "stripe_subscription_id", label: "Stripe Subscription ID", type: "text", placeholder: "sub_..." },
       { key: "current_period_end", label: "Dönem Sonu", type: "text", placeholder: "2026-03-01T00:00:00Z" },
+    ],
+  },
+  "learn-guides": {
+    title: "Learn İçerikleri",
+    endpoint: "learn-guides",
+    idKey: "id",
+    fields: [
+      { key: "slug", label: "Slug", type: "text", required: true, placeholder: "quick-start-setup" },
+      { key: "sort_order", label: "Sıra", type: "number", required: true, placeholder: "0" },
+      { key: "is_published", label: "Yayında", type: "boolean" },
+      { key: "category_tr", label: "Kategori (TR)", type: "text", required: true, placeholder: "Başlangıç" },
+      { key: "category_en", label: "Kategori (EN)", type: "text", required: true, placeholder: "Getting Started" },
+      {
+        key: "title_tr",
+        label: "Başlık (TR)",
+        type: "text",
+        required: true,
+        placeholder: "Hızlı Kurulum: Hesap, Mağaza ve Otomasyon",
+      },
+      {
+        key: "title_en",
+        label: "Başlık (EN)",
+        type: "text",
+        required: true,
+        placeholder: "Quick Setup: Account, Store, and Automation",
+      },
+      {
+        key: "summary_tr",
+        label: "Özet (TR)",
+        type: "textarea",
+        required: true,
+        rows: 3,
+        placeholder: "Learn kartı ve sayfa üstünde görünen kısa açıklama.",
+      },
+      {
+        key: "summary_en",
+        label: "Özet (EN)",
+        type: "textarea",
+        required: true,
+        rows: 3,
+        placeholder: "Short summary displayed in learn cards and page hero.",
+      },
+      {
+        key: "tags_tr",
+        label: "Etiketler (TR)",
+        type: "array",
+        placeholder: "Kurulum, Etsy, Otomasyon",
+      },
+      {
+        key: "tags_en",
+        label: "Etiketler (EN)",
+        type: "array",
+        placeholder: "Setup, Etsy, Automation",
+      },
+      { key: "youtube_id", label: "YouTube Video ID", type: "text", required: true, placeholder: "M7lc1UVf-VE" },
+      { key: "duration_minutes", label: "Süre (dk)", type: "number", required: true, placeholder: "8" },
+      {
+        key: "sections_tr",
+        label: "Bölümler (TR)",
+        type: "learn_sections",
+        required: true,
+      },
+      {
+        key: "sections_en",
+        label: "Sections (EN)",
+        type: "learn_sections",
+        required: true,
+      },
     ],
   },
   stores: {
@@ -416,6 +522,11 @@ const buildEmptyFormState = (fields: FieldConfig[]): FormState => {
       return acc;
     }
 
+    if (field.type === "learn_sections") {
+      acc[field.key] = "[]";
+      return acc;
+    }
+
     acc[field.key] = "";
     return acc;
   }, {});
@@ -432,6 +543,18 @@ const toFormValue = (field: FieldConfig, value: unknown): string | boolean => {
 
   if (field.type === "array") {
     return Array.isArray(value) ? value.map((item) => String(item)).join(", ") : String(value);
+  }
+
+  if (field.type === "learn_sections") {
+    if (typeof value === "string") {
+      return value;
+    }
+
+    try {
+      return JSON.stringify(Array.isArray(value) ? value : [], null, 2);
+    } catch {
+      return "[]";
+    }
   }
 
   if (field.type === "json") {
@@ -567,6 +690,19 @@ const buildPayload = (values: FormState, fields: FieldConfig[], mode: "create" |
       continue;
     }
 
+    if (field.type === "learn_sections") {
+      try {
+        const parsed = JSON.parse(text) as unknown;
+        if (!Array.isArray(parsed)) {
+          throw new Error("not_array");
+        }
+        payload[field.key] = parsed;
+      } catch {
+        throw new Error(`${field.label} alanı geçersiz.`);
+      }
+      continue;
+    }
+
     if (field.type === "json") {
       try {
         payload[field.key] = JSON.parse(text);
@@ -591,6 +727,15 @@ const validateRequiredFields = (values: FormState, fields: FieldConfig[]) => {
     const raw = values[field.key];
 
     if (field.type === "boolean") {
+      continue;
+    }
+
+    if (field.type === "learn_sections") {
+      const raw = values[field.key];
+      const sections = normalizeLearnSections(raw);
+      if (sections.length === 0) {
+        throw new Error(`${field.label} alanına en az bir bölüm ekleyin.`);
+      }
       continue;
     }
 
@@ -669,6 +814,10 @@ const FieldInput = ({
   onChange: (key: string, value: string | boolean) => void;
   disabled?: boolean;
 }) => {
+  if (field.type === "learn_sections") {
+    return <LearnSectionsInput value={value} onChange={(next) => onChange(field.key, next)} disabled={disabled} />;
+  }
+
   if (field.type === "boolean") {
     return (
       <label className="flex items-center gap-2 mt-2">
@@ -722,6 +871,121 @@ const FieldInput = ({
       placeholder={field.placeholder}
       disabled={disabled}
     />
+  );
+};
+
+const LearnSectionsInput = ({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string | boolean;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) => {
+  const [sections, setSections] = useState<LearnSectionEditorItem[]>(() => normalizeLearnSections(value));
+
+  useEffect(() => {
+    setSections(normalizeLearnSections(value));
+  }, [value]);
+
+  const commit = useCallback(
+    (next: LearnSectionEditorItem[]) => {
+      setSections(next);
+      onChange(JSON.stringify(next));
+    },
+    [onChange]
+  );
+
+  const updateField = useCallback(
+    (index: number, key: "heading" | "body", nextValue: string) => {
+      const next = sections.map((section, sectionIndex) =>
+        sectionIndex === index ? { ...section, [key]: nextValue } : section
+      );
+      commit(next);
+    },
+    [commit, sections]
+  );
+
+  const updateBullets = useCallback(
+    (index: number, nextValue: string) => {
+      const bullets = nextValue
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      const next = sections.map((section, sectionIndex) => (sectionIndex === index ? { ...section, bullets } : section));
+      commit(next);
+    },
+    [commit, sections]
+  );
+
+  const addSection = useCallback(() => {
+    commit([...sections, { heading: "", body: "", bullets: [] }]);
+  }, [commit, sections]);
+
+  const removeSection = useCallback(
+    (index: number) => {
+      const next = sections.filter((_, sectionIndex) => sectionIndex !== index);
+      commit(next);
+    },
+    [commit, sections]
+  );
+
+  return (
+    <div className="space-y-3">
+      {sections.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-600/70 bg-slate-900/40 p-3 text-xs text-slate-400">
+          Henüz bölüm eklenmedi.
+        </div>
+      ) : null}
+
+      {sections.map((section, index) => (
+        <div key={`learn-section-${index}`} className="rounded-xl border border-slate-700/70 bg-slate-900/40 p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-black tracking-wide text-slate-300">Bölüm {index + 1}</p>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              className="cursor-pointer"
+              onClick={() => removeSection(index)}
+              disabled={disabled}
+            >
+              Kaldır
+            </Button>
+          </div>
+
+          <Input
+            value={section.heading}
+            onChange={(event) => updateField(index, "heading", event.target.value)}
+            placeholder="Başlık / Heading"
+            disabled={disabled}
+          />
+
+          <Textarea
+            value={section.body}
+            onChange={(event) => updateField(index, "body", event.target.value)}
+            placeholder="Açıklama / Body"
+            rows={3}
+            disabled={disabled}
+          />
+
+          <Textarea
+            value={section.bullets.join("\n")}
+            onChange={(event) => updateBullets(index, event.target.value)}
+            placeholder={"Madde 1\nMadde 2\nMadde 3"}
+            rows={4}
+            disabled={disabled}
+          />
+          <p className="text-[11px] text-slate-500">Bullet maddelerini alt alta yazın.</p>
+        </div>
+      ))}
+
+      <Button type="button" variant="outline" className="cursor-pointer" onClick={addSection} disabled={disabled}>
+        Bölüm Ekle
+      </Button>
+    </div>
   );
 };
 

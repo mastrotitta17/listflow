@@ -400,10 +400,14 @@ const OrdersPanel: React.FC = () => {
     setReceiverTown((previousValue) => previousValue || nextCity);
   };
 
-  const calculatedPrice = useMemo(() => {
-    const baseMaliyet = currentVariation?.maliyet ?? currentSubProduct?.maliyet ?? 0;
-    return baseMaliyet + 1.5;
-  }, [currentSubProduct, currentVariation]);
+  const baseMaliyet = useMemo(
+    () => currentVariation?.maliyet ?? currentSubProduct?.maliyet ?? 0,
+    [currentSubProduct, currentVariation]
+  );
+
+  const maliyetWithSurcharge = useMemo(() => baseMaliyet * 1.06, [baseMaliyet]);
+
+  const calculatedPrice = useMemo(() => maliyetWithSurcharge + 1.5, [maliyetWithSurcharge]);
 
   const filteredOrders = useMemo(() => {
     let result = orders;
@@ -1084,7 +1088,7 @@ const OrdersPanel: React.FC = () => {
                 <div className="p-6 rounded-[28px] bg-indigo-600/5 dark:bg-white/5 border border-indigo-200 dark:border-white/10">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Maliyet</span>
-                    <span className="font-bold">${(currentVariation?.maliyet ?? currentSubProduct?.maliyet ?? 0).toFixed(2)}</span>
+                    <span className="font-bold">${maliyetWithSurcharge.toFixed(2)}</span>
                   </div>
                   <div className="flex items-center justify-between mb-4">
                     <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">İşlem Ücreti</span>

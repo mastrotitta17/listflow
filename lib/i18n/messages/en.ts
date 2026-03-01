@@ -103,6 +103,7 @@ export const enMessages = {
     tourStepOrdersDescription: "Track payment status and order operations from a single Orders screen.",
     tourStepSettingsTitle: "Plan and account controls",
     tourStepSettingsDescription: "Use Settings to update your profile, upgrade plans, and manage subscription actions.",
+    learn: "Learn",
   },
   sidebar: {
     premiumSuite: "Premium Suite",
@@ -138,6 +139,7 @@ export const enMessages = {
     links: {
       home: "Home",
       auth: "Sign In",
+      learn: "Learn",
       dashboard: "Dashboard",
       privacy: "Privacy Policy",
       terms: "Terms of Service",

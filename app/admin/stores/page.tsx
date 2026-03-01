@@ -119,6 +119,10 @@ type CategoriesResponse = {
 type CreateStoreForUserResponse = {
   id?: string;
   storeName?: string;
+  grantedPlan?: "standard" | "pro" | "turbo" | null;
+  grantedSubscriptionId?: string | null;
+  stripeSubscriptionId?: string | null;
+  nextChargeAt?: string | null;
   error?: string;
 };
 
@@ -261,6 +265,7 @@ export default function AdminStoresPage() {
   const [selectedParentCategoryId, setSelectedParentCategoryId] = useState("");
   const [selectedSubCategoryId, setSelectedSubCategoryId] = useState("");
   const [storeCurrency, setStoreCurrency] = useState<"USD" | "TRY">("USD");
+  const [grantPlanDraft, setGrantPlanDraft] = useState<"none" | "starter" | "pro" | "turbo">("none");
   const [creatingStore, setCreatingStore] = useState(false);
 
   const webhookMap = useMemo(() => new Map(webhookOptions.map((item) => [item.id, item])), [webhookOptions]);
@@ -477,6 +482,7 @@ export default function AdminStoresPage() {
     setSelectedParentCategoryId(categories[0]?.id ?? "");
     setSelectedSubCategoryId(categories.length ? LISTFLOW_DECIDE_VALUE : "");
     setStoreCurrency("USD");
+    setGrantPlanDraft("none");
   }, [categories]);
 
   const openCreateStoreModalForUser = useCallback(
@@ -487,6 +493,7 @@ export default function AdminStoresPage() {
       setSelectedParentCategoryId(categories[0]?.id ?? "");
       setSelectedSubCategoryId(categories.length ? LISTFLOW_DECIDE_VALUE : "");
       setStoreCurrency("USD");
+      setGrantPlanDraft("none");
       setCategoriesError(null);
       setUserPickerOpen(false);
       setCreateStoreOpen(true);
@@ -531,6 +538,7 @@ export default function AdminStoresPage() {
           subCategoryId,
           currency: storeCurrency,
           priceCents: 2990,
+          grantPlan: grantPlanDraft === "none" ? null : grantPlanDraft,
           fallbackStoreNamePrefix: "Mağaza",
         }),
       });
@@ -540,10 +548,13 @@ export default function AdminStoresPage() {
         throw new Error(payload.error || "Mağaza eklenemedi.");
       }
 
+      const grantedPlanLabel = payload.grantedPlan ? PLAN_LABELS[payload.grantedPlan] ?? payload.grantedPlan : null;
+      const storeLabel = payload.storeName || "yeni mağaza";
+      const userLabel = selectedUser.full_name || selectedUser.email || selectedUser.user_id;
       setSuccessMessage(
-        `${selectedUser.full_name || selectedUser.email || selectedUser.user_id} kullanıcısına ${
-          payload.storeName || "yeni mağaza"
-        } eklendi.`
+        grantedPlanLabel
+          ? `${userLabel} kullanıcısına ${storeLabel} eklendi. ${grantedPlanLabel} planı Stripe ile bağlandı, ilk dönem ücretsiz; sonraki dönem otomatik tahsil edilecek.`
+          : `${userLabel} kullanıcısına ${storeLabel} eklendi.`
       );
       setCreateStoreOpen(false);
       setSelectedUser(null);
@@ -560,6 +571,7 @@ export default function AdminStoresPage() {
     resolvedSubCategory,
     selectedParentCategory,
     selectedUser,
+    grantPlanDraft,
     storeCurrency,
     storeNameDraft,
     storePhoneDraft,
@@ -1029,6 +1041,22 @@ export default function AdminStoresPage() {
             {selectedSubCategoryId === LISTFLOW_DECIDE_VALUE && availableSubCategories.length ? (
               <p className="text-xs text-indigo-300">
                 Varsayılan alt kategori seçimi: {availableSubCategories[0]?.name}
+              </p>
+            ) : null}
+
+            <div className="space-y-2 border border-white/10 rounded-xl py-2 px-3 flex justify-between items-center w-full">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400">Atanacak Plan</label>
+              <Select value={grantPlanDraft} onChange={(event) => setGrantPlanDraft(event.target.value as "none" | "starter" | "pro" | "turbo")}>
+                <option value="none">Plan atama (yok)</option>
+                <option value="starter">Starter (Stripe: ilk dönem ücretsiz)</option>
+                <option value="pro">Pro (Stripe: ilk dönem ücretsiz)</option>
+                <option value="turbo">Turbo (Stripe: ilk dönem ücretsiz)</option>
+              </Select>
+            </div>
+
+            {grantPlanDraft !== "none" ? (
+              <p className="text-xs text-emerald-300">
+                Bu mağazaya {grantPlanDraft.toUpperCase()} planı Stripe aboneliğiyle bağlanır. Bu dönem ücretsiz başlar, sonraki dönemde otomatik tahsilat yapılır.
               </p>
             ) : null}
 

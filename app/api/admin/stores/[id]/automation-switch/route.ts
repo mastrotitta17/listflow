@@ -65,6 +65,20 @@ const isMissingAnyColumnError = (error: { message?: string } | null | undefined,
   return columns.some((column) => isMissingColumnError(error, column));
 };
 
+const isUniqueViolation = (error: { message?: string; code?: string } | null | undefined) => {
+  if (!error) {
+    return false;
+  }
+
+  const message = (error.message ?? "").toLowerCase();
+  return (
+    error.code === "23505" ||
+    message.includes("duplicate key") ||
+    message.includes("unique constraint") ||
+    message.includes("scheduler_jobs_idempotency_key_key")
+  );
+};
+
 const insertSchedulerJobWithFallback = async (args: {
   subscriptionId: string;
   userId: string;
@@ -129,6 +143,31 @@ const insertSchedulerJobWithFallback = async (args: {
 
     if (!attempt.error) {
       return { id: attempt.data?.id ?? null, error: null as string | null };
+    }
+
+    if (isUniqueViolation(attempt.error)) {
+      const existing = await supabaseAdmin
+        .from("scheduler_jobs")
+        .select("id, status")
+        .eq("idempotency_key", args.idempotencyKey)
+        .limit(1)
+        .maybeSingle<{ id: string; status: string }>();
+
+      if (existing.error) {
+        return { id: null, error: existing.error.message };
+      }
+
+      if (!existing.data?.id) {
+        return { id: null, error: "Aynı idempotency_key ile job zaten var fakat okunamadı." };
+      }
+
+      const existingStatus = (existing.data.status ?? "").toLowerCase();
+      if (existingStatus === "processing" || existingStatus === "success") {
+        return { id: null, error: "Aynı geçiş isteği bu dakika içinde zaten işlendi." };
+      }
+
+      // failed/skipped vb. durumlarda aynı key ile mevcut kaydı retry için yeniden kullan.
+      return { id: existing.data.id, error: null as string | null };
     }
 
     const toleratedMissingColumn = isMissingAnyColumnError(attempt.error, [
@@ -599,10 +638,30 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           .eq("id", transitionId);
       }
 
+      if (schedulerJobInsert.error.toLowerCase().includes("zaten işlendi")) {
+        return NextResponse.json(
+          {
+            code: "MANUAL_SWITCH_DUPLICATE",
+            message: schedulerJobInsert.error,
+            error: schedulerJobInsert.error,
+            idempotencyKey,
+          },
+          { status: 409 }
+        );
+      }
+
       return NextResponse.json({ error: schedulerJobInsert.error }, { status: 500 });
     }
 
     const schedulerJobId = schedulerJobInsert.id;
+    if (schedulerJobId) {
+      await updateSchedulerJobWithFallback(schedulerJobId, {
+        status: "processing",
+        responseStatus: null,
+        responsePayload: null,
+        errorMessage: null,
+      });
+    }
 
     try {
       const dispatchResult = await dispatchN8nTrigger({

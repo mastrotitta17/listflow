@@ -19,6 +19,8 @@ const NAV_ITEMS = [
   { href: "/admin/categories", label: "Kategoriler" },
   { href: "/admin/users", label: "Kullanıcılar" },
   { href: "/admin/stores", label: "Mağazalar" },
+  { href: "/admin/listings", label: "Listing Takibi" },
+  { href: "/admin/learn-guides", label: "Learn İçerikleri" },
   { href: "/admin/payments", label: "Ödemeler" },
   { href: "/admin/subscriptions", label: "Abonelikler" },
   { href: "/admin/webhooks", label: "Webhook Console" },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccessTokenFromRequest, getProfileByUserId, getUserFromAccessToken, isAdminRole } from "@/lib/auth/admin";
 import { isAdminResource, ADMIN_RESOURCE_MAP } from "@/lib/admin/resources";
+import { upsertStaticLearnGuides } from "@/lib/learn/repository";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 const notFoundResponse = () => NextResponse.json({ error: "Not Found" }, { status: 404 });
@@ -30,6 +31,7 @@ const ORDER_BY_RESOURCE: Partial<Record<keyof typeof ADMIN_RESOURCE_MAP, string>
   payments: "created_at",
   subscriptions: "created_at",
   stores: "created_at",
+  "learn-guides": "updated_at",
   "webhook-logs": "created_at",
   "automation-transitions": "created_at",
   "stripe-events": "processed_at",
@@ -82,6 +84,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     }
 
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  if (resource === "learn-guides" && (!data || data.length === 0)) {
+    const seeded = await upsertStaticLearnGuides();
+    if (seeded.ok) {
+      const refetch = await supabaseAdmin.from(table).select("*").order("updated_at", { ascending: false }).limit(200);
+      data = refetch.data;
+    }
   }
 
   return NextResponse.json({ rows: data ?? [] });

@@ -8,6 +8,7 @@ const ALLOWED_RESOURCES = [
   "stores",
   "payments",
   "subscriptions",
+  "learn-guides",
   "stripe-events",
 ] as const;
 

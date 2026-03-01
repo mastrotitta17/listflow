@@ -103,6 +103,7 @@ export const trMessages = {
     tourStepOrdersDescription: "Siparişlerim ekranında ödeme durumlarını ve sipariş akışını tek noktadan izleyebilirsiniz.",
     tourStepSettingsTitle: "Plan ve hesap yönetimi",
     tourStepSettingsDescription: "Ayarlar bölümünden profilinizi güncelleyebilir, plan yükseltebilir veya abonelik işlemlerini yönetebilirsiniz.",
+    learn: "Nasıl Çalışır",
   },
   sidebar: {
     premiumSuite: "Premium Suite",
@@ -138,6 +139,7 @@ export const trMessages = {
     links: {
       home: "Ana Sayfa",
       auth: "Giriş",
+      learn: "Nasıl Çalışır",
       dashboard: "Panel",
       privacy: "Gizlilik Politikası",
       terms: "Kullanım Şartları",

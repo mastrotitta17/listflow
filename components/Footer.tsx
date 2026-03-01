@@ -62,6 +62,9 @@ const Footer = () => {
               <Link href="/login" className="hover:text-white transition-colors">
                 {t("footer.links.auth")}
               </Link>
+              <Link href="/learn" className="hover:text-white transition-colors">
+                {t("footer.links.learn")}
+              </Link>
               <button
                 type="button"
                 onClick={() => {

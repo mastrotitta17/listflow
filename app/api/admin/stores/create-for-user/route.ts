@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { notFoundResponse, requireAdminRequest } from "@/lib/auth/admin-request";
+import { getStripeClientForMode } from "@/lib/stripe/client";
+import { resolveCheckoutPriceId } from "@/lib/stripe/plans";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 
@@ -16,9 +18,11 @@ type CreateStoreForUserBody = {
   currency?: unknown;
   priceCents?: unknown;
   fallbackStoreNamePrefix?: unknown;
+  grantPlan?: unknown;
 };
 
 type StoreCurrency = "USD" | "TRY";
+type BillingPlan = "standard" | "pro" | "turbo";
 
 const asTrimmedString = (value: unknown) => {
   if (typeof value !== "string") {
@@ -35,6 +39,58 @@ const asSafePrice = (value: unknown) => {
 
   const rounded = Math.round(value);
   return rounded > 0 ? rounded : 2990;
+};
+
+const asBillingPlan = (value: unknown): BillingPlan | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "starter") {
+    return "standard";
+  }
+
+  if (normalized === "standard" || normalized === "pro" || normalized === "turbo") {
+    return normalized;
+  }
+
+  return null;
+};
+
+const PLAN_PRICE_CENTS: Record<BillingPlan, number> = {
+  standard: 2990,
+  pro: 4990,
+  turbo: 7990,
+};
+
+const toIsoDate = (value: number | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+  return new Date(value * 1000).toISOString();
+};
+
+const toNextMonthUnix = () => {
+  const now = new Date();
+  const next = new Date(now);
+  next.setMonth(next.getMonth() + 1);
+  if (next.getTime() <= now.getTime()) {
+    return Math.floor((now.getTime() + 30 * 24 * 60 * 60 * 1000) / 1000);
+  }
+  return Math.floor(next.getTime() / 1000);
+};
+
+const isStripeMissingCustomerError = (error: unknown) => {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (error.message ?? "").toLowerCase().includes("no such customer");
 };
 
 const asStoreCurrency = (value: unknown): StoreCurrency => {
@@ -99,6 +155,124 @@ const tryProfilePhoneSync = async (userId: string, phone: string) => {
     .eq("user_id", userId);
 };
 
+const resolveUserEmail = async (userId: string) => {
+  const profileQuery = await supabaseAdmin
+    .from("profiles")
+    .select("email")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle<{ email?: string | null }>();
+
+  if (!profileQuery.error) {
+    const email = (profileQuery.data?.email ?? "").trim().toLowerCase();
+    if (email) {
+      return email;
+    }
+  }
+
+  const authUser = await supabaseAdmin.auth.admin.getUserById(userId);
+  const authEmail = (authUser.data.user?.email ?? "").trim().toLowerCase();
+  return authEmail || null;
+};
+
+const resolveStripeCustomerId = async (userId: string, email: string | null) => {
+  const stripe = getStripeClientForMode();
+
+  const fromSubscriptions = await supabaseAdmin
+    .from("subscriptions")
+    .select("stripe_customer_id")
+    .eq("user_id", userId)
+    .not("stripe_customer_id", "is", null)
+    .limit(20);
+
+  if (!fromSubscriptions.error) {
+    const candidateIds = Array.from(
+      new Set(
+        (fromSubscriptions.data ?? [])
+          .map((row) => ((row as { stripe_customer_id?: string | null } | null)?.stripe_customer_id ?? "").trim())
+          .filter((value) => Boolean(value))
+      )
+    );
+
+    for (const candidateId of candidateIds) {
+      try {
+        const retrieved = await stripe.customers.retrieve(candidateId);
+        if (!("deleted" in retrieved && retrieved.deleted)) {
+          return retrieved.id;
+        }
+      } catch (error) {
+        if (!isStripeMissingCustomerError(error)) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  if (email) {
+    const listed = await stripe.customers.list({
+      email,
+      limit: 1,
+    });
+    const existing = listed.data[0];
+    if (existing && !("deleted" in existing && existing.deleted)) {
+      return existing.id;
+    }
+  }
+
+  const created = await stripe.customers.create({
+    email: email ?? undefined,
+    metadata: {
+      userId,
+      source: "admin_store_create",
+    },
+  });
+
+  return created.id;
+};
+
+const createDeferredStripeSubscription = async (args: {
+  userId: string;
+  storeId: string;
+  plan: BillingPlan;
+}) => {
+  const priceId = await resolveCheckoutPriceId(args.plan, "month");
+  if (!priceId) {
+    throw new Error(`Stripe fiyatı bulunamadı: ${args.plan}/month`);
+  }
+
+  const email = await resolveUserEmail(args.userId);
+  const stripeCustomerId = await resolveStripeCustomerId(args.userId, email);
+  const trialEndUnix = toNextMonthUnix();
+
+  const stripe = getStripeClientForMode();
+  const subscription = await stripe.subscriptions.create({
+    customer: stripeCustomerId,
+    collection_method: "charge_automatically",
+    trial_end: trialEndUnix,
+    items: [{ price: priceId, quantity: 1 }],
+    metadata: {
+      userId: args.userId,
+      shopId: args.storeId,
+      plan: args.plan,
+      billingInterval: "month",
+      adminGrant: "true",
+    },
+  });
+
+  const periodEndUnix =
+    subscription.items.data[0]?.current_period_end ??
+    subscription.trial_end ??
+    null;
+
+  return {
+    stripeSubscriptionId: subscription.id,
+    stripeCustomerId: typeof subscription.customer === "string" ? subscription.customer : stripeCustomerId,
+    status: subscription.status,
+    currentPeriodEnd: toIsoDate(periodEndUnix),
+    trialEnd: toIsoDate(subscription.trial_end ?? null),
+  };
+};
+
 const insertStore = async (payload: {
   id: string;
   userId: string;
@@ -109,12 +283,13 @@ const insertStore = async (payload: {
   subCategoryId: string | null;
   currency: StoreCurrency;
   priceCents: number;
+  status: "pending" | "active";
 }) => {
   const requiredInsertPayload: Record<string, unknown> = {
     id: payload.id,
     user_id: payload.userId,
     store_name: payload.storeName,
-    status: "pending",
+    status: payload.status,
   };
 
   const optionalInsertPayload: Record<string, unknown> = {
@@ -168,6 +343,93 @@ const countUserStores = async (userId: string) => {
   return typeof count === "number" ? count : 0;
 };
 
+const insertStoreSubscriptionRecord = async (args: {
+  userId: string;
+  storeId: string;
+  plan: BillingPlan;
+  stripeSubscriptionId: string | null;
+  stripeCustomerId: string | null;
+  status: string;
+  currentPeriodEnd: string | null;
+}) => {
+  const nowIso = new Date().toISOString();
+  const requiredPayload: Record<string, unknown> = {
+    user_id: args.userId,
+    plan: args.plan,
+    status: args.status,
+  };
+  const optionalPayload: Record<string, unknown> = {
+    store_id: args.storeId,
+    shop_id: args.storeId,
+    current_period_end: args.currentPeriodEnd,
+    stripe_subscription_id: args.stripeSubscriptionId,
+    stripe_customer_id: args.stripeCustomerId,
+    updated_at: nowIso,
+  };
+
+  const payload: Record<string, unknown> = {
+    ...requiredPayload,
+    ...optionalPayload,
+  };
+
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const insertResult = await supabaseAdmin
+      .from("subscriptions")
+      .insert(payload)
+      .select("id")
+      .maybeSingle<{ id: string }>();
+
+    if (!insertResult.error) {
+      return insertResult.data?.id ?? null;
+    }
+
+    if (isMissingRelationError(insertResult.error)) {
+      return null;
+    }
+
+    const removableKey = Object.keys(payload).find(
+      (key) =>
+        !Object.prototype.hasOwnProperty.call(requiredPayload, key) &&
+        isMissingColumnError(insertResult.error, key)
+    );
+
+    if (!removableKey) {
+      throw new Error(insertResult.error.message || "Store subscription could not be created.");
+    }
+
+    delete payload[removableKey];
+  }
+
+  throw new Error("Store subscription could not be created.");
+};
+
+const updateStoreStatus = async (storeId: string, status: "pending" | "active") => {
+  const withTimestamp = await supabaseAdmin
+    .from("stores")
+    .update({
+      status,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", storeId);
+
+  if (!withTimestamp.error) {
+    return;
+  }
+
+  if (!isMissingColumnError(withTimestamp.error, "updated_at")) {
+    throw new Error(withTimestamp.error.message || "Store status update failed");
+  }
+
+  const fallback = await supabaseAdmin
+    .from("stores")
+    .update({ status })
+    .eq("id", storeId);
+
+  if (fallback.error) {
+    throw new Error(fallback.error.message || "Store status update failed");
+  }
+};
+
 const validateTargetUser = async (userId: string) => {
   const profileQuery = await supabaseAdmin
     .from("profiles")
@@ -213,12 +475,14 @@ export async function POST(request: NextRequest) {
     const topCategoryId = asTrimmedString(body.topCategoryId) || null;
     const subCategoryId = asTrimmedString(body.subCategoryId) || null;
     const currency = asStoreCurrency(body.currency);
+    const grantPlan = asBillingPlan(body.grantPlan);
     const fallbackPrefix = asTrimmedString(body.fallbackStoreNamePrefix) || "Mağaza";
     const requestedStoreName = asTrimmedString(body.storeName);
     const existingCount = requestedStoreName ? 0 : await countUserStores(userId);
     const storeName = requestedStoreName || `${fallbackPrefix} ${existingCount + 1}`;
     const storeId = randomUUID();
-    const priceCents = asSafePrice(body.priceCents);
+    const planPriceCents = grantPlan ? PLAN_PRICE_CENTS[grantPlan] : null;
+    const priceCents = planPriceCents ?? asSafePrice(body.priceCents);
 
     if (phone) {
       await tryProfilePhoneSync(userId, phone);
@@ -234,15 +498,45 @@ export async function POST(request: NextRequest) {
       subCategoryId,
       currency,
       priceCents,
+      status: "pending",
     });
 
     if (insertError) {
       return NextResponse.json({ error: insertError }, { status: 500 });
     }
 
+    let grantedSubscriptionId: string | null = null;
+    let stripeSubscriptionId: string | null = null;
+    let nextChargeAt: string | null = null;
+    if (grantPlan) {
+      const stripeSubscription = await createDeferredStripeSubscription({
+        userId,
+        storeId,
+        plan: grantPlan,
+      });
+
+      stripeSubscriptionId = stripeSubscription.stripeSubscriptionId;
+      nextChargeAt = stripeSubscription.trialEnd;
+      grantedSubscriptionId = await insertStoreSubscriptionRecord({
+        userId,
+        storeId,
+        plan: grantPlan,
+        stripeSubscriptionId: stripeSubscription.stripeSubscriptionId,
+        stripeCustomerId: stripeSubscription.stripeCustomerId,
+        status: stripeSubscription.status,
+        currentPeriodEnd: stripeSubscription.currentPeriodEnd,
+      });
+
+      await updateStoreStatus(storeId, "active");
+    }
+
     return NextResponse.json({
       id: storeId,
       storeName,
+      grantedPlan: grantPlan,
+      grantedSubscriptionId,
+      stripeSubscriptionId,
+      nextChargeAt,
       userId,
       createdBy: admin.user.id,
     });

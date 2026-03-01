@@ -5,6 +5,7 @@ export const ADMIN_RESOURCE_MAP = {
   stores: { table: "stores", idColumn: "id" },
   payments: { table: "payments", idColumn: "id" },
   subscriptions: { table: "subscriptions", idColumn: "id" },
+  "learn-guides": { table: "learn_guides", idColumn: "id" },
   "webhook-configs": { table: "webhook_configs", idColumn: "id" },
   "webhook-logs": { table: "webhook_logs", idColumn: "id" },
   jobs: { table: "scheduler_jobs", idColumn: "id" },
