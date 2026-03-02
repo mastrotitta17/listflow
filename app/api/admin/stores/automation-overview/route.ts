@@ -420,6 +420,10 @@ const loadSchedulerJobs = async () => {
 
 const loadAutomationWebhooks = async () => {
   const candidates = [
+    "id, name, description, target_url, method, enabled, scope, product_id, currency",
+    "id, name, target_url, method, enabled, scope, product_id, currency",
+    "id, name, description, target_url, method, enabled, scope, currency",
+    "id, name, target_url, method, enabled, scope, currency",
     "id, name, description, target_url, method, enabled, scope, product_id",
     "id, name, target_url, method, enabled, scope, product_id",
     "id, name, description, target_url, method, enabled, scope",
@@ -432,6 +436,7 @@ const loadAutomationWebhooks = async () => {
 
   for (const select of candidates) {
     const hasScope = select.includes("scope");
+    const hasCurrency = select.includes("currency");
     const query = supabaseAdmin
       .from("webhook_configs")
       .select(select)
@@ -451,10 +456,11 @@ const loadAutomationWebhooks = async () => {
         scope?: string | null;
         description?: string | null;
         product_id?: string | null;
+        currency?: string | null;
       }>;
 
       const webhookProductMap = await loadWebhookConfigProductMap(rows.map((row) => row.id));
-      const webhookCurrencyMap = await loadWebhookCurrencyMap(rows.map((row) => row.id));
+      const webhookCurrencyMap = hasCurrency ? null : await loadWebhookCurrencyMap(rows.map((row) => row.id));
 
       return rows
         .map((row) => ({
@@ -466,7 +472,9 @@ const loadAutomationWebhooks = async () => {
           enabled: row.enabled ?? true,
           scope: row.scope ?? "automation",
           product_id: row.product_id ?? webhookProductMap.get(row.id) ?? null,
-          currency: webhookCurrencyMap.get(row.id) ?? null,
+          currency: hasCurrency
+            ? normalizeWebhookCurrency(row.currency ?? null)
+            : webhookCurrencyMap?.get(row.id) ?? null,
         }))
         .filter((row) => !hasScope || row.scope === "automation" || row.scope === null);
     }

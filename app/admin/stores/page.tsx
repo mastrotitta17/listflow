@@ -149,6 +149,33 @@ const formatDate = (value: string | null | undefined) => {
   return date.toLocaleString("tr-TR");
 };
 
+const getWebhookCurrencyLabel = (currency: WebhookOption["currency"]) => {
+  if (currency === "TRY") {
+    return "TRY";
+  }
+  if (currency === "USD") {
+    return "USD";
+  }
+  return "GENERIC";
+};
+
+const buildWebhookOptionLabel = (option: WebhookOption) => {
+  const webhookName = (option.name ?? "").trim();
+  const productLabel = (option.productLabel ?? "").trim();
+  const isDuplicateProductLabel =
+    Boolean(webhookName) &&
+    Boolean(productLabel) &&
+    webhookName.localeCompare(productLabel, "tr", { sensitivity: "base" }) === 0;
+
+  const parts = [webhookName || productLabel || "Webhook"];
+  if (productLabel && !isDuplicateProductLabel) {
+    parts.push(productLabel);
+  }
+  parts.push(getWebhookCurrencyLabel(option.currency));
+
+  return parts.join(" · ");
+};
+
 const formatCountdown = (targetIso: string | null | undefined, nowMs: number) => {
   if (!targetIso) {
     return "-";
@@ -640,12 +667,16 @@ export default function AdminStoresPage() {
         eligibleIds.includes(option.id)
       );
       const storeCurrency = normalizeCurrency(row.storeCurrency);
-      const fallbackOptions = strictOptions.filter((option) => {
+      const matchesStoreCurrency = (option: WebhookOption) => {
         if (!option.currency) {
           return true;
         }
         return normalizeCurrency(option.currency) === storeCurrency;
-      });
+      };
+      const strictCurrencyOptions = strictOptions.filter(matchesStoreCurrency);
+      const fallbackOptions = strictCurrencyOptions.length
+        ? strictCurrencyOptions
+        : webhookOptions.filter(matchesStoreCurrency);
 
       const selectedCurrent = selectedWebhookByStore[row.storeId] ?? "";
       const selectedWebhookConfigId = fallbackOptions.some((option) => option.id === selectedCurrent)
@@ -800,8 +831,7 @@ export default function AdminStoresPage() {
               <option value="">Webhook seçin</option>
               {item.availableWebhookOptions.map((option) => (
                 <option key={option.id} value={option.id}>
-                  {option.productLabel ? `${option.name} · ${option.productLabel}` : option.name}
-                  {` · ${option.currency === "TRY" ? "TRY" : option.currency === "USD" ? "USD" : "GENERIC"}`}
+                  {buildWebhookOptionLabel(option)}
                 </option>
               ))}
             </Select>
