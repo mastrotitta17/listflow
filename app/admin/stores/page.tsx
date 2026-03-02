@@ -37,6 +37,7 @@ type AutomationOverviewRow = {
   storeStatus: string;
   category: string | null;
   storeCurrency: "USD" | "TRY";
+  storeCurrencyKnown?: boolean;
   productId: string | null;
   productLabel: string | null;
   eligibleWebhookConfigIds: string[];
@@ -273,7 +274,7 @@ const formatErrorMessage = (value: string | null | undefined) => {
 
 const normalizeCurrency = (value: string | null | undefined) => {
   const normalized = (value ?? "").trim().toUpperCase();
-  return normalized === "TRY" || normalized === "TL" ? "TRY" : "USD";
+  return normalized === "TRY" || normalized === "TL" || normalized === "₺" ? "TRY" : "USD";
 };
 
 export default function AdminStoresPage() {
@@ -403,6 +404,9 @@ export default function AdminStoresPage() {
             (row.eligibleWebhookConfigIds ?? []).includes(option.id)
           );
           const scopedOptions = eligibleOptions.filter((option) => {
+            if (row.storeCurrencyKnown === false) {
+              return true;
+            }
             if (!option.currency) {
               return true;
             }
@@ -669,6 +673,9 @@ export default function AdminStoresPage() {
       );
       const storeCurrency = normalizeCurrency(row.storeCurrency);
       const matchesStoreCurrency = (option: WebhookOption) => {
+        if (row.storeCurrencyKnown === false) {
+          return true;
+        }
         if (!option.currency) {
           return true;
         }

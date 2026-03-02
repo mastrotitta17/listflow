@@ -102,7 +102,13 @@ const isMissingAnyColumnError = (error: { message?: string } | null | undefined,
 
 const normalizeCurrency = (value: string | null | undefined): StoreCurrency => {
   const normalized = (value ?? "").trim().toUpperCase();
-  if (normalized === "TRY" || normalized === "TL" || normalized === "TURKISHLIRA" || normalized === "TURKISH_LIRA") {
+  if (
+    normalized === "TRY" ||
+    normalized === "TL" ||
+    normalized === "₺" ||
+    normalized === "TURKISHLIRA" ||
+    normalized === "TURKISH_LIRA"
+  ) {
     return "TRY";
   }
   return "USD";
@@ -114,7 +120,13 @@ const normalizeWebhookCurrency = (value: string | null | undefined): StoreCurren
     return null;
   }
 
-  if (normalized === "TRY" || normalized === "TL" || normalized === "TURKISHLIRA" || normalized === "TURKISH_LIRA") {
+  if (
+    normalized === "TRY" ||
+    normalized === "TL" ||
+    normalized === "₺" ||
+    normalized === "TURKISHLIRA" ||
+    normalized === "TURKISH_LIRA"
+  ) {
     return "TRY";
   }
 
@@ -275,6 +287,9 @@ const loadStoreCurrencyMap = async (storeIds: string[]) => {
         const rawCurrency =
           (candidate.hasStoreCurrency ? row.store_currency ?? null : null) ??
           (candidate.hasCurrency ? row.currency ?? null : null);
+        if (!rawCurrency || !rawCurrency.trim()) {
+          continue;
+        }
         currencyMap.set(row.id, normalizeCurrency(rawCurrency));
       }
 
@@ -979,6 +994,7 @@ export async function GET(request: NextRequest) {
       const activeWebhookConfigId = resolveStoreWebhookId(store);
       const activeWebhook = activeWebhookConfigId ? webhookById.get(activeWebhookConfigId) ?? null : null;
       const storeCurrency = storeCurrencyById.get(store.id) ?? "USD";
+      const hasStoreCurrency = storeCurrencyById.has(store.id);
       const storeProduct = store.product_id ? productsById.get(store.product_id) : null;
       const hasStoreBoundProduct = Boolean(store.product_id);
       const unboundWebhooks = webhooks.filter((webhook) => !webhook.product_id);
@@ -990,6 +1006,9 @@ export async function GET(request: NextRequest) {
         ? [...exactProductWebhooks, ...unboundWebhooks]
         : webhooks;
       const eligibleWebhooks = eligibleProductScopedWebhooks.filter((webhook) => {
+        if (!hasStoreCurrency) {
+          return true;
+        }
         if (!webhook.currency) {
           return true;
         }
@@ -1010,6 +1029,7 @@ export async function GET(request: NextRequest) {
         storeStatus: store.status ?? "pending",
         category: store.category,
         storeCurrency,
+        storeCurrencyKnown: hasStoreCurrency,
         userId: store.user_id,
         userLabel:
           profile?.full_name?.trim() ||

@@ -13,6 +13,7 @@ type StoreRow = {
   product_id?: string | null;
   active_webhook_config_id?: string | null;
   store_currency: "USD" | "TRY";
+  store_currency_known?: boolean;
 };
 
 type SubscriptionRow = {
@@ -69,7 +70,13 @@ const isMissingAnyColumnError = (error: { message?: string } | null | undefined,
 
 const normalizeStoreCurrency = (value: string | null | undefined) => {
   const normalized = (value ?? "").trim().toUpperCase();
-  if (normalized === "TRY" || normalized === "TL" || normalized === "TURKISHLIRA" || normalized === "TURKISH_LIRA") {
+  if (
+    normalized === "TRY" ||
+    normalized === "TL" ||
+    normalized === "₺" ||
+    normalized === "TURKISHLIRA" ||
+    normalized === "TURKISH_LIRA"
+  ) {
     return "TRY";
   }
   return "USD";
@@ -81,7 +88,13 @@ const normalizeWebhookCurrency = (value: string | null | undefined) => {
     return null;
   }
 
-  if (normalized === "TRY" || normalized === "TL" || normalized === "TURKISHLIRA" || normalized === "TURKISH_LIRA") {
+  if (
+    normalized === "TRY" ||
+    normalized === "TL" ||
+    normalized === "₺" ||
+    normalized === "TURKISHLIRA" ||
+    normalized === "TURKISH_LIRA"
+  ) {
     return "TRY";
   }
 
@@ -454,16 +467,19 @@ const loadStoreById = async (storeId: string) => {
         return { data: null, error: null as string | null };
       }
 
+      const rawStoreCurrency =
+        (candidate.hasStoreCurrencyColumn ? query.data.store_currency ?? null : null) ??
+        (candidate.hasCurrencyColumn ? query.data.currency ?? null : null);
+      const storeCurrencyKnown = Boolean(rawStoreCurrency && rawStoreCurrency.trim());
+
       return {
         data: {
           id: query.data.id,
           user_id: query.data.user_id,
           product_id: candidate.hasProductColumn ? query.data.product_id ?? null : null,
           active_webhook_config_id: candidate.hasActiveWebhookColumn ? query.data.active_webhook_config_id ?? null : null,
-          store_currency: normalizeStoreCurrency(
-            (candidate.hasStoreCurrencyColumn ? query.data.store_currency ?? null : null) ??
-              (candidate.hasCurrencyColumn ? query.data.currency ?? null : null)
-          ),
+          store_currency: normalizeStoreCurrency(rawStoreCurrency),
+          store_currency_known: storeCurrencyKnown,
         } as StoreRow,
         error: null as string | null,
       };
@@ -631,7 +647,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       );
     }
 
-    if (targetWebhook.currency && targetWebhook.currency !== store.store_currency) {
+    if (store.store_currency_known && targetWebhook.currency && targetWebhook.currency !== store.store_currency) {
       return NextResponse.json(
         {
           code: "WEBHOOK_CURRENCY_MISMATCH",
