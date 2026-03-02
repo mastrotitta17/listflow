@@ -26,6 +26,21 @@ const isRecoverableColumnError = (error: QueryError | null | undefined) => {
   );
 };
 
+const resolveUniqueViolationMessage = (error: QueryError) => {
+  const message = error.message ?? "Unique constraint violation";
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("uniq_webhook_configs_active_automation_product")) {
+    return "Eski webhook unique kuralı aktif görünüyor. Lütfen en güncel migrationları uygulayın (product + currency).";
+  }
+
+  if (normalized.includes("uniq_webhook_configs_active_automation_product_currency")) {
+    return "Bu ürün ve para birimi için zaten aktif bir automation webhook var.";
+  }
+
+  return message;
+};
+
 const parseHeaders = (value: unknown) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -208,7 +223,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       }
 
       if (error.code === "23505") {
-        return NextResponse.json({ error: error.message }, { status: 409 });
+        return NextResponse.json({ error: resolveUniqueViolationMessage(error) }, { status: 409 });
       }
 
       lastError = error;
