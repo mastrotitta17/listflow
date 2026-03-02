@@ -120,7 +120,7 @@ const parsePatch = async (body: ConfigPatch) => {
 
   if (body.currency !== undefined) {
     const normalized = typeof body.currency === "string" ? body.currency.trim().toUpperCase() : "";
-    patch.currency = normalized === "TRY" ? "TRY" : "USD";
+    patch.currency = normalized === "TRY" || normalized === "TL" ? "TRY" : "USD";
   }
 
   if (body.productId !== undefined) {

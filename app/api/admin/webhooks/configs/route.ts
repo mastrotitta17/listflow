@@ -69,7 +69,7 @@ const parseWebhookCurrency = (value: unknown) => {
   }
 
   const normalized = value.trim().toUpperCase();
-  return normalized === "TRY" ? ("TRY" as const) : ("USD" as const);
+  return normalized === "TRY" || normalized === "TL" ? ("TRY" as const) : ("USD" as const);
 };
 
 const parseHeaders = (value: unknown) => {

@@ -102,7 +102,10 @@ const isMissingAnyColumnError = (error: { message?: string } | null | undefined,
 
 const normalizeCurrency = (value: string | null | undefined): StoreCurrency => {
   const normalized = (value ?? "").trim().toUpperCase();
-  return normalized === "TRY" ? "TRY" : "USD";
+  if (normalized === "TRY" || normalized === "TL" || normalized === "TURKISHLIRA" || normalized === "TURKISH_LIRA") {
+    return "TRY";
+  }
+  return "USD";
 };
 
 const normalizeWebhookCurrency = (value: string | null | undefined): StoreCurrency | null => {
@@ -111,7 +114,11 @@ const normalizeWebhookCurrency = (value: string | null | undefined): StoreCurren
     return null;
   }
 
-  if (normalized === "TRY" || normalized === "USD") {
+  if (normalized === "TRY" || normalized === "TL" || normalized === "TURKISHLIRA" || normalized === "TURKISH_LIRA") {
+    return "TRY";
+  }
+
+  if (normalized === "USD") {
     return normalized;
   }
 

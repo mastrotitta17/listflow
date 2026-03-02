@@ -272,7 +272,8 @@ const formatErrorMessage = (value: string | null | undefined) => {
 };
 
 const normalizeCurrency = (value: string | null | undefined) => {
-  return (value ?? "").trim().toUpperCase() === "TRY" ? "TRY" : "USD";
+  const normalized = (value ?? "").trim().toUpperCase();
+  return normalized === "TRY" || normalized === "TL" ? "TRY" : "USD";
 };
 
 export default function AdminStoresPage() {
@@ -674,9 +675,13 @@ export default function AdminStoresPage() {
         return normalizeCurrency(option.currency) === storeCurrency;
       };
       const strictCurrencyOptions = strictOptions.filter(matchesStoreCurrency);
-      const fallbackOptions = strictCurrencyOptions.length
-        ? strictCurrencyOptions
-        : webhookOptions.filter(matchesStoreCurrency);
+      const currencyWideOptions = webhookOptions.filter(matchesStoreCurrency);
+      const fallbackOptions = [
+        ...strictCurrencyOptions,
+        ...currencyWideOptions.filter(
+          (option) => !strictCurrencyOptions.some((strictOption) => strictOption.id === option.id)
+        ),
+      ];
 
       const selectedCurrent = selectedWebhookByStore[row.storeId] ?? "";
       const selectedWebhookConfigId = fallbackOptions.some((option) => option.id === selectedCurrent)
