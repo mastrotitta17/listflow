@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { startNavlungoShipmentForOrder, type NavlungoShipmentDispatchResult } from "@/lib/navlungo/shipment";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -496,7 +497,7 @@ export async function POST(request: NextRequest) {
     const productLink = asTrimmedString(body.productLink);
     const address = asTrimmedString(body.address);
     const receiverName = asTrimmedString(body.receiverName);
-    const receiverPhone = asTrimmedString(body.receiverPhone);
+    const receiverPhone = normalizePhoneForStorage(body.receiverPhone);
     const receiverCountryCode = asIso2CountryCode(body.receiverCountryCode);
     const receiverState = asTrimmedString(body.receiverState) || null;
     const receiverCity = asTrimmedString(body.receiverCity);

@@ -24,6 +24,7 @@ import Footer from "@/components/Footer";
 import { Select } from "@/components/ui/select";
 import { buildOAuthRedirectTo } from "@/lib/auth/oauth-client";
 import { useI18n } from "@/lib/i18n/provider";
+import { normalizePhoneForStorage, sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
 import { supabase } from "@/lib/supabaseClient";
 import type { SupportedLocale } from "@/lib/i18n/config";
@@ -32,6 +33,7 @@ type BillingPlan = "standard" | "pro" | "turbo";
 type BillingInterval = "month" | "year";
 type WizardStep = 1 | 2 | 3;
 type AuthMode = "signin" | "signup";
+type StoreCurrency = "USD" | "TRY";
 
 type PublicPlanPricing = {
   plan: BillingPlan;
@@ -115,7 +117,15 @@ type PricingCopy = {
   storeSubtitle: string;
   storeName: string;
   storePhone: string;
-  storeCategory: string;
+  storeMainCategory: string;
+  storeSubCategory: string;
+  storeCurrency: string;
+  storeCurrencyDefaultHint: string;
+  storeCurrencyUsd: string;
+  storeCurrencyTry: string;
+  storeSubCategoryNoOptions: string;
+  storeListflowDecide: string;
+  storeListflowSelected: string;
   storePlaceholderName: string;
   storePlaceholderPhone: string;
   storeCreate: string;
@@ -198,7 +208,15 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
     storeSubtitle: "Bu mağaza seçtiğin planla Stripe aboneliğine bağlanacak.",
     storeName: "Mağaza Adı",
     storePhone: "Telefon",
-    storeCategory: "Kategori",
+    storeMainCategory: "Ana Kategori",
+    storeSubCategory: "Alt Kategori",
+    storeCurrency: "Mağaza Para Birimi",
+    storeCurrencyDefaultHint: "Varsayılan para birimi dolardır.",
+    storeCurrencyUsd: "$ Dolar",
+    storeCurrencyTry: "₺ Türk Lirası",
+    storeSubCategoryNoOptions: "Seçili ana kategori için alt kategori yok",
+    storeListflowDecide: "Listflow karar versin",
+    storeListflowSelected: "Listflow seçimi",
     storePlaceholderName: "Örn: WoodDesignTR",
     storePlaceholderPhone: "+90 5xx xxx xx xx",
     storeCreate: "Mağaza oluştur",
@@ -325,7 +343,15 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
     storeSubtitle: "This store will be linked to the selected Stripe subscription plan.",
     storeName: "Store Name",
     storePhone: "Phone",
-    storeCategory: "Category",
+    storeMainCategory: "Main Category",
+    storeSubCategory: "Subcategory",
+    storeCurrency: "Store Currency",
+    storeCurrencyDefaultHint: "Default currency is USD.",
+    storeCurrencyUsd: "$ Dollar",
+    storeCurrencyTry: "₺ Turkish Lira",
+    storeSubCategoryNoOptions: "No subcategory for selected main category",
+    storeListflowDecide: "Let Listflow decide",
+    storeListflowSelected: "Listflow selected",
     storePlaceholderName: "Ex: WoodDesignUS",
     storePlaceholderPhone: "+1 (555) ...",
     storeCreate: "Create store",
@@ -405,6 +431,7 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
 };
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
 const DISPLAY_DISCOUNT_PERCENT: Record<BillingInterval, number> = {
   month: 50,
   year: 50,
@@ -468,7 +495,9 @@ const PricingPage = () => {
 
   const [storeName, setStoreName] = useState("");
   const [storePhone, setStorePhone] = useState("");
-  const [storeCategoryId, setStoreCategoryId] = useState("");
+  const [selectedParentCategoryId, setSelectedParentCategoryId] = useState("");
+  const [selectedSubCategoryId, setSelectedSubCategoryId] = useState("");
+  const [storeCurrency, setStoreCurrency] = useState<StoreCurrency>("USD");
   const [storeSubmitting, setStoreSubmitting] = useState(false);
   const [createdStoreId, setCreatedStoreId] = useState<string | null>(null);
   const [createdStoreName, setCreatedStoreName] = useState<string | null>(null);
@@ -514,10 +543,61 @@ const PricingPage = () => {
   }, []);
 
   useEffect(() => {
-    if (!storeCategoryId && categories[0]) {
-      setStoreCategoryId(categories[0].id);
+    if (!selectedParentCategoryId && categories[0]) {
+      setSelectedParentCategoryId(categories[0].id);
     }
-  }, [categories, storeCategoryId]);
+  }, [categories, selectedParentCategoryId]);
+
+  const topCategories = useMemo(() => categories, [categories]);
+
+  const selectedParentCategory = useMemo(
+    () => topCategories.find((category) => category.id === selectedParentCategoryId) ?? topCategories[0] ?? null,
+    [selectedParentCategoryId, topCategories]
+  );
+
+  const availableSubCategories = useMemo(() => {
+    if (!selectedParentCategory) {
+      return [];
+    }
+
+    return (selectedParentCategory.subProducts ?? [])
+      .map((subProduct) => ({
+        id: subProduct.id,
+        name: subProduct.name,
+      }))
+      .filter((item) => Boolean(item.id) && Boolean(item.name));
+  }, [selectedParentCategory]);
+
+  const resolvedSubCategory = useMemo(() => {
+    if (!availableSubCategories.length) {
+      return null;
+    }
+
+    if (selectedSubCategoryId === LISTFLOW_DECIDE_VALUE || !selectedSubCategoryId) {
+      return availableSubCategories[0];
+    }
+
+    return availableSubCategories.find((subcategory) => subcategory.id === selectedSubCategoryId) ?? availableSubCategories[0];
+  }, [availableSubCategories, selectedSubCategoryId]);
+
+  useEffect(() => {
+    if (!availableSubCategories.length) {
+      if (selectedSubCategoryId !== "") {
+        setSelectedSubCategoryId("");
+      }
+      return;
+    }
+
+    if (
+      selectedSubCategoryId &&
+      selectedSubCategoryId !== LISTFLOW_DECIDE_VALUE &&
+      availableSubCategories.some((subcategory) => subcategory.id === selectedSubCategoryId)
+    ) {
+      return;
+    }
+
+    setSelectedSubCategoryId(LISTFLOW_DECIDE_VALUE);
+  }, [availableSubCategories, selectedSubCategoryId]);
 
   const loadStoreQuota = useCallback(async () => {
     const response = await fetch("/api/stores/quota", {
@@ -658,6 +738,9 @@ const PricingPage = () => {
     setCreatedStoreName(null);
     setStoreName("");
     setStorePhone("");
+    setSelectedParentCategoryId(topCategories[0]?.id ?? "");
+    setSelectedSubCategoryId(topCategories.length ? LISTFLOW_DECIDE_VALUE : "");
+    setStoreCurrency("USD");
     setAccountPassword("");
     setIsWizardOpen(true);
     setWizardBooting(true);
@@ -819,13 +902,17 @@ const PricingPage = () => {
     setStoreSubmitting(true);
 
     try {
-      const normalizedPhone = storePhone.trim();
+      const normalizedPhone = normalizePhoneForStorage(storePhone);
       if (!normalizedPhone) {
         throw new Error(copy.storePhoneRequired);
       }
 
-      const categoryName =
-        categories.find((category) => category.id === storeCategoryId)?.name || copy.storeDefaultCategory;
+      const categoryName = resolvedSubCategory?.name || selectedParentCategory?.name || copy.storeDefaultCategory;
+      const topCategoryId =
+        (selectedParentCategory?.dbId && selectedParentCategory.dbId.trim()) ||
+        (selectedParentCategory?.id && selectedParentCategory.id.trim()) ||
+        null;
+      const subCategoryId = (resolvedSubCategory?.id && resolvedSubCategory.id.trim()) || null;
 
       const normalizedStoreName = storeName.trim();
       const response = await fetch("/api/onboarding/store", {
@@ -837,6 +924,9 @@ const PricingPage = () => {
           storeName: normalizedStoreName || null,
           phone: normalizedPhone,
           category: categoryName,
+          topCategoryId,
+          subCategoryId,
+          currency: storeCurrency,
           priceCents: selectedPrice,
           fallbackStoreNamePrefix: copy.storeDefaultName,
         }),
@@ -1384,7 +1474,8 @@ const PricingPage = () => {
                           <input
                             type="tel"
                             value={storePhone}
-                            onChange={(event) => setStorePhone(event.target.value)}
+                            onChange={(event) => setStorePhone(sanitizePhoneInput(event.target.value))}
+                            inputMode="tel"
                             placeholder={copy.storePlaceholderPhone}
                             className="w-full rounded-2xl border border-white/10 bg-white/5 pl-12 pr-4 py-3.5 text-white outline-none focus:ring-2 focus:ring-indigo-500"
                             required
@@ -1392,26 +1483,89 @@ const PricingPage = () => {
                         </div>
                       </label>
 
-                      <label className="block">
-                        <span className="mb-2 ml-1 block text-[10px] font-black uppercase tracking-widest text-slate-500">{copy.storeCategory}</span>
+                      <div className="space-y-2">
+                        <span className="mb-2 ml-1 block text-[10px] font-black uppercase tracking-widest text-slate-500">
+                          {copy.storeMainCategory}
+                        </span>
                         <Select
-                          value={storeCategoryId}
-                          onChange={(event) => setStoreCategoryId(event.target.value)}
+                          value={selectedParentCategoryId}
+                          onChange={(event) => setSelectedParentCategoryId(event.target.value)}
                           className="h-[54px] rounded-2xl border-white/10 bg-white/5"
                         >
-                          {categories.length ? (
-                            categories.map((category) => (
+                          {topCategories.length ? (
+                            topCategories.map((category) => (
                               <option key={category.id} value={category.id}>
                                 {category.name}
                               </option>
                             ))
                           ) : (
-                            <option value="">
-                              {copy.storeDefaultCategory}
-                            </option>
+                            <option value="">{copy.storeDefaultCategory}</option>
                           )}
                         </Select>
-                      </label>
+                      </div>
+
+                      <div className="space-y-2">
+                        <span className="mb-2 ml-1 block text-[10px] font-black uppercase tracking-widest text-slate-500">
+                          {copy.storeSubCategory}
+                        </span>
+                        <Select
+                          value={availableSubCategories.length ? selectedSubCategoryId : ""}
+                          onChange={(event) => setSelectedSubCategoryId(event.target.value)}
+                          disabled={!availableSubCategories.length}
+                          className="h-[54px] rounded-2xl border-white/10 bg-white/5"
+                        >
+                          {availableSubCategories.length ? (
+                            <option value={LISTFLOW_DECIDE_VALUE}>{copy.storeListflowDecide}</option>
+                          ) : (
+                            <option value="" disabled>
+                              {copy.storeSubCategoryNoOptions}
+                            </option>
+                          )}
+                          {availableSubCategories.map((subcategory) => (
+                            <option key={subcategory.id} value={subcategory.id}>
+                              {subcategory.name}
+                            </option>
+                          ))}
+                        </Select>
+                        {availableSubCategories.length && selectedSubCategoryId === LISTFLOW_DECIDE_VALUE ? (
+                          <p className="text-[10px] text-indigo-300 font-semibold">
+                            {copy.storeListflowSelected}: {resolvedSubCategory?.name || "-"}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div className="space-y-2 border border-white/10 py-2 px-3 rounded-xl flex justify-between items-center w-full">
+                        <div>
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                            {copy.storeCurrency}
+                          </span>
+                        </div>
+                        <div className="inline-flex rounded-full border border-indigo-500/25 bg-white/5 p-1">
+                          <button
+                            type="button"
+                            onClick={() => setStoreCurrency("USD")}
+                            className={`rounded-full px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                              storeCurrency === "USD"
+                                ? "bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.35)]"
+                                : "text-slate-300 hover:text-white"
+                            }`}
+                          >
+                            {copy.storeCurrencyUsd}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStoreCurrency("TRY")}
+                            className={`rounded-full px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                              storeCurrency === "TRY"
+                                ? "bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.35)]"
+                                : "text-slate-300 hover:text-white"
+                            }`}
+                          >
+                            {copy.storeCurrencyTry}
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-semibold">{copy.storeCurrencyDefaultHint}</p>
 
                       <div className="grid grid-cols-2 gap-3">
                         <button

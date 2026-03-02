@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -102,7 +103,7 @@ export async function POST(request: NextRequest) {
 
     const body = (await request.json().catch(() => ({}))) as LegacyProfileBody;
     const fullName = normalizeText(body.fullName, 120);
-    const phone = normalizeText(body.phone, 32);
+    const phone = normalizePhoneForStorage(body.phone, 32);
     const passwordRaw = typeof body.password === "string" ? body.password : "";
     const password = passwordRaw.trim();
 

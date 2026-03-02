@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { resolveCheckoutPriceId } from "@/lib/stripe/plans";
 import { getActiveStripeMode, getStripeClientForMode, resolveStripeMode, type StripeMode } from "@/lib/stripe/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -493,7 +494,7 @@ export async function POST(request: NextRequest) {
 
     const body = (await request.json().catch(() => ({}))) as CreateStoreBody;
 
-    const phone = asTrimmedString(body.phone);
+    const phone = normalizePhoneForStorage(body.phone);
     const category = asTrimmedString(body.category) || "Genel";
     const topCategoryId = asTrimmedString(body.topCategoryId) || null;
     const subCategoryId = asTrimmedString(body.subCategoryId) || null;

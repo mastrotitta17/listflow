@@ -17,6 +17,23 @@ const isMissingTableError = (error: { message?: string; code?: string } | null |
   );
 };
 
+const isNotFoundError = (error: { message?: string; code?: string } | null | undefined) => {
+  if (!error) {
+    return false;
+  }
+
+  const message = (error.message ?? "").toLowerCase();
+  return message.includes("not found") || message.includes("no rows found");
+};
+
+const safeDeleteByUser = async (table: string, userId: string, userColumn = "user_id") => {
+  const result = await supabaseAdmin.from(table).delete().eq(userColumn, userId);
+
+  if (result.error && !isMissingTableError(result.error)) {
+    throw new Error(result.error.message);
+  }
+};
+
 const requireAdmin = async (request: NextRequest) => {
   const token = getAccessTokenFromRequest(request);
   if (!token) return null;
@@ -73,6 +90,31 @@ export async function DELETE(
 
   const { resource, id } = await params;
   if (!isAdminResource(resource)) return notFoundResponse();
+
+  if (resource === "users") {
+    try {
+      await safeDeleteByUser("orders", id);
+      await safeDeleteByUser("scheduler_jobs", id);
+      await safeDeleteByUser("payments", id);
+      await safeDeleteByUser("subscriptions", id);
+      await safeDeleteByUser("stores", id);
+      await safeDeleteByUser("referral_codes", id);
+      await safeDeleteByUser("referral_rewards", id);
+      await safeDeleteByUser("referral_conversions", id, "referrer_user_id");
+      await safeDeleteByUser("referral_conversions", id, "referred_user_id");
+      await safeDeleteByUser("profiles", id);
+
+      const authDelete = await supabaseAdmin.auth.admin.deleteUser(id);
+      if (authDelete.error && !isNotFoundError(authDelete.error)) {
+        return NextResponse.json({ error: authDelete.error.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "User could not be deleted";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
+  }
 
   const { table, idColumn } = ADMIN_RESOURCE_MAP[resource];
 

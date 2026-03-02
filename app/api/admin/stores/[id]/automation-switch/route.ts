@@ -12,6 +12,7 @@ type StoreRow = {
   user_id: string;
   product_id?: string | null;
   active_webhook_config_id?: string | null;
+  store_currency: "USD" | "TRY";
 };
 
 type SubscriptionRow = {
@@ -32,6 +33,7 @@ type WebhookConfigRow = {
   headers: Record<string, unknown> | null;
   enabled: boolean | null;
   product_id?: string | null;
+  currency?: "USD" | "TRY" | null;
   scope?: string | null;
 };
 
@@ -63,6 +65,24 @@ const isMissingAnyColumnError = (error: { message?: string } | null | undefined,
   }
 
   return columns.some((column) => isMissingColumnError(error, column));
+};
+
+const normalizeStoreCurrency = (value: string | null | undefined) => {
+  const normalized = (value ?? "").trim().toUpperCase();
+  return normalized === "TRY" ? "TRY" : "USD";
+};
+
+const normalizeWebhookCurrency = (value: string | null | undefined) => {
+  const normalized = (value ?? "").trim().toUpperCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "TRY" || normalized === "USD") {
+    return normalized;
+  }
+
+  return null;
 };
 
 const isUniqueViolation = (error: { message?: string; code?: string } | null | undefined) => {
@@ -282,76 +302,127 @@ const loadActiveSubscriptionForStore = async (storeId: string) => {
 };
 
 const loadWebhookConfig = async (id: string) => {
-  const withScope = await supabaseAdmin
-    .from("webhook_configs")
-    .select("id, name, target_url, method, headers, enabled, scope, product_id")
-    .eq("id", id)
-    .maybeSingle<WebhookConfigRow>();
+  const candidates = [
+    "id, name, target_url, method, headers, enabled, scope, product_id, currency",
+    "id, name, target_url, method, headers, enabled, scope, product_id",
+    "id, name, target_url, method, headers, enabled, product_id, currency",
+    "id, name, target_url, method, headers, enabled, product_id",
+    "id, name, target_url, method, headers, enabled, currency",
+    "id, name, target_url, method, headers, enabled",
+  ] as const;
 
-  if (!withScope.error) {
-    if (!withScope.data) {
-      return null;
-    }
+  let lastError: string | null = null;
 
-    if (!withScope.data.product_id) {
-      const map = await loadWebhookConfigProductMap([withScope.data.id]);
+  for (const select of candidates) {
+    const query = await supabaseAdmin
+      .from("webhook_configs")
+      .select(select)
+      .eq("id", id)
+      .maybeSingle<{
+        id: string;
+        name: string;
+        target_url: string;
+        method?: string | null;
+        headers?: Record<string, unknown> | null;
+        enabled?: boolean | null;
+        scope?: string | null;
+        product_id?: string | null;
+        currency?: string | null;
+      }>();
+
+    if (!query.error) {
+      if (!query.data) {
+        return null;
+      }
+
+      const map = query.data.product_id ? null : await loadWebhookConfigProductMap([query.data.id]);
+
       return {
-        ...withScope.data,
-        product_id: map.get(withScope.data.id) ?? null,
-      };
+        id: query.data.id,
+        name: query.data.name,
+        target_url: query.data.target_url,
+        method: query.data.method ?? "POST",
+        headers: query.data.headers ?? {},
+        enabled: query.data.enabled ?? true,
+        scope: query.data.scope ?? "automation",
+        product_id: query.data.product_id ?? map?.get(query.data.id) ?? null,
+        currency: normalizeWebhookCurrency(query.data.currency ?? null),
+      } satisfies WebhookConfigRow;
     }
 
-    return withScope.data;
+    lastError = query.error.message;
+    if (!isMissingAnyColumnError(query.error, ["scope", "product_id", "currency"])) {
+      throw new Error(query.error.message);
+    }
   }
 
-  if (!isMissingColumnError(withScope.error, "scope")) {
-    throw new Error(withScope.error.message);
-  }
-
-  const fallback = await supabaseAdmin
-    .from("webhook_configs")
-    .select("id, name, target_url, method, headers, enabled")
-    .eq("id", id)
-    .maybeSingle<WebhookConfigRow>();
-
-  if (fallback.error) {
-    throw new Error(fallback.error.message);
-  }
-
-  if (!fallback.data) {
-    return null;
-  }
-
-  const map = await loadWebhookConfigProductMap([fallback.data.id]);
-
-  return {
-    ...fallback.data,
-    scope: "automation",
-    product_id: map.get(fallback.data.id) ?? null,
-  } satisfies WebhookConfigRow;
+  throw new Error(lastError ?? "webhook config could not be loaded");
 };
 
 const loadStoreById = async (storeId: string) => {
   const candidates = [
     {
+      select: "id, user_id, product_id, active_webhook_config_id, store_currency, currency",
+      hasProductColumn: true,
+      hasActiveWebhookColumn: true,
+      hasStoreCurrencyColumn: true,
+      hasCurrencyColumn: true,
+    },
+    {
+      select: "id, user_id, product_id, active_webhook_config_id, store_currency",
+      hasProductColumn: true,
+      hasActiveWebhookColumn: true,
+      hasStoreCurrencyColumn: true,
+      hasCurrencyColumn: false,
+    },
+    {
+      select: "id, user_id, product_id, active_webhook_config_id, currency",
+      hasProductColumn: true,
+      hasActiveWebhookColumn: true,
+      hasStoreCurrencyColumn: false,
+      hasCurrencyColumn: true,
+    },
+    {
       select: "id, user_id, product_id, active_webhook_config_id",
       hasProductColumn: true,
       hasActiveWebhookColumn: true,
+      hasStoreCurrencyColumn: false,
+      hasCurrencyColumn: false,
     },
     {
-      select: "id, user_id, active_webhook_config_id",
+      select: "id, user_id, active_webhook_config_id, store_currency, currency",
       hasProductColumn: false,
       hasActiveWebhookColumn: true,
+      hasStoreCurrencyColumn: true,
+      hasCurrencyColumn: true,
+    },
+    {
+      select: "id, user_id, active_webhook_config_id, store_currency",
+      hasProductColumn: false,
+      hasActiveWebhookColumn: true,
+      hasStoreCurrencyColumn: true,
+      hasCurrencyColumn: false,
+    },
+    {
+      select: "id, user_id, active_webhook_config_id, currency",
+      hasProductColumn: false,
+      hasActiveWebhookColumn: true,
+      hasStoreCurrencyColumn: false,
+      hasCurrencyColumn: true,
     },
     {
       select: "id, user_id, product_id",
       hasProductColumn: true,
       hasActiveWebhookColumn: false,
+      hasStoreCurrencyColumn: false,
+      hasCurrencyColumn: false,
     },
     {
       select: "id, user_id",
       hasProductColumn: false,
       hasActiveWebhookColumn: false,
+      hasStoreCurrencyColumn: false,
+      hasCurrencyColumn: false,
     },
   ] as const;
 
@@ -367,6 +438,8 @@ const loadStoreById = async (storeId: string) => {
         user_id: string;
         product_id?: string | null;
         active_webhook_config_id?: string | null;
+        store_currency?: string | null;
+        currency?: string | null;
       }>();
 
     if (!query.error) {
@@ -380,6 +453,10 @@ const loadStoreById = async (storeId: string) => {
           user_id: query.data.user_id,
           product_id: candidate.hasProductColumn ? query.data.product_id ?? null : null,
           active_webhook_config_id: candidate.hasActiveWebhookColumn ? query.data.active_webhook_config_id ?? null : null,
+          store_currency: normalizeStoreCurrency(
+            (candidate.hasStoreCurrencyColumn ? query.data.store_currency ?? null : null) ??
+              (candidate.hasCurrencyColumn ? query.data.currency ?? null : null)
+          ),
         } as StoreRow,
         error: null as string | null,
       };
@@ -387,7 +464,12 @@ const loadStoreById = async (storeId: string) => {
 
     lastErrorMessage = query.error.message;
 
-    const recoverable = isMissingAnyColumnError(query.error, ["product_id", "active_webhook_config_id"]);
+    const recoverable = isMissingAnyColumnError(query.error, [
+      "product_id",
+      "active_webhook_config_id",
+      "store_currency",
+      "currency",
+    ]);
     if (!recoverable) {
       return { data: null, error: query.error.message };
     }
@@ -537,6 +619,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           code: "WEBHOOK_SCOPE_INVALID",
           message: `Hedef webhook automation scope'unda değil: ${targetWebhook.name} (${targetWebhook.id}).`,
           error: "Hedef webhook scope=automation olmalı.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (targetWebhook.currency && targetWebhook.currency !== store.store_currency) {
+      return NextResponse.json(
+        {
+          code: "WEBHOOK_CURRENCY_MISMATCH",
+          message: `Mağaza para birimi ${store.store_currency}. Seçilen webhook para birimi ${targetWebhook.currency}.`,
+          error: "Seçilen webhook mağaza para birimiyle eşleşmiyor.",
         },
         { status: 400 }
       );

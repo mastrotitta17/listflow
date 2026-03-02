@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useI18n } from "@/lib/i18n/provider";
+import { sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -553,7 +554,8 @@ export default function LegacyOnboardingPage() {
                     </label>
                     <Input
                       value={phone}
-                      onChange={(event) => setPhone(event.target.value)}
+                      onChange={(event) => setPhone(sanitizePhoneInput(event.target.value))}
+                      inputMode="tel"
                       placeholder="+90 ..."
                       disabled={settingPassword}
                     />

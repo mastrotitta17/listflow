@@ -887,3 +887,279 @@ export const applyListingJobReport = async (args: ReportArgs) => {
   await updateRowByIdentifier(identifier, payload);
   return { ok: true as const };
 };
+
+type GuestSyncArgs = {
+  clientId: string;
+  listingPayload: RowRecord;
+  source?: string | null;
+};
+
+type GuestReportArgs = {
+  clientId: string;
+  listingId?: string | null;
+  listingKey?: string | null;
+  status: "processing" | "completed" | "failed";
+  error?: string | null;
+  etsyListingId?: string | null;
+  etsyListingUrl?: string | null;
+  publishProof?: string | null;
+};
+
+const extractMissingColumnName = (message: string) => {
+  const normalized = String(message || "");
+  const match =
+    normalized.match(/column\s+"([^"]+)"\s+of\s+relation\s+"listing"\s+does\s+not\s+exist/i) ??
+    normalized.match(/column\s+([a-zA-Z0-9_]+)\s+does\s+not\s+exist/i);
+  return match?.[1] ? String(match[1]).trim() : null;
+};
+
+const toFiniteNumberOr = (value: unknown, fallback: number) => {
+  const maybe = typeof value === "number" ? value : Number(String(value ?? "").replace(",", "."));
+  return Number.isFinite(maybe) ? maybe : fallback;
+};
+
+const buildGuestListingInsertPayload = (listingPayload: RowRecord, clientId: string) => {
+  const nowIso = new Date().toISOString();
+  const normalizedClientId = normalizeString(clientId);
+  const listingId = normalizeString(listingPayload.listing_id ?? listingPayload.id);
+  const listingKey = normalizeString(listingPayload.listing_key ?? listingPayload.key);
+
+  const tags = dedupeStrings(
+    parseTagList(readFirstValue(listingPayload, ["tags", "tag_list", "tag_values"]))
+  ).slice(0, 13);
+
+  const payload: RowRecord = {
+    id: listingId || undefined,
+    key: listingKey || undefined,
+    client_id: normalizedClientId || undefined,
+    store_id: normalizedClientId || undefined,
+    title: normalizeString(listingPayload.title),
+    description: normalizeString(listingPayload.description),
+    category: normalizeString(listingPayload.category ?? listingPayload.category_name),
+    tags,
+    price: toFiniteNumberOr(listingPayload.price, 0),
+    quantity: toFiniteNumberOr(listingPayload.quantity, 1),
+    image_1_url: normalizeString(listingPayload.image_1_url),
+    image_2_url: normalizeString(listingPayload.image_2_url),
+    image_3_url: normalizeString(listingPayload.image_3_url),
+    image_1_base64: normalizeString(listingPayload.image_1_base64),
+    image_2_base64: normalizeString(listingPayload.image_2_base64),
+    image_3_base64: normalizeString(listingPayload.image_3_base64),
+    variations: Array.isArray(listingPayload.variations) ? listingPayload.variations : undefined,
+    status: "processing",
+    listing_status: "processing",
+    updated_at: nowIso,
+    created_at: nowIso,
+    claimed_at: nowIso,
+    claimed_by_user_id: null,
+    claimed_by: null,
+    last_error: null,
+    error: null,
+  };
+
+  if (
+    listingPayload.shipping_template &&
+    typeof listingPayload.shipping_template === "object" &&
+    !Array.isArray(listingPayload.shipping_template)
+  ) {
+    payload.shipping_template = listingPayload.shipping_template;
+  }
+
+  const cleaned = Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined && value !== "")
+  );
+
+  return cleaned;
+};
+
+const buildGuestListingUpdatePayload = (row: RowRecord, listingPayload: RowRecord, clientId: string) => {
+  const nowIso = new Date().toISOString();
+  const payload: RowRecord = {};
+  const statusField = inferStatusFieldName(row);
+
+  const setIfColumnExists = (column: string, value: unknown) => {
+    if (!Object.prototype.hasOwnProperty.call(row, column)) return;
+    payload[column] = value;
+  };
+
+  if (statusField) {
+    payload[statusField] = "processing";
+  }
+
+  setIfColumnExists("updated_at", nowIso);
+  setIfColumnExists("claimed_at", nowIso);
+  setIfColumnExists("claimed_by_user_id", null);
+  setIfColumnExists("claimed_by", null);
+  setIfColumnExists("last_error", null);
+  setIfColumnExists("error", null);
+
+  const normalizedClientId = normalizeString(clientId);
+  if (normalizedClientId) {
+    setIfColumnExists("client_id", normalizedClientId);
+    setIfColumnExists("store_id", normalizedClientId);
+  }
+
+  const fieldMap: Array<[string, unknown]> = [
+    ["title", normalizeString(listingPayload.title)],
+    ["description", normalizeString(listingPayload.description)],
+    ["category", normalizeString(listingPayload.category ?? listingPayload.category_name)],
+    [
+      "tags",
+      dedupeStrings(parseTagList(readFirstValue(listingPayload, ["tags", "tag_list", "tag_values"]))).slice(0, 13),
+    ],
+    ["price", toFiniteNumberOr(listingPayload.price, readFirstNumber(row, ["price"]) ?? 0)],
+    ["quantity", toFiniteNumberOr(listingPayload.quantity, readFirstNumber(row, ["quantity"]) ?? 1)],
+    ["image_1_url", normalizeString(listingPayload.image_1_url)],
+    ["image_2_url", normalizeString(listingPayload.image_2_url)],
+    ["image_3_url", normalizeString(listingPayload.image_3_url)],
+    ["image_1_base64", normalizeString(listingPayload.image_1_base64)],
+    ["image_2_base64", normalizeString(listingPayload.image_2_base64)],
+    ["image_3_base64", normalizeString(listingPayload.image_3_base64)],
+    ["variations", Array.isArray(listingPayload.variations) ? listingPayload.variations : undefined],
+  ];
+
+  for (const [column, value] of fieldMap) {
+    if (!Object.prototype.hasOwnProperty.call(row, column)) continue;
+    if (value === undefined) continue;
+    if (typeof value === "string" && value.trim() === "") continue;
+    payload[column] = value;
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(row, "shipping_template") &&
+    listingPayload.shipping_template &&
+    typeof listingPayload.shipping_template === "object" &&
+    !Array.isArray(listingPayload.shipping_template)
+  ) {
+    payload.shipping_template = listingPayload.shipping_template;
+  }
+
+  return payload;
+};
+
+export const syncGuestListingPayload = async (args: GuestSyncArgs) => {
+  const clientId = normalizeString(args.clientId);
+  if (!clientId) {
+    return { ok: false as const, reason: "client_id_missing" as const };
+  }
+
+  const rawPayload =
+    args.listingPayload && typeof args.listingPayload === "object" && !Array.isArray(args.listingPayload)
+      ? args.listingPayload
+      : ({} as RowRecord);
+
+  const listingId = normalizeString(rawPayload.listing_id ?? rawPayload.id);
+  const listingKey = normalizeString(rawPayload.listing_key ?? rawPayload.key);
+  const identifier = listingId
+    ? ({ column: "id", value: listingId } as const)
+    : listingKey
+      ? ({ column: "key", value: listingKey } as const)
+      : null;
+
+  if (!identifier) {
+    return { ok: false as const, reason: "identifier_missing" as const };
+  }
+
+  const existing = await loadListingByIdentifier(identifier);
+  if (existing) {
+    const rowClientId = readClientId(existing);
+    if (rowClientId && rowClientId !== clientId) {
+      return { ok: false as const, reason: "client_mismatch" as const };
+    }
+
+    const updatePayload = buildGuestListingUpdatePayload(existing, rawPayload, clientId);
+    await updateRowByIdentifier(identifier, updatePayload);
+    return { ok: true as const, mode: "updated" as const, identifier };
+  }
+
+  let insertPayload = buildGuestListingInsertPayload(rawPayload, clientId);
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const result = await supabaseAdmin.from("listing").insert(insertPayload).select("*").maybeSingle<RowRecord>();
+    if (!result.error) {
+      return { ok: true as const, mode: "inserted" as const, identifier };
+    }
+
+    const errorMessage = result.error.message || "listing insert failed";
+    const missingColumn = extractMissingColumnName(errorMessage);
+    if (missingColumn && Object.prototype.hasOwnProperty.call(insertPayload, missingColumn)) {
+      const { [missingColumn]: _removed, ...rest } = insertPayload;
+      insertPayload = rest;
+      continue;
+    }
+
+    if (result.error.code === "23505") {
+      const concurrentRow = await loadListingByIdentifier(identifier);
+      if (concurrentRow) {
+        const updatePayload = buildGuestListingUpdatePayload(concurrentRow, rawPayload, clientId);
+        await updateRowByIdentifier(identifier, updatePayload);
+        return { ok: true as const, mode: "updated" as const, identifier };
+      }
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  return { ok: false as const, reason: "insert_payload_exhausted" as const };
+};
+
+export const applyGuestListingJobReport = async (args: GuestReportArgs) => {
+  const clientId = normalizeString(args.clientId);
+  if (!clientId) {
+    return { ok: false as const, reason: "client_id_missing" as const };
+  }
+
+  const identifier = resolveIdentifierFromArgs({
+    userId: "",
+    listingId: args.listingId ?? null,
+    listingKey: args.listingKey ?? null,
+    status: args.status,
+    error: args.error ?? null,
+    etsyListingId: args.etsyListingId ?? null,
+    etsyListingUrl: args.etsyListingUrl ?? null,
+    publishProof: args.publishProof ?? null,
+  });
+
+  if (!identifier) {
+    return { ok: false as const, reason: "identifier_missing" as const };
+  }
+
+  const row = await loadListingByIdentifier(identifier);
+  if (!row) {
+    return { ok: false as const, reason: "listing_not_found" as const };
+  }
+
+  const rowClientId = readClientId(row);
+  if (rowClientId && rowClientId !== clientId) {
+    return { ok: false as const, reason: "client_mismatch" as const };
+  }
+
+  let reportStatus: GuestReportArgs["status"] = args.status;
+  let reportError = args.error ?? null;
+  if (
+    reportStatus === "completed" &&
+    !hasCompletionProof({
+      userId: "",
+      listingId: args.listingId ?? null,
+      listingKey: args.listingKey ?? null,
+      status: args.status,
+      error: args.error ?? null,
+      etsyListingId: args.etsyListingId ?? null,
+      etsyListingUrl: args.etsyListingUrl ?? null,
+      publishProof: args.publishProof ?? null,
+    })
+  ) {
+    reportStatus = "failed";
+    reportError = reportError || "Publish doğrulaması bulunamadı";
+  }
+
+  const payload = buildUpdatePayloadForReport(row, {
+    status: reportStatus,
+    error: reportError,
+    etsyListingId: normalizeString(args.etsyListingId) || null,
+    etsyListingUrl: normalizeString(args.etsyListingUrl) || null,
+  });
+
+  await updateRowByIdentifier(identifier, payload);
+  return { ok: true as const };
+};

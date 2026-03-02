@@ -48,6 +48,7 @@ type WebhookConfigRow = {
   method: string | null;
   enabled: boolean | null;
   product_id: string | null;
+  currency: "USD" | "TRY" | null;
   updated_at: string | null;
   created_at: string | null;
 };
@@ -173,6 +174,7 @@ type EditState = {
   productId: string;
   targetUrl: string;
   method: "GET" | "POST";
+  currency: "USD" | "TRY";
   enabled: boolean;
 };
 
@@ -353,6 +355,7 @@ export default function AdminWebhookConsolePage() {
   const [createProductId, setCreateProductId] = useState("");
   const [createTargetUrl, setCreateTargetUrl] = useState("");
   const [createMethod, setCreateMethod] = useState<"GET" | "POST">("POST");
+  const [createCurrency, setCreateCurrency] = useState<"USD" | "TRY">("USD");
   const [testOpen, setTestOpen] = useState(false);
   const [cronTestOpen, setCronTestOpen] = useState(false);
   const [cronTestWebhooks, setCronTestWebhooks] = useState<CronTestWebhookRow[]>([]);
@@ -556,6 +559,7 @@ export default function AdminWebhookConsolePage() {
           productId: createProductId,
           targetUrl: createTargetUrl.trim(),
           method: createMethod,
+          currency: createCurrency,
           enabled: true,
           headers: {},
           description: "",
@@ -576,6 +580,7 @@ export default function AdminWebhookConsolePage() {
         : "";
       setInfo(`${buildCronSyncMessage("Webhook kaydedildi.", body.cronSync)}${bootstrapSummary}`);
       setCreateTargetUrl("");
+      setCreateCurrency("USD");
       await loadOverview();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Webhook kaydedilemedi.");
@@ -799,6 +804,7 @@ export default function AdminWebhookConsolePage() {
       productId: item.product_id ?? "",
       targetUrl: item.target_url,
       method: item.method === "GET" ? "GET" : "POST",
+      currency: item.currency === "TRY" ? "TRY" : "USD",
       enabled: item.enabled !== false,
     });
     setEditOpen(true);
@@ -821,6 +827,7 @@ export default function AdminWebhookConsolePage() {
       productId: editState.productId,
       targetUrl: editState.targetUrl.trim(),
       method: editState.method,
+      currency: editState.currency,
       enabled: editState.enabled,
     });
 
@@ -1357,6 +1364,13 @@ export default function AdminWebhookConsolePage() {
         header: "Method",
       },
       {
+        accessorKey: "currency",
+        header: "Para Birimi",
+        cell: ({ row }) => (
+          <Badge variant="secondary">{row.original.currency === "TRY" ? "TRY" : "USD"}</Badge>
+        ),
+      },
+      {
         accessorKey: "enabled",
         header: "Durum",
         cell: ({ row }) => (
@@ -1505,7 +1519,7 @@ export default function AdminWebhookConsolePage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-4 pt-0 space-y-3">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                     <Select value={createProductId} onChange={(event) => setCreateProductId(event.target.value)}>
                       <option value="">Alt ürün seçin</option>
                       {products.map((product) => (
@@ -1522,6 +1536,10 @@ export default function AdminWebhookConsolePage() {
                     <Select value={createMethod} onChange={(event) => setCreateMethod(event.target.value as "GET" | "POST")}>
                       <option value="POST">POST</option>
                       <option value="GET">GET</option>
+                    </Select>
+                    <Select value={createCurrency} onChange={(event) => setCreateCurrency(event.target.value === "TRY" ? "TRY" : "USD")}>
+                      <option value="USD">USD</option>
+                      <option value="TRY">TRY</option>
                     </Select>
                   </div>
 
@@ -1799,6 +1817,18 @@ export default function AdminWebhookConsolePage() {
             >
               <option value="POST">POST</option>
               <option value="GET">GET</option>
+            </Select>
+
+            <Select
+              value={editState?.currency || "USD"}
+              onChange={(event) =>
+                setEditState((prev) =>
+                  prev ? { ...prev, currency: event.target.value === "TRY" ? "TRY" : "USD" } : prev
+                )
+              }
+            >
+              <option value="USD">USD</option>
+              <option value="TRY">TRY</option>
             </Select>
 
             <label className="flex items-center gap-2 text-xs font-bold text-slate-300">

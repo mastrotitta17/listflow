@@ -21,6 +21,8 @@ type StoreRow = {
   automation_updated_at: string | null;
 };
 
+type StoreCurrency = "USD" | "TRY";
+
 type ProfileRow = {
   user_id: string;
   email: string | null;
@@ -63,6 +65,7 @@ type WebhookConfigRow = {
   method: string | null;
   enabled: boolean | null;
   product_id: string | null;
+  currency: StoreCurrency | null;
   scope?: string | null;
 };
 
@@ -95,6 +98,24 @@ const isMissingAnyColumnError = (error: { message?: string } | null | undefined,
   }
 
   return columns.some((column) => isMissingColumnError(error, column));
+};
+
+const normalizeCurrency = (value: string | null | undefined): StoreCurrency => {
+  const normalized = (value ?? "").trim().toUpperCase();
+  return normalized === "TRY" ? "TRY" : "USD";
+};
+
+const normalizeWebhookCurrency = (value: string | null | undefined): StoreCurrency | null => {
+  const normalized = (value ?? "").trim().toUpperCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "TRY" || normalized === "USD") {
+    return normalized;
+  }
+
+  return null;
 };
 
 const loadStores = async () => {
@@ -197,6 +218,99 @@ const loadProfiles = async (userIds: string[]) => {
   }
 
   return (data ?? []) as ProfileRow[];
+};
+
+const loadStoreCurrencyMap = async (storeIds: string[]) => {
+  const currencyMap = new Map<string, StoreCurrency>();
+  if (!storeIds.length) {
+    return currencyMap;
+  }
+
+  const candidates = [
+    {
+      select: "id, store_currency, currency",
+      hasStoreCurrency: true,
+      hasCurrency: true,
+    },
+    {
+      select: "id, store_currency",
+      hasStoreCurrency: true,
+      hasCurrency: false,
+    },
+    {
+      select: "id, currency",
+      hasStoreCurrency: false,
+      hasCurrency: true,
+    },
+    {
+      select: "id",
+      hasStoreCurrency: false,
+      hasCurrency: false,
+    },
+  ] as const;
+
+  let lastError: string | null = null;
+
+  for (const candidate of candidates) {
+    const query = await supabaseAdmin
+      .from("stores")
+      .select(candidate.select)
+      .in("id", storeIds);
+
+    if (!query.error) {
+      const rows = ((query.data ?? []) as unknown) as Array<{
+        id: string;
+        store_currency?: string | null;
+        currency?: string | null;
+      }>;
+
+      for (const row of rows) {
+        const rawCurrency =
+          (candidate.hasStoreCurrency ? row.store_currency ?? null : null) ??
+          (candidate.hasCurrency ? row.currency ?? null : null);
+        currencyMap.set(row.id, normalizeCurrency(rawCurrency));
+      }
+
+      return currencyMap;
+    }
+
+    lastError = query.error.message;
+
+    if (!isMissingAnyColumnError(query.error, ["store_currency", "currency"])) {
+      throw new Error(query.error.message);
+    }
+  }
+
+  throw new Error(lastError ?? "stores currency could not be loaded");
+};
+
+const loadWebhookCurrencyMap = async (webhookIds: string[]) => {
+  const currencyMap = new Map<string, StoreCurrency | null>();
+  if (!webhookIds.length) {
+    return currencyMap;
+  }
+
+  const withCurrency = await supabaseAdmin
+    .from("webhook_configs")
+    .select("id, currency")
+    .in("id", webhookIds);
+
+  if (!withCurrency.error) {
+    for (const row of ((withCurrency.data ?? []) as unknown as Array<{ id: string; currency?: string | null }>)) {
+      currencyMap.set(row.id, normalizeWebhookCurrency(row.currency ?? null));
+    }
+    return currencyMap;
+  }
+
+  if (!isMissingColumnError(withCurrency.error, "currency")) {
+    throw new Error(withCurrency.error.message);
+  }
+
+  for (const webhookId of webhookIds) {
+    currencyMap.set(webhookId, null);
+  }
+
+  return currencyMap;
 };
 
 const loadSubscriptions = async () => {
@@ -340,6 +454,7 @@ const loadAutomationWebhooks = async () => {
       }>;
 
       const webhookProductMap = await loadWebhookConfigProductMap(rows.map((row) => row.id));
+      const webhookCurrencyMap = await loadWebhookCurrencyMap(rows.map((row) => row.id));
 
       return rows
         .map((row) => ({
@@ -351,6 +466,7 @@ const loadAutomationWebhooks = async () => {
           enabled: row.enabled ?? true,
           scope: row.scope ?? "automation",
           product_id: row.product_id ?? webhookProductMap.get(row.id) ?? null,
+          currency: webhookCurrencyMap.get(row.id) ?? null,
         }))
         .filter((row) => !hasScope || row.scope === "automation" || row.scope === null);
     }
@@ -752,6 +868,8 @@ export async function GET(request: NextRequest) {
       loadCategories(),
     ]);
 
+    const storeCurrencyById = await loadStoreCurrencyMap(stores.map((store) => store.id));
+
     const storeWebhookMappingFallback = await loadStoreWebhookMappingsFromLogs(stores.map((store) => store.id));
 
     const userIds = Array.from(new Set(stores.map((store) => store.user_id)));
@@ -845,6 +963,7 @@ export async function GET(request: NextRequest) {
       const storeJobs = jobsByStoreId.get(store.id) ?? [];
       const activeWebhookConfigId = resolveStoreWebhookId(store);
       const activeWebhook = activeWebhookConfigId ? webhookById.get(activeWebhookConfigId) ?? null : null;
+      const storeCurrency = storeCurrencyById.get(store.id) ?? "USD";
       const storeProduct = store.product_id ? productsById.get(store.product_id) : null;
       const hasStoreBoundProduct = Boolean(store.product_id);
       const unboundWebhooks = webhooks.filter((webhook) => !webhook.product_id);
@@ -852,9 +971,15 @@ export async function GET(request: NextRequest) {
       const exactProductWebhooks = hasStoreBoundProduct
         ? productBoundWebhooks.filter((webhook) => webhook.product_id === store.product_id)
         : [];
-      const eligibleWebhooks = exactProductWebhooks.length
+      const eligibleProductScopedWebhooks = exactProductWebhooks.length
         ? [...exactProductWebhooks, ...unboundWebhooks]
         : webhooks;
+      const eligibleWebhooks = eligibleProductScopedWebhooks.filter((webhook) => {
+        if (!webhook.currency) {
+          return true;
+        }
+        return webhook.currency === storeCurrency;
+      });
       const eligibleWebhookConfigIds = eligibleWebhooks.map((webhook) => webhook.id);
       const scheduleState = computeNextTriggerAt({
         subscriptionId: activeSubscription?.id,
@@ -869,6 +994,7 @@ export async function GET(request: NextRequest) {
         storeName: store.store_name,
         storeStatus: store.status ?? "pending",
         category: store.category,
+        storeCurrency,
         userId: store.user_id,
         userLabel:
           profile?.full_name?.trim() ||
@@ -914,6 +1040,7 @@ export async function GET(request: NextRequest) {
         method: webhook.method,
         enabled: webhook.enabled ?? true,
         productId: webhook.product_id,
+        currency: webhook.currency,
         productLabel: webhook.product_id ? productsById.get(webhook.product_id)?.labelTr ?? null : null,
       })),
       products: Array.from(productsById.values()).map((item) => ({

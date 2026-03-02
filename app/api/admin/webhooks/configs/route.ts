@@ -20,6 +20,7 @@ type ConfigPayload = {
   description?: unknown;
   enabled?: unknown;
   productId?: unknown;
+  currency?: unknown;
 };
 
 type WebhookConfigForDispatch = {
@@ -45,6 +46,15 @@ const isRecoverableColumnError = (error: QueryError | null | undefined) => {
 const parseMethod = (value: unknown) => {
   const normalized = typeof value === "string" ? value.trim().toUpperCase() : "POST";
   return normalized === "GET" ? "GET" : "POST";
+};
+
+const parseWebhookCurrency = (value: unknown) => {
+  if (typeof value !== "string") {
+    return "USD" as const;
+  }
+
+  const normalized = value.trim().toUpperCase();
+  return normalized === "TRY" ? ("TRY" as const) : ("USD" as const);
 };
 
 const parseHeaders = (value: unknown) => {
@@ -575,6 +585,7 @@ const parseBody = async (raw: ConfigPayload) => {
     method: parseMethod(raw.method),
     headers: parseHeaders(raw.headers),
     description: description || null,
+    currency: parseWebhookCurrency(raw.currency),
     scope: "automation" as const,
     enabled: raw.enabled === undefined ? true : Boolean(raw.enabled),
     product_id: productId,
@@ -586,9 +597,13 @@ export async function GET(request: NextRequest) {
   if (!admin) return notFoundResponse();
 
   const candidates = [
+    { select: "id,name,description,scope,target_url,method,headers,enabled,product_id,currency,created_at,updated_at", hasScope: true },
     { select: "id,name,description,scope,target_url,method,headers,enabled,product_id,created_at,updated_at", hasScope: true },
+    { select: "id,name,description,scope,target_url,method,headers,enabled,currency,created_at,updated_at", hasScope: true },
     { select: "id,name,description,scope,target_url,method,headers,enabled,created_at,updated_at", hasScope: true },
+    { select: "id,name,target_url,method,headers,enabled,product_id,currency,created_at,updated_at", hasScope: false },
     { select: "id,name,target_url,method,headers,enabled,product_id,created_at,updated_at", hasScope: false },
+    { select: "id,name,target_url,method,headers,enabled,currency,created_at,updated_at", hasScope: false },
     { select: "id,name,target_url,method,headers,enabled,created_at,updated_at", hasScope: false },
   ] as const;
 
@@ -639,6 +654,7 @@ export async function POST(request: NextRequest) {
         enabled: payload.enabled,
         scope: payload.scope,
         product_id: payload.product_id,
+        currency: payload.currency,
       },
       {
         name: payload.name,
@@ -647,6 +663,7 @@ export async function POST(request: NextRequest) {
         headers: payload.headers,
         enabled: payload.enabled,
         scope: payload.scope,
+        currency: payload.currency,
         updated_at: nowIso,
       },
       {
@@ -656,6 +673,24 @@ export async function POST(request: NextRequest) {
         headers: payload.headers,
         enabled: payload.enabled,
         scope: payload.scope,
+        currency: payload.currency,
+      },
+      {
+        name: payload.name,
+        target_url: payload.target_url,
+        method: payload.method,
+        headers: payload.headers,
+        enabled: payload.enabled,
+        currency: payload.currency,
+        updated_at: nowIso,
+      },
+      {
+        name: payload.name,
+        target_url: payload.target_url,
+        method: payload.method,
+        headers: payload.headers,
+        enabled: payload.enabled,
+        currency: payload.currency,
       },
       {
         name: payload.name,

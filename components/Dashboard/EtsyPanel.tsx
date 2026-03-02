@@ -17,6 +17,7 @@ import {
   Check,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n/provider";
+import { normalizePhoneForStorage, sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
 import { Select } from "@/components/ui/select";
 import type { Shop } from "@/types";
@@ -399,7 +400,7 @@ const EtsyPanel: React.FC = () => {
         throw new Error("Oturum senkronize edilemedi.");
       }
 
-      const normalizedPhone = phone.trim();
+      const normalizedPhone = normalizePhoneForStorage(phone);
 
       if (!normalizedPhone) {
         throw new Error("Telefon numarası zorunlu.");
@@ -1096,7 +1097,8 @@ const EtsyPanel: React.FC = () => {
                         type="tel"
                         required
                         value={phone}
-                        onChange={(event) => setPhone(event.target.value)}
+                        onChange={(event) => setPhone(sanitizePhoneInput(event.target.value))}
+                        inputMode="tel"
                         placeholder="+90 5xx..."
                         className="w-full pl-12 pr-5 py-4 rounded-2xl bg-white/5 border border-white/10 text-white outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium"
                       />

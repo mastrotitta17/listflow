@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { sanitizePhoneInput } from "@/lib/phone";
 import { toast } from "sonner";
 
 type LastTrigger = {
@@ -35,6 +36,7 @@ type AutomationOverviewRow = {
   storeName: string;
   storeStatus: string;
   category: string | null;
+  storeCurrency: "USD" | "TRY";
   productId: string | null;
   productLabel: string | null;
   eligibleWebhookConfigIds: string[];
@@ -64,6 +66,7 @@ type WebhookOption = {
   method: string | null;
   enabled: boolean;
   productId: string | null;
+  currency: "USD" | "TRY" | null;
   productLabel?: string | null;
 };
 
@@ -241,6 +244,10 @@ const formatErrorMessage = (value: string | null | undefined) => {
   return value;
 };
 
+const normalizeCurrency = (value: string | null | undefined) => {
+  return (value ?? "").trim().toUpperCase() === "TRY" ? "TRY" : "USD";
+};
+
 export default function AdminStoresPage() {
   const [rows, setRows] = useState<AutomationOverviewRow[]>([]);
   const [webhookOptions, setWebhookOptions] = useState<WebhookOption[]>([]);
@@ -363,9 +370,17 @@ export default function AdminStoresPage() {
         const next = { ...prev };
 
         for (const row of nextRows) {
-          const eligibleWebhookIds = (row.eligibleWebhookConfigIds ?? []).filter((id) =>
-            nextWebhookOptions.some((option) => option.id === id)
+          const storeCurrency = normalizeCurrency(row.storeCurrency);
+          const eligibleOptions = nextWebhookOptions.filter((option) =>
+            (row.eligibleWebhookConfigIds ?? []).includes(option.id)
           );
+          const scopedOptions = eligibleOptions.filter((option) => {
+            if (!option.currency) {
+              return true;
+            }
+            return normalizeCurrency(option.currency) === storeCurrency;
+          });
+          const eligibleWebhookIds = scopedOptions.map((option) => option.id);
           const selectedCurrent = next[row.storeId];
           const hasSelectedStillValid = eligibleWebhookIds.includes(selectedCurrent);
           const defaultTarget =
@@ -624,9 +639,13 @@ export default function AdminStoresPage() {
       const strictOptions = webhookOptions.filter((option) =>
         eligibleIds.includes(option.id)
       );
-      const fallbackOptions = strictOptions.length
-        ? strictOptions
-        : webhookOptions;
+      const storeCurrency = normalizeCurrency(row.storeCurrency);
+      const fallbackOptions = strictOptions.filter((option) => {
+        if (!option.currency) {
+          return true;
+        }
+        return normalizeCurrency(option.currency) === storeCurrency;
+      });
 
       const selectedCurrent = selectedWebhookByStore[row.storeId] ?? "";
       const selectedWebhookConfigId = fallbackOptions.some((option) => option.id === selectedCurrent)
@@ -676,6 +695,7 @@ export default function AdminStoresPage() {
               <p className="font-black text-white">{item.storeName}</p>
               <div className="flex items-center gap-2">
                 <Badge variant={getStatusVariant(item.storeStatus)}>{item.storeStatus}</Badge>
+                <Badge variant="secondary">{item.storeCurrency === "TRY" ? "TRY" : "USD"}</Badge>
                 <span className="text-xs text-slate-500">{item.category || "-"}</span>
               </div>
             </div>
@@ -781,6 +801,7 @@ export default function AdminStoresPage() {
               {item.availableWebhookOptions.map((option) => (
                 <option key={option.id} value={option.id}>
                   {option.productLabel ? `${option.name} · ${option.productLabel}` : option.name}
+                  {` · ${option.currency === "TRY" ? "TRY" : option.currency === "USD" ? "USD" : "GENERIC"}`}
                 </option>
               ))}
             </Select>
@@ -805,6 +826,11 @@ export default function AdminStoresPage() {
                   ? "Geçiriliyor..."
                   : `${selectedWebhook?.name || "Webhook"}'a Geçir`}
               </Button>
+              {!item.selectedWebhookConfigId ? (
+                <p className="text-xs text-amber-300">
+                  {item.storeCurrency} para birimi için uygun webhook bulunamadı.
+                </p>
+              ) : null}
               {!item.subscriptionId ? <p className="text-xs text-amber-300">Aktif abonelik yok.</p> : null}
             </div>
           );
@@ -994,7 +1020,8 @@ export default function AdminStoresPage() {
                 <label className="text-xs font-black uppercase tracking-widest text-slate-400">Telefon No (Opsiyonel)</label>
                 <Input
                   value={storePhoneDraft}
-                  onChange={(event) => setStorePhoneDraft(event.target.value)}
+                  onChange={(event) => setStorePhoneDraft(sanitizePhoneInput(event.target.value))}
+                  inputMode="tel"
                   placeholder="+90 5xx xxx xx xx"
                 />
               </div>

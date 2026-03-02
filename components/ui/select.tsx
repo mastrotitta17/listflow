@@ -189,7 +189,7 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
           <SelectPrimitive.Portal>
             <SelectPrimitive.Content
               position="popper"
-              className="z-[120] min-w-[8rem] max-h-72 overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0c] text-white shadow-2xl"
+              className="z-[220] min-w-[8rem] max-h-72 overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0c] text-white shadow-2xl"
             >
               <SelectPrimitive.ScrollUpButton className="flex h-6 items-center justify-center text-slate-400">
                 <ChevronUp className="h-4 w-4" />

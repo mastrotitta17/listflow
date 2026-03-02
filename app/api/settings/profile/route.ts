@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isSubscriptionActive, loadUserSubscriptions, type SettingsSubscriptionRow } from "@/lib/settings/subscriptions";
 
@@ -332,7 +333,7 @@ export async function PATCH(request: NextRequest) {
 
     const body = (await request.json()) as UpdateProfileBody;
     const fullName = normalizeText(body.fullName, 120);
-    const phone = normalizeText(body.phone, 32);
+    const phone = normalizePhoneForStorage(body.phone, 32);
     const email = normalizeEmail(body.email);
 
     if (body.email !== undefined && !email) {

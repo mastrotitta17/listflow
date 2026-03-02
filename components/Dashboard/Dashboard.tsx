@@ -2,7 +2,7 @@
 
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import Link from "next/link";
 import Sidebar from './Sidebar';
 import CategoriesPanel from './CategoriesPanel';
@@ -514,14 +514,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
     </div>
 
-    <AnimatePresence>
       {mfaRequired ? (
         <div className="fixed inset-0 z-[2147483647] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
           <motion.div
             initial={{ opacity: 0, scale: 0.92, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 10 }}
             className="relative w-full max-w-md rounded-3xl border border-indigo-400/30 bg-[#101727] p-6 shadow-[0_30px_90px_rgba(5,10,28,0.85)]"
           >
             <div className="mb-4 flex items-center gap-3">
@@ -598,7 +596,6 @@ const Dashboard: React.FC<DashboardProps> = ({
               y: [0, -6, 0],
               scale: 1,
             }}
-            exit={{ opacity: 0, y: -12, scale: 0.96 }}
             transition={{
               opacity: { duration: 0.2 },
               scale: { duration: 0.2 },
@@ -651,7 +648,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           </motion.div>
         </div>
       ) : null}
-    </AnimatePresence>
     </>
   );
 };

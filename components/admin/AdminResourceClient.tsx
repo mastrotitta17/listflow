@@ -18,6 +18,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { sanitizePhoneInput } from "@/lib/phone";
 import { toast } from "sonner";
 
 type Row = Record<string, unknown>;
@@ -814,6 +815,14 @@ const FieldInput = ({
   onChange: (key: string, value: string | boolean) => void;
   disabled?: boolean;
 }) => {
+  const normalizeValue = (nextValue: string) => {
+    if (field.key.toLowerCase().includes("phone")) {
+      return sanitizePhoneInput(nextValue);
+    }
+
+    return nextValue;
+  };
+
   if (field.type === "learn_sections") {
     return <LearnSectionsInput value={value} onChange={(next) => onChange(field.key, next)} disabled={disabled} />;
   }
@@ -854,7 +863,7 @@ const FieldInput = ({
     return (
       <Textarea
         value={String(value ?? "")}
-        onChange={(event) => onChange(field.key, event.target.value)}
+        onChange={(event) => onChange(field.key, normalizeValue(event.target.value))}
         rows={field.rows ?? 4}
         placeholder={field.placeholder}
         disabled={disabled}
@@ -867,9 +876,10 @@ const FieldInput = ({
       type={field.type === "number" ? "number" : "text"}
       step={field.type === "number" ? "0.01" : undefined}
       value={String(value ?? "")}
-      onChange={(event) => onChange(field.key, event.target.value)}
+      onChange={(event) => onChange(field.key, normalizeValue(event.target.value))}
       placeholder={field.placeholder}
       disabled={disabled}
+      inputMode={field.key.toLowerCase().includes("phone") ? "tel" : undefined}
     />
   );
 };

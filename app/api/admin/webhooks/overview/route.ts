@@ -14,6 +14,7 @@ type ConfigRow = {
   method: string | null;
   enabled: boolean | null;
   product_id: string | null;
+  currency?: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -418,10 +419,15 @@ export async function GET(request: NextRequest) {
       selectWithCandidates<ConfigRow>(
         "webhook_configs",
         [
+          "id,name,description,scope,target_url,method,enabled,product_id,currency,created_at,updated_at",
+          "id,name,scope,target_url,method,enabled,product_id,currency,created_at,updated_at",
           "id,name,description,scope,target_url,method,enabled,product_id,created_at,updated_at",
           "id,name,scope,target_url,method,enabled,product_id,created_at,updated_at",
+          "id,name,description,scope,target_url,method,enabled,currency,created_at,updated_at",
+          "id,name,scope,target_url,method,enabled,currency,created_at,updated_at",
           "id,name,description,scope,target_url,method,enabled,created_at,updated_at",
           "id,name,scope,target_url,method,enabled,created_at,updated_at",
+          "id,name,target_url,method,enabled,currency,created_at,updated_at",
           "id,name,target_url,method,enabled,created_at,updated_at",
         ],
         { column: "updated_at", ascending: false },

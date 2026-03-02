@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { useI18n } from "@/lib/i18n/provider";
+import { sanitizePhoneInput } from "@/lib/phone";
 import { toast } from "sonner";
 
 type ProfilePayload = {
@@ -750,8 +751,9 @@ const SettingsPanel: React.FC = () => {
           </label>
           <input
             value={phone}
-            onChange={(event) => setPhone(event.target.value)}
+            onChange={(event) => setPhone(sanitizePhoneInput(event.target.value))}
             type="tel"
+            inputMode="tel"
             className="mt-2 w-full rounded-2xl border border-zinc-200 px-4 py-3.5 text-sm outline-none transition-all focus:ring-2 focus:ring-indigo-500 dark:border-white/10 dark:bg-white/5"
           />
         </div>

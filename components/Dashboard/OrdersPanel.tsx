@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n/provider';
+import { normalizePhoneForStorage, sanitizePhoneInput } from '@/lib/phone';
 import { useCategoriesRepository } from '@/lib/repositories/categories';
 import { useOrdersRepository } from '@/lib/repositories/orders';
 import { toast } from 'sonner';
@@ -461,7 +462,9 @@ const OrdersPanel: React.FC = () => {
 
     const resolvedReceiverTown = receiverTown.trim() || receiverCity.trim();
 
-    if (!receiverName.trim() || !receiverPhone.trim() || !receiverCountryCode.trim() || !receiverCity.trim() || !resolvedReceiverTown || !receiverPostalCode.trim()) {
+    const normalizedReceiverPhone = normalizePhoneForStorage(receiverPhone);
+
+    if (!receiverName.trim() || !normalizedReceiverPhone || !receiverCountryCode.trim() || !receiverCity.trim() || !resolvedReceiverTown || !receiverPostalCode.trim()) {
       toast.error(locale === 'en' ? 'Receiver details are required for shipment.' : 'Navlungo sevkiyatı için alıcı bilgileri zorunludur.');
       return;
     }
@@ -483,7 +486,7 @@ const OrdersPanel: React.FC = () => {
         date: new Date().toISOString().split('T')[0],
         address,
         receiverName: receiverName.trim(),
-        receiverPhone: receiverPhone.trim(),
+        receiverPhone: normalizedReceiverPhone,
         receiverCountryCode: receiverCountryCode.trim().toUpperCase(),
         receiverState: receiverState.trim() || undefined,
         receiverCity: receiverCity.trim(),
@@ -909,8 +912,9 @@ const OrdersPanel: React.FC = () => {
                       <input
                         required
                         value={receiverPhone}
-                        onChange={(e) => setReceiverPhone(e.target.value)}
+                        onChange={(e) => setReceiverPhone(sanitizePhoneInput(e.target.value))}
                         type="text"
+                        inputMode="tel"
                         placeholder="+905551112233"
                         className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
                       />

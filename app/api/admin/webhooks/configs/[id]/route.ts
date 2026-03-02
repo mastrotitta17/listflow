@@ -12,6 +12,7 @@ type ConfigPatch = {
   description?: unknown;
   enabled?: unknown;
   productId?: unknown;
+  currency?: unknown;
 };
 
 const isRecoverableColumnError = (error: QueryError | null | undefined) => {
@@ -102,6 +103,11 @@ const parsePatch = async (body: ConfigPatch) => {
     patch.enabled = Boolean(body.enabled);
   }
 
+  if (body.currency !== undefined) {
+    const normalized = typeof body.currency === "string" ? body.currency.trim().toUpperCase() : "";
+    patch.currency = normalized === "TRY" ? "TRY" : "USD";
+  }
+
   if (body.productId !== undefined) {
     const nextProductId = typeof body.productId === "string" && body.productId.trim() ? body.productId.trim() : null;
     if (!nextProductId) {
@@ -161,10 +167,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const updateCandidates: Array<Record<string, unknown>> = [
       patch,
       Object.fromEntries(
-        Object.entries(patch).filter(([key]) => !["description", "scope", "product_id", "name", "updated_at"].includes(key))
+        Object.entries(patch).filter(([key]) => !["description", "scope", "product_id", "name", "updated_at", "currency"].includes(key))
       ),
       Object.fromEntries(
         Object.entries(patch).filter(([key]) => !["description", "scope", "product_id", "name"].includes(key))
+      ),
+      Object.fromEntries(
+        Object.entries(patch).filter(([key]) => !["description", "scope", "product_id", "name", "currency"].includes(key))
       ),
     ];
 

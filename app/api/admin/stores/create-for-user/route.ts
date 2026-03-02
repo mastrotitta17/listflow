@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { notFoundResponse, requireAdminRequest } from "@/lib/auth/admin-request";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { getStripeClientForMode } from "@/lib/stripe/client";
 import { resolveCheckoutPriceId } from "@/lib/stripe/plans";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -469,7 +470,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Kullanıcı bulunamadı." }, { status: 404 });
     }
 
-    const phone = asTrimmedString(body.phone);
+    const phone = normalizePhoneForStorage(body.phone);
 
     const category = asTrimmedString(body.category) || "Genel";
     const topCategoryId = asTrimmedString(body.topCategoryId) || null;
