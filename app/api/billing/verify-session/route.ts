@@ -2,15 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import type Stripe from "stripe";
-import { getPlanCentsByInterval, getStripeClientForMode } from "@/lib/stripe/client";
+import { getPlanCentsByInterval, getStripeClientForMode, resolveStripeModeForRequest } from "@/lib/stripe/client";
 import { syncOneTimeCheckoutPayment } from "@/lib/stripe/checkout-payment-sync";
 import { findFirstProfileUserIdByEmail, syncProfileSubscriptionState } from "@/lib/subscription/profile-sync";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 
 export const runtime = "nodejs";
-
-const getStripe = () => getStripeClientForMode();
 
 const toIsoDate = (value: number | null | undefined) => {
   if (!value) {
@@ -25,6 +23,7 @@ const resolveSubscriptionPeriodEnd = (subscription: Stripe.Subscription) => {
 };
 
 const resolveCustomerEmail = async (
+  stripe: Stripe,
   customer: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined
 ) => {
   if (!customer) {
@@ -40,7 +39,7 @@ const resolveCustomerEmail = async (
   }
 
   try {
-    const fetched = await getStripe().customers.retrieve(customer);
+    const fetched = await stripe.customers.retrieve(customer);
     if ("deleted" in fetched && fetched.deleted) {
       return null;
     }
@@ -162,6 +161,8 @@ const recoverSubscriptionRow = async (
 
 export async function POST(request: NextRequest) {
   try {
+    const stripeMode = resolveStripeModeForRequest(request);
+    const stripe = getStripeClientForMode(stripeMode);
     const body = (await request.json()) as { sessionId?: string };
 
     if (!body.sessionId) {
@@ -171,7 +172,7 @@ export async function POST(request: NextRequest) {
     const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value;
     const user = accessToken ? await getUserFromAccessToken(accessToken) : null;
 
-    const session = await getStripe().checkout.sessions.retrieve(body.sessionId, {
+    const session = await stripe.checkout.sessions.retrieve(body.sessionId, {
       expand: ["subscription"],
     });
 
@@ -199,7 +200,7 @@ export async function POST(request: NextRequest) {
       const subscriberEmail =
         session.customer_details?.email ??
         session.customer_email ??
-        (await resolveCustomerEmail(subscriptionFromStripe.customer));
+        (await resolveCustomerEmail(stripe, subscriptionFromStripe.customer));
 
       await recoverSubscriptionRow(session, subscriptionFromStripe, subscriberEmail);
     }
@@ -237,6 +238,7 @@ export async function POST(request: NextRequest) {
       oneTimePaymentStatus,
       plan: session.metadata?.plan ?? null,
       billingInterval: session.metadata?.billingInterval ?? "month",
+      stripeMode,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Verification failed";

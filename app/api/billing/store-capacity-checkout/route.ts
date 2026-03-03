@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
-import { getStripeClientForMode } from "@/lib/stripe/client";
+import { getStripeClientForMode, resolveStripeModeForRequest } from "@/lib/stripe/client";
 import { buildExtraStorePaymentShopId, loadUserStoreQuota } from "@/lib/stores/quota";
 import { resolvePublicSiteUrl } from "@/lib/url/public-site";
 
@@ -44,7 +44,8 @@ export async function POST(request: NextRequest) {
     }
 
     const appUrl = resolvePublicSiteUrl(request);
-    const stripe = getStripeClientForMode();
+    const stripeMode = resolveStripeModeForRequest(request);
+    const stripe = getStripeClientForMode(stripeMode);
     const amountCents = quota.extraStorePriceCents;
 
     const session = await stripe.checkout.sessions.create({
@@ -71,6 +72,7 @@ export async function POST(request: NextRequest) {
         plan: quota.plan,
         purpose: "store_capacity_topup",
         creditCount: "1",
+        stripeMode,
       },
     });
 

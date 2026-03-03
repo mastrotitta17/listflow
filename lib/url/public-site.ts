@@ -20,7 +20,8 @@ const parseCandidateUrl = (value: string | null | undefined) => {
   }
 };
 
-const buildUrlFromRequest = (request: RequestLike) => {
+const buildUrlFromRequest = (request: RequestLike, options?: { allowLocalHost?: boolean }) => {
+  const allowLocalHost = options?.allowLocalHost ?? false;
   const forwardedHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
   const rawProtocol = request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(":", "");
 
@@ -29,7 +30,11 @@ const buildUrlFromRequest = (request: RequestLike) => {
   }
 
   const hostname = forwardedHost.split(":")[0];
-  if (!hostname || isLocalHost(hostname)) {
+  if (!hostname) {
+    return null;
+  }
+
+  if (!allowLocalHost && isLocalHost(hostname)) {
     return null;
   }
 
@@ -38,6 +43,20 @@ const buildUrlFromRequest = (request: RequestLike) => {
 };
 
 export const resolvePublicSiteUrl = (request?: RequestLike) => {
+  if (request) {
+    const localRequestUrl = buildUrlFromRequest(request, { allowLocalHost: true });
+    if (localRequestUrl) {
+      try {
+        const parsed = new URL(localRequestUrl);
+        if (isLocalHost(parsed.hostname)) {
+          return stripTrailingSlash(localRequestUrl);
+        }
+      } catch {
+        // ignore invalid request URL and keep resolving
+      }
+    }
+  }
+
   const envCandidates = [
     process.env.NEXT_PUBLIC_SITE_URL,
     process.env.APP_URL,
@@ -75,4 +94,3 @@ export const resolvePublicSiteUrl = (request?: RequestLike) => {
 
   return "https://listflow.pro";
 };
-

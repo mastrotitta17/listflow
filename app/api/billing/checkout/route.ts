@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
-import { getStripeClientForMode, type BillingInterval, type BillingPlan } from "@/lib/stripe/client";
+import {
+  getStripeClientForMode,
+  resolveStripeModeForRequest,
+  type BillingInterval,
+  type BillingPlan,
+} from "@/lib/stripe/client";
 import { resolveCheckoutPriceId } from "@/lib/stripe/plans";
 import { resolvePublicSiteUrl } from "@/lib/url/public-site";
 
@@ -28,7 +33,8 @@ const isSubscriptionPayload = (payload: SubscriptionPayload | OneTimePayload): p
 
 export async function POST(request: NextRequest) {
   try {
-    const stripe = getStripeClientForMode();
+    const stripeMode = resolveStripeModeForRequest(request);
+    const stripe = getStripeClientForMode(stripeMode);
     const body = (await request.json()) as SubscriptionPayload | OneTimePayload;
     const appUrl = resolvePublicSiteUrl(request);
 
@@ -46,7 +52,7 @@ export async function POST(request: NextRequest) {
 
     if (isSubscriptionPayload(body)) {
       const billingInterval = body.interval === "year" ? "year" : "month";
-      const priceId = await resolveCheckoutPriceId(body.plan, billingInterval);
+      const priceId = await resolveCheckoutPriceId(body.plan, billingInterval, { mode: stripeMode });
 
       if (!priceId) {
         return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
@@ -64,6 +70,7 @@ export async function POST(request: NextRequest) {
             shopId: body.shopId,
             plan: body.plan,
             billingInterval,
+            stripeMode,
           },
         },
         metadata: {
@@ -71,6 +78,7 @@ export async function POST(request: NextRequest) {
           shopId: body.shopId,
           plan: body.plan,
           billingInterval,
+          stripeMode,
         },
       });
 
@@ -103,6 +111,7 @@ export async function POST(request: NextRequest) {
         shopId: body.shopId,
         orderId: body.orderId ?? null,
         plan: body.plan ?? "standard",
+        stripeMode,
       },
     });
 

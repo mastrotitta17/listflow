@@ -16,6 +16,7 @@ const isTestSecretKey = (value: string) => value.startsWith("sk_test_") || value
 
 const stripeClientCache = new Map<StripeMode, Stripe>();
 const ACTIVE_STRIPE_MODE: StripeMode = serverEnv.STRIPE_MODE;
+const LOCAL_STRIPE_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 
 const readOptionalEnv = (key: string) => {
   const value = process.env[key];
@@ -103,6 +104,60 @@ export const getStripeClientForMode = (mode: StripeMode = ACTIVE_STRIPE_MODE) =>
 export const resolveStripeMode = (value: string | null | undefined, fallback: StripeMode = ACTIVE_STRIPE_MODE): StripeMode => {
   if (value === "live" || value === "test") {
     return value;
+  }
+
+  return fallback;
+};
+
+const normalizeHost = (rawHost: string | null | undefined) => {
+  if (!rawHost) {
+    return null;
+  }
+
+  const first = rawHost.split(",")[0]?.trim();
+  if (!first) {
+    return null;
+  }
+
+  const withoutPort = first.split(":")[0]?.trim().toLowerCase();
+  return withoutPort || null;
+};
+
+const isLocalHost = (hostname: string | null | undefined) => {
+  if (!hostname) {
+    return false;
+  }
+
+  const normalized = hostname.trim().toLowerCase();
+  return LOCAL_STRIPE_HOSTS.has(normalized) || normalized.endsWith(".localhost");
+};
+
+export const resolveStripeModeForRequest = (
+  request:
+    | {
+        headers: { get(name: string): string | null };
+        nextUrl?: { hostname?: string | null };
+      }
+    | null
+    | undefined,
+  fallback: StripeMode = ACTIVE_STRIPE_MODE
+): StripeMode => {
+  if (!request) {
+    return fallback;
+  }
+
+  const explicit = request.headers.get("x-listflow-stripe-mode");
+  if (explicit) {
+    return resolveStripeMode(explicit, fallback);
+  }
+
+  const forwardedHost = normalizeHost(request.headers.get("x-forwarded-host"));
+  const hostHeader = normalizeHost(request.headers.get("host"));
+  const nextHost = normalizeHost(request.nextUrl?.hostname ?? null);
+  const resolvedHost = forwardedHost ?? hostHeader ?? nextHost;
+
+  if (isLocalHost(resolvedHost)) {
+    return "test";
   }
 
   return fallback;
