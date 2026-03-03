@@ -402,10 +402,6 @@ const EtsyPanel: React.FC = () => {
 
       const normalizedPhone = normalizePhoneForStorage(phone);
 
-      if (!normalizedPhone) {
-        throw new Error("Telefon numarası zorunlu.");
-      }
-
       const categoryName = resolvedSubCategory?.name || selectedParentCategory?.name || (locale === "en" ? "General" : "Genel");
       const topCategoryId =
         (selectedParentCategory?.dbId && selectedParentCategory.dbId.trim()) ||
@@ -417,7 +413,7 @@ const EtsyPanel: React.FC = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           storeName: shopName.trim() || null,
-          phone: normalizedPhone,
+          phone: normalizedPhone || null,
           category: categoryName,
           topCategoryId,
           subCategoryId,
@@ -1090,12 +1086,13 @@ const EtsyPanel: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Telefon No</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                      {locale === "en" ? "Phone (Optional)" : "Telefon No (Opsiyonel)"}
+                    </label>
                     <div className="relative">
                       <Smartphone className="absolute left-4 top-4.5 w-4 h-4 text-slate-500" />
                       <input
                         type="tel"
-                        required
                         value={phone}
                         onChange={(event) => setPhone(sanitizePhoneInput(event.target.value))}
                         inputMode="tel"
