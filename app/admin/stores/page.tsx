@@ -639,7 +639,8 @@ export default function AdminStoresPage() {
       setSuccessMessage(null);
 
       try {
-        const response = await fetch(`/api/admin/stores/${store.storeId}/automation-switch`, {
+        const encodedStoreId = encodeURIComponent(store.storeId);
+        const response = await fetch(`/api/admin/stores/${encodedStoreId}/automation-switch`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -647,10 +648,22 @@ export default function AdminStoresPage() {
           body: JSON.stringify({ targetWebhookConfigId }),
         });
 
-        const payload = (await response.json()) as SwitchResponse;
+        const rawBody = await response.text();
+        let payload: SwitchResponse = {};
+        if (rawBody.trim()) {
+          try {
+            payload = JSON.parse(rawBody) as SwitchResponse;
+          } catch {
+            payload = { error: rawBody };
+          }
+        }
 
         if (!response.ok) {
-          throw new Error(payload.message || payload.error || "Geçiş işlemi başarısız.");
+          throw new Error(
+            payload.message ||
+              payload.error ||
+              `Geçiş işlemi başarısız (HTTP ${response.status}).`
+          );
         }
 
         const webhookName = webhookMap.get(targetWebhookConfigId)?.name ?? "hedef webhook";
