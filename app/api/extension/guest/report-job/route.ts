@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { applyGuestListingJobReport } from "@/lib/extension/listing-queue";
 import { reportGuestSheetUpload } from "@/lib/extension/guest-sheets";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,6 +84,37 @@ export async function POST(request: NextRequest) {
         etsyListingUrl: listingUrl || null,
       });
     }
+
+    await supabaseAdmin.from("extension_logs").insert({
+      user_id: null,
+      store_id: clientId,
+      store_name: null,
+      level: reportStatus === "failed" ? "error" : reportStatus === "completed" ? "info" : "warn",
+      event:
+        reportStatus === "failed"
+          ? "guest_listing_upload_failed"
+          : reportStatus === "completed"
+            ? "guest_listing_upload_completed"
+            : "guest_listing_upload_processing",
+      message:
+        reportStatus === "failed"
+          ? "Client ID akışında ürün yükleme hata ile sonuçlandı."
+          : reportStatus === "completed"
+            ? "Client ID akışında ürün Etsy'ye başarıyla yüklendi."
+            : "Client ID akışında ürün yükleme raporu alındı.",
+      metadata: {
+        report_status: reportStatus,
+        listing_result: listingResult,
+        listing_id: listingId || null,
+        listing_key: listingKey || null,
+        sheet_row_id: sheetRowId || null,
+        client_id: clientId,
+        error: toTrimmed(body.error) || null,
+        etsy_listing_id: etsyListingId,
+        etsy_listing_url: listingUrl || null,
+        publish_proof: toTrimmed(body.result?.publish_proof) || null,
+      },
+    });
 
     // Return ok if either table was updated successfully
     const ok = listingResult.ok || Boolean(sheetRowId);

@@ -55,6 +55,7 @@ export default function ExtensionLogsPage() {
   const [hasMore, setHasMore] = useState(false);
   const [currentOffset, setCurrentOffset] = useState(0);
   const [selectedLog, setSelectedLog] = useState<ExtensionLog | null>(null);
+  const [actionLoading, setActionLoading] = useState<"delete" | "requeue" | null>(null);
 
   const fetchLogs = useCallback(async (reset: boolean, levelArg = levelFilter, storeArg = storeFilter, eventArg = eventFilter) => {
     setLoading(true);
@@ -106,6 +107,50 @@ export default function ExtensionLogsPage() {
     setCurrentOffset(0);
     void fetchLogs(true, "all", "", "");
   };
+
+  const deleteLogAndOptionallyRequeue = useCallback(
+    async (opts: { requeue: boolean }) => {
+      if (!selectedLog) return;
+      setActionLoading(opts.requeue ? "requeue" : "delete");
+      try {
+        const response = await fetch(
+          `/api/admin/extension-logs/${selectedLog.id}?requeue=${opts.requeue ? "true" : "false"}`,
+          { method: "DELETE" }
+        );
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          listing_requeued?: boolean;
+          guest_sheet_reset?: boolean;
+        };
+
+        if (!response.ok) {
+          throw new Error(body.error || "İşlem başarısız.");
+        }
+
+        if (opts.requeue) {
+          const requeueInfo = [body.listing_requeued ? "listing requeue ✓" : null, body.guest_sheet_reset ? "sheet reset ✓" : null]
+            .filter(Boolean)
+            .join(", ");
+          toast.success(
+            requeueInfo
+              ? `Log silindi ve tekrar kuyruğa alındı (${requeueInfo}).`
+              : "Log silindi ve tekrar kuyruğa alma isteği işlendi."
+          );
+        } else {
+          toast.success("Log silindi.");
+        }
+
+        setSelectedLog(null);
+        setCurrentOffset(0);
+        await fetchLogs(true, levelFilter, storeFilter, eventFilter);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "İşlem başarısız.");
+      } finally {
+        setActionLoading(null);
+      }
+    },
+    [eventFilter, fetchLogs, levelFilter, selectedLog, storeFilter]
+  );
 
   const columns = useMemo<ColumnDef<ExtensionLog>[]>(() => [
     {
@@ -252,6 +297,25 @@ export default function ExtensionLogsPage() {
             </Button>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={Boolean(actionLoading)}
+                onClick={() => void deleteLogAndOptionallyRequeue({ requeue: true })}
+              >
+                {actionLoading === "requeue" ? "İşleniyor…" : "Sil + Tekrar Kuyruğa Al"}
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={Boolean(actionLoading)}
+                onClick={() => void deleteLogAndOptionallyRequeue({ requeue: false })}
+              >
+                {actionLoading === "delete" ? "Siliniyor…" : "Sadece Logu Sil"}
+              </Button>
+            </div>
+
             {selectedLog.message ? (
               <div>
                 <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Mesaj</p>
