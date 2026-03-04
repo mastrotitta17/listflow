@@ -25,6 +25,33 @@ export async function GET(request: NextRequest) {
   const sessionKey = requestUrl.searchParams.get("session_key") ?? null;
 
   if (!code) {
+    const passthroughKeys = [
+      "token_hash",
+      "type",
+      "access_token",
+      "refresh_token",
+      "expires_in",
+      "expires_at",
+      "token_type",
+    ];
+    const hasAuthTokenParams = passthroughKeys.some((key) => requestUrl.searchParams.has(key));
+
+    if (hasAuthTokenParams) {
+      const redirectUrl = new URL(nextPath, request.url);
+      for (const key of passthroughKeys) {
+        const value = requestUrl.searchParams.get(key);
+        if (value) {
+          redirectUrl.searchParams.set(key, value);
+        }
+      }
+
+      if (isValidSessionKey(sessionKey)) {
+        redirectUrl.searchParams.set("session_key", sessionKey);
+      }
+
+      return NextResponse.redirect(redirectUrl);
+    }
+
     // Implicit flow: tokens are in the URL fragment (#access_token=...).
     // The server cannot read the fragment, but if we have a session_key we can
     // redirect to extension-done WITH the session_key so the client-side page
