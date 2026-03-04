@@ -957,6 +957,16 @@ export default function AdminStoresPage() {
               columns={columns}
               data={tableRows}
               searchPlaceholder="Mağaza, kullanıcı, plan ara..."
+              searchKeys={[
+                "storeName",
+                "storeId",
+                "userLabel",
+                "plan",
+                "subscriptionStatus",
+                "storeCurrency",
+                "category",
+                "activeWebhookName",
+              ]}
               pageSize={8}
               statusFilterKey="storeStatus"
               dateFilterKey="automationUpdatedAt"

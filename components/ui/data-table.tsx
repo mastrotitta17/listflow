@@ -25,6 +25,7 @@ type DataTableProps<TData, TValue> = {
   emptyMessage?: string;
   searchPlaceholder?: string;
   enableSearch?: boolean;
+  searchKeys?: string[];
   pageSize?: number;
   statusFilterKey?: string;
   dateFilterKey?: string;
@@ -39,6 +40,7 @@ export function DataTable<TData, TValue>({
   emptyMessage = "Kayıt bulunamadı.",
   searchPlaceholder = "Ara...",
   enableSearch = true,
+  searchKeys,
   pageSize = 10,
   statusFilterKey,
   dateFilterKey,
@@ -153,6 +155,8 @@ export function DataTable<TData, TValue>({
   const normalizeSearchText = React.useCallback((value: string) => {
     return value
       .toLocaleLowerCase("tr")
+      .replace(/ı/g, "i")
+      .replace(/İ/g, "i")
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
   }, []);
@@ -183,6 +187,28 @@ export function DataTable<TData, TValue>({
     return "";
   }, []);
 
+  const getValueByPath = React.useCallback((row: TData, path: string): unknown => {
+    if (!row || typeof row !== "object") {
+      return undefined;
+    }
+
+    const segments = path.split(".").filter(Boolean);
+    if (!segments.length) {
+      return undefined;
+    }
+
+    let cursor: unknown = row as Record<string, unknown>;
+    for (const segment of segments) {
+      if (!cursor || typeof cursor !== "object") {
+        return undefined;
+      }
+
+      cursor = (cursor as Record<string, unknown>)[segment];
+    }
+
+    return cursor;
+  }, []);
+
   const searchFilteredData = React.useMemo(() => {
     if (!enableSearch) {
       return filteredData;
@@ -196,10 +222,15 @@ export function DataTable<TData, TValue>({
     const normalizedQuery = normalizeSearchText(query);
 
     return filteredData.filter((row) => {
-      const blob = valueToSearchBlob(row);
+      const blob =
+        Array.isArray(searchKeys) && searchKeys.length > 0
+          ? searchKeys
+              .map((key) => valueToSearchBlob(getValueByPath(row, key)))
+              .join(" ")
+          : valueToSearchBlob(row);
       return normalizeSearchText(blob).includes(normalizedQuery);
     });
-  }, [enableSearch, filteredData, globalFilter, normalizeSearchText, valueToSearchBlob]);
+  }, [enableSearch, filteredData, getValueByPath, globalFilter, normalizeSearchText, searchKeys, valueToSearchBlob]);
 
   const table = useReactTable({
     data: searchFilteredData,
