@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
-import { startNavlungoShipmentForOrder, type NavlungoShipmentDispatchResult } from "@/lib/navlungo/shipment";
+import type { ShipentegraShipmentDispatchResult } from "@/lib/shipentegra/shipment";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
@@ -35,6 +35,15 @@ type OrderRow = {
   receiver_postal_code?: string | null;
   amount_usd?: number | string | null;
   payment_status?: string | null;
+  shipment_status?: string | null;
+  shipment_error?: string | null;
+  shipment_provider?: string | null;
+  shipment_external_order_id?: string | null;
+  shipment_tracking_number?: string | null;
+  shipment_label_url?: string | null;
+  shipment_invoice_url?: string | null;
+  shipment_response?: Record<string, unknown> | null;
+  shipment_last_synced_at?: string | null;
   navlungo_status?: string | null;
   navlungo_error?: string | null;
   navlungo_store_id?: string | null;
@@ -81,7 +90,6 @@ type StoreContextRow = {
   phone?: string | null;
   currency?: string | null;
   store_currency?: string | null;
-  navlungo_store_id?: string | null;
 };
 
 type ProfileContextRow = {
@@ -91,7 +99,8 @@ type ProfileContextRow = {
 };
 
 const ORDER_SELECT_CANDIDATES = [
-  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, navlungo_status, navlungo_error, navlungo_store_id, navlungo_search_id, navlungo_quote_reference, navlungo_shipment_id, navlungo_shipment_reference, navlungo_tracking_url, navlungo_response, navlungo_last_synced_at, created_at, updated_at",
+  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, shipment_status, shipment_error, shipment_provider, shipment_external_order_id, shipment_tracking_number, shipment_label_url, shipment_invoice_url, shipment_response, shipment_last_synced_at, navlungo_status, navlungo_error, navlungo_store_id, navlungo_search_id, navlungo_quote_reference, navlungo_shipment_id, navlungo_shipment_reference, navlungo_tracking_url, navlungo_response, navlungo_last_synced_at, created_at, updated_at",
+  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, shipment_status, shipment_error, shipment_provider, shipment_external_order_id, shipment_tracking_number, shipment_label_url, shipment_invoice_url, shipment_response, shipment_last_synced_at, created_at, updated_at",
   "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, navlungo_status, navlungo_error, navlungo_store_id, navlungo_search_id, navlungo_quote_reference, navlungo_shipment_id, navlungo_shipment_reference, navlungo_tracking_url, navlungo_last_synced_at, created_at, updated_at",
   "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, created_at, updated_at",
   "id, user_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, note, ioss, label_number, amount_usd, payment_status, created_at, updated_at",
@@ -167,6 +176,14 @@ const mapOrderRow = (row: OrderRow) => {
   const date = row.order_date || row.created_at?.split("T")[0] || new Date().toISOString().split("T")[0];
   const paymentStatus = (row.payment_status || "pending").toLowerCase();
 
+  const shipmentStatus = row.shipment_status || row.navlungo_status || null;
+  const shipmentError = row.shipment_error || row.navlungo_error || null;
+  const shipmentExternalOrderId = row.shipment_external_order_id || row.navlungo_search_id || row.navlungo_shipment_id || null;
+  const shipmentTrackingNumber = row.shipment_tracking_number || row.navlungo_shipment_reference || null;
+  const shipmentLabelUrl = row.shipment_label_url || row.navlungo_tracking_url || null;
+  const shipmentInvoiceUrl = row.shipment_invoice_url || null;
+  const shipmentLastSyncedAt = row.shipment_last_synced_at || row.navlungo_last_synced_at || null;
+
   return {
     id: row.id,
     productName: row.category_name || "",
@@ -190,15 +207,14 @@ const mapOrderRow = (row: OrderRow) => {
     price: amount,
     storeId: row.store_id || null,
     paymentStatus,
-    navlungoStatus: row.navlungo_status || null,
-    navlungoError: row.navlungo_error || null,
-    navlungoStoreId: row.navlungo_store_id || null,
-    navlungoSearchId: row.navlungo_search_id || null,
-    navlungoQuoteReference: row.navlungo_quote_reference || null,
-    navlungoShipmentId: row.navlungo_shipment_id || null,
-    navlungoShipmentReference: row.navlungo_shipment_reference || null,
-    navlungoTrackingUrl: row.navlungo_tracking_url || null,
-    navlungoLastSyncedAt: row.navlungo_last_synced_at || null,
+    shipmentStatus,
+    shipmentError,
+    shipmentProvider: row.shipment_provider || "shipentegra",
+    shipmentExternalOrderId,
+    shipmentTrackingNumber,
+    shipmentLabelUrl,
+    shipmentInvoiceUrl,
+    shipmentLastSyncedAt,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
   };
@@ -262,7 +278,6 @@ const normalizeCurrencyCode = (value: string | null | undefined) => {
 
 const loadStoreContext = async (userId: string, storeId: string) => {
   const selectCandidates = [
-    "id, store_name, phone, currency, store_currency, navlungo_store_id",
     "id, store_name, phone, currency, store_currency",
     "id, store_name, phone, currency",
     "id, name, phone, currency",
@@ -328,19 +343,28 @@ const loadProfileContext = async (userId: string) => {
   return null;
 };
 
-const buildNavlungoOrderUpdatePayload = (result: NavlungoShipmentDispatchResult) => {
+const buildShippingOrderUpdatePayload = (result: ShipentegraShipmentDispatchResult) => {
   const nowIso = new Date().toISOString();
 
   if (result.status === "started") {
     return {
+      shipment_status: "shipment_started",
+      shipment_error: null,
+      shipment_provider: "shipentegra",
+      shipment_external_order_id: String(result.orderId),
+      shipment_tracking_number: result.trackingNumber,
+      shipment_label_url: result.labelUrl ?? null,
+      shipment_invoice_url: result.invoiceUrl ?? null,
+      shipment_response: result.response,
+      shipment_last_synced_at: nowIso,
       navlungo_status: "shipment_started",
       navlungo_error: null,
-      navlungo_store_id: result.storeId,
-      navlungo_search_id: result.searchId,
-      navlungo_quote_reference: result.quoteReference,
-      navlungo_shipment_id: result.shipmentId,
-      navlungo_shipment_reference: result.shipmentReference,
-      navlungo_tracking_url: result.trackingUrl,
+      navlungo_store_id: null,
+      navlungo_search_id: String(result.orderId),
+      navlungo_quote_reference: null,
+      navlungo_shipment_id: String(result.orderId),
+      navlungo_shipment_reference: result.trackingNumber,
+      navlungo_tracking_url: result.labelUrl ?? result.invoiceUrl ?? null,
       navlungo_response: result.response,
       navlungo_last_synced_at: nowIso,
       updated_at: nowIso,
@@ -348,8 +372,14 @@ const buildNavlungoOrderUpdatePayload = (result: NavlungoShipmentDispatchResult)
   }
 
   if (result.status === "failed") {
+    const shipmentStatus = result.reason === "ORDER_CREATE_FAILED" ? "order_create_failed" : "shipment_failed";
     return {
-      navlungo_status: result.reason === "QUOTE_FAILED" ? "quote_failed" : "shipment_failed",
+      shipment_status: shipmentStatus,
+      shipment_error: result.message,
+      shipment_provider: "shipentegra",
+      shipment_response: result.response ?? null,
+      shipment_last_synced_at: nowIso,
+      navlungo_status: shipmentStatus,
       navlungo_error: result.message,
       navlungo_response: result.response ?? null,
       navlungo_last_synced_at: nowIso,
@@ -358,6 +388,11 @@ const buildNavlungoOrderUpdatePayload = (result: NavlungoShipmentDispatchResult)
   }
 
   return {
+    shipment_status: "skipped",
+    shipment_error: result.message,
+    shipment_provider: "shipentegra",
+    shipment_response: result.response ?? null,
+    shipment_last_synced_at: nowIso,
     navlungo_status: "skipped",
     navlungo_error: result.message,
     navlungo_response: result.response ?? null,
@@ -395,54 +430,17 @@ const updateOrderWithColumnFallback = async (args: {
 
     const missingColumn = Object.keys(mutablePayload).find((column) => isMissingColumnError(update.error, column));
     if (!missingColumn) {
-      throw new Error(update.error.message || "Order Navlungo status could not be updated");
+      throw new Error(update.error.message || "Order shipment status could not be updated");
     }
 
     delete mutablePayload[missingColumn];
   }
 
   if (lastError) {
-    throw new Error(lastError.message || "Order Navlungo status could not be updated");
+    throw new Error(lastError.message || "Order shipment status could not be updated");
   }
 
   return null;
-};
-
-const persistStoreNavlungoStoreId = async (args: {
-  userId: string;
-  storeId: string;
-  navlungoStoreId: string;
-}) => {
-  const normalizedNavlungoStoreId = args.navlungoStoreId.trim();
-  if (!normalizedNavlungoStoreId) {
-    return;
-  }
-
-  const payloadCandidates: Array<Record<string, unknown>> = [
-    {
-      navlungo_store_id: normalizedNavlungoStoreId,
-      updated_at: new Date().toISOString(),
-    },
-    {
-      navlungo_store_id: normalizedNavlungoStoreId,
-    },
-  ];
-
-  for (const payload of payloadCandidates) {
-    const update = await supabaseAdmin
-      .from("stores")
-      .update(payload)
-      .eq("id", args.storeId)
-      .eq("user_id", args.userId);
-
-    if (!update.error) {
-      return;
-    }
-
-    if (!isMissingColumnError(update.error, "navlungo_store_id") && !isMissingColumnError(update.error, "updated_at")) {
-      return;
-    }
-  }
 };
 
 export async function GET(request: NextRequest) {
@@ -543,7 +541,7 @@ export async function POST(request: NextRequest) {
 
     if (!receiverName || !receiverPhone || !receiverCountryCode || !receiverCity || !receiverTown || !receiverPostalCode) {
       return NextResponse.json(
-        { error: "Missing required receiver fields for Navlungo shipment." },
+        { error: "Missing required receiver fields for ShipEntegra shipment." },
         { status: 400 }
       );
     }
@@ -623,106 +621,21 @@ export async function POST(request: NextRequest) {
     }
 
     if (created) {
-      let finalRow: OrderRow = created;
-      let navlungo: NavlungoShipmentDispatchResult | null = null;
-      let navlungoPersisted = false;
-
-      if (storeId) {
-        try {
-          const [storeContext, profileContext] = await Promise.all([
-            loadStoreContext(user.id, storeId),
-            loadProfileContext(user.id),
-          ]);
-
-          const navlungoStoreId =
-            typeof storeContext?.navlungo_store_id === "string" &&
-            storeContext.navlungo_store_id.trim().length > 0
-              ? storeContext.navlungo_store_id.trim()
-              : null;
-
-          const storeName = storeContext?.store_name ?? storeContext?.name ?? null;
-          const storePhone = storeContext?.phone ?? null;
-          const storeCurrency = normalizeCurrencyCode(storeContext?.store_currency ?? storeContext?.currency ?? null);
-
-          navlungo = await startNavlungoShipmentForOrder({
-            orderId: created.id,
-            localStoreId: storeId,
-            navlungoStoreId,
-            storeName,
-            storePhone,
-            userEmail: profileContext?.email ?? user.email ?? null,
-            userFullName: profileContext?.full_name ?? null,
-            userPhone: profileContext?.phone ?? null,
-            categoryName: category,
-            subProductName,
-            variantName,
-            shippingAddress: address,
-            receiverName,
-            receiverPhone,
-            receiverCountryCode,
-            receiverState,
-            receiverCity,
-            receiverTown,
-            receiverPostalCode,
-            labelNumber,
-            amountUsd,
-            currency: storeCurrency,
-          });
-
-          if (navlungo.status === "started") {
-            await persistStoreNavlungoStoreId({
-              userId: user.id,
-              storeId,
-              navlungoStoreId: navlungo.storeId,
-            });
+      const shipment: ShipentegraShipmentDispatchResult = storeId
+        ? {
+            status: "skipped",
+            reason: "AWAITING_PAYMENT",
+            message: "Order created. Shipment will start automatically after payment is completed.",
           }
-
-          const patch = buildNavlungoOrderUpdatePayload(navlungo);
-          const updatedRow = await updateOrderWithColumnFallback({
-            orderId: created.id,
-            userId: user.id,
-            payload: patch,
-          });
-
-          if (updatedRow) {
-            finalRow = updatedRow;
-            navlungoPersisted = true;
-          }
-        } catch (navlungoError) {
-          navlungo = {
-            status: "failed",
-            reason: "UNEXPECTED_ERROR",
-            message: navlungoError instanceof Error ? navlungoError.message : "Unexpected Navlungo orchestration error",
+        : {
+            status: "skipped",
+            reason: "MISSING_STORE_ID",
+            message: "Order created but store selection is missing; shipment cannot start after payment until a store is set.",
           };
-        }
-      } else {
-        navlungo = {
-          status: "skipped",
-          reason: "MISSING_STORE_ID",
-          message: "Store selection is missing; Navlungo shipment was not started.",
-        };
-      }
-
-      if (navlungo && !navlungoPersisted) {
-        try {
-          const patch = buildNavlungoOrderUpdatePayload(navlungo);
-          const updatedRow = await updateOrderWithColumnFallback({
-            orderId: created.id,
-            userId: user.id,
-            payload: patch,
-          });
-
-          if (updatedRow) {
-            finalRow = updatedRow;
-          }
-        } catch {
-          // Do not fail order creation response when status persistence columns are unavailable.
-        }
-      }
 
       return NextResponse.json({
-        row: mapOrderRow(finalRow),
-        navlungo,
+        row: mapOrderRow(created),
+        shipment,
       });
     }
 

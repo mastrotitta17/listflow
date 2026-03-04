@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useSearchParams } from 'next/navigation';
 import { supabase } from '../../lib/supabaseClient';
 import {
   Package,
@@ -116,7 +117,9 @@ const FilterDropdown: React.FC<FilterDropdownProps> = ({ value, onChange, open, 
 };
 
 const OrdersPanel: React.FC = () => {
-  const { orders, loading, error, createOrder, deleteOrder } = useOrdersRepository();
+  const { orders, loading, error, createOrder, deleteOrder, reload } = useOrdersRepository();
+  const searchParams = useSearchParams();
+  const handledCheckoutSessionRef = useRef<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const { t, locale } = useI18n();
   const { categories } = useCategoriesRepository(locale);
@@ -177,6 +180,74 @@ const OrdersPanel: React.FC = () => {
 
     toast.error(geoError);
   }, [geoError]);
+
+  useEffect(() => {
+    const payment = (searchParams.get('payment') ?? '').toLowerCase();
+    const checkoutType = (searchParams.get('type') ?? '').toLowerCase();
+    const sessionId = (searchParams.get('session_id') ?? '').trim();
+
+    if (payment !== 'success' || checkoutType !== 'one_time' || !sessionId) {
+      return;
+    }
+
+    if (handledCheckoutSessionRef.current === sessionId) {
+      return;
+    }
+    handledCheckoutSessionRef.current = sessionId;
+
+    let cancelled = false;
+
+    const verifyAndRefresh = async () => {
+      try {
+        const response = await fetch('/api/billing/verify-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+        });
+
+        const payload = (await response.json().catch(() => ({}))) as { isActive?: boolean; error?: string };
+
+        if (!response.ok || !payload?.isActive) {
+          throw new Error(payload?.error || (locale === 'en' ? 'Payment verification failed.' : 'Ödeme doğrulanamadı.'));
+        }
+
+        await reload();
+
+        if (!cancelled) {
+          toast.success(
+            locale === 'en'
+              ? 'Payment completed. Order marked as paid and shipment is being prepared.'
+              : 'Ödeme tamamlandı. Sipariş ödendi olarak işaretlendi ve sevkiyat hazırlanıyor.'
+          );
+        }
+      } catch (verifyError) {
+        if (!cancelled) {
+          toast.error(
+            verifyError instanceof Error
+              ? verifyError.message
+              : locale === 'en'
+                ? 'Payment verification failed.'
+                : 'Ödeme doğrulanamadı.'
+          );
+        }
+      } finally {
+        if (!cancelled && typeof window !== 'undefined') {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('payment');
+          url.searchParams.delete('type');
+          url.searchParams.delete('session_id');
+          const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+          window.history.replaceState({}, '', nextUrl);
+        }
+      }
+    };
+
+    void verifyAndRefresh();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [locale, reload, searchParams]);
 
   const currentCategory = useMemo(() => categories.find((category) => category.id === selectedCatId), [categories, selectedCatId]);
   const currentSubProduct = useMemo(() => currentCategory?.subProducts.find((subProduct) => subProduct.id === selectedSubId), [currentCategory, selectedSubId]);
@@ -444,6 +515,31 @@ const OrdersPanel: React.FC = () => {
     return result;
   }, [orders, searchTerm, filterStatus]);
 
+  const startOrderCheckout = useCallback(
+    async (orderId: string, amount: number) => {
+      const response = await fetch('/api/billing/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'payment',
+          amount,
+          shopId: `order_${orderId}`,
+          orderId,
+          plan: 'standard',
+        }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+
+      if (!response.ok || !data.url) {
+        throw new Error(data.error || (locale === 'en' ? 'Payment link could not be created.' : 'Ödeme linki alınamadı.'));
+      }
+
+      window.location.href = data.url;
+    },
+    [locale]
+  );
+
   const handleSendOrder = async (event: React.FormEvent) => {
     event.preventDefault();
 
@@ -465,7 +561,7 @@ const OrdersPanel: React.FC = () => {
     const normalizedReceiverPhone = normalizePhoneForStorage(receiverPhone);
 
     if (!receiverName.trim() || !normalizedReceiverPhone || !receiverCountryCode.trim() || !receiverCity.trim() || !resolvedReceiverTown || !receiverPostalCode.trim()) {
-      toast.error(locale === 'en' ? 'Receiver details are required for shipment.' : 'Navlungo sevkiyatı için alıcı bilgileri zorunludur.');
+      toast.error(locale === 'en' ? 'Receiver details are required for shipment.' : 'Sevkiyat için alıcı bilgileri zorunludur.');
       return;
     }
 
@@ -498,6 +594,11 @@ const OrdersPanel: React.FC = () => {
         price: calculatedPrice,
       });
 
+      const createdOrder = createResult.order;
+      if (!createdOrder?.id) {
+        throw new Error(locale === 'en' ? 'Order was created but order id is missing.' : 'Sipariş oluşturuldu ancak sipariş kimliği alınamadı.');
+      }
+
       setAddress('');
       setReceiverName('');
       setReceiverPhone('');
@@ -518,19 +619,9 @@ const OrdersPanel: React.FC = () => {
         setSelectedStoreId('');
       }
       setShowModal(false);
-      toast.success(locale === 'en' ? 'Order created successfully.' : 'Sipariş başarıyla oluşturuldu.');
+      toast.success(locale === 'en' ? 'Order created. Redirecting to payment...' : 'Sipariş oluşturuldu. Ödemeye yönlendiriliyorsunuz...');
 
-      if (createResult.navlungo?.status === 'started') {
-        toast.success(
-          locale === 'en'
-            ? 'Shipping process has started in the background via Navlungo.'
-            : 'Sevkiyat süreci arka planda Navlungo üzerinden başlatıldı.'
-        );
-      } else if (createResult.navlungo?.status === 'failed') {
-        toast.error(createResult.navlungo.message || (locale === 'en' ? 'Navlungo shipment start failed.' : 'Navlungo sevkiyatı başlatılamadı.'));
-      } else if (createResult.navlungo?.status === 'skipped' && createResult.navlungo.message) {
-        toast.message(createResult.navlungo.message);
-      }
+      await startOrderCheckout(createdOrder.id, createdOrder.price ?? calculatedPrice);
     } catch (saveError) {
       toast.error(saveError instanceof Error ? saveError.message : 'Sipariş kaydedilemedi.');
     } finally {
@@ -538,7 +629,7 @@ const OrdersPanel: React.FC = () => {
     }
   };
 
-  const handlePayment = async (orderId: string) => {
+  const handlePayment = useCallback(async (orderId: string) => {
     try {
       const order = orders.find((item) => item.id === orderId);
       if (!order) {
@@ -553,30 +644,12 @@ const OrdersPanel: React.FC = () => {
         throw new Error('Oturum bulunamadı.');
       }
 
-      const response = await fetch('/api/billing/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: 'payment',
-          amount: order.price,
-          shopId: `order_${orderId}`,
-          orderId,
-          plan: 'standard',
-        }),
-      });
-
-      const data = (await response.json()) as { url?: string; error?: string };
-
-      if (!response.ok || !data.url) {
-        throw new Error(data.error || 'Ödeme linki alınamadı.');
-      }
-
-      window.location.href = data.url;
+      await startOrderCheckout(orderId, order.price);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Ödeme başlatılamadı.';
       toast.error(message);
     }
-  };
+  }, [orders, startOrderCheckout]);
 
   const handleConfirmDeleteOrder = async () => {
     if (!deleteTargetOrder) {
@@ -883,7 +956,7 @@ const OrdersPanel: React.FC = () => {
 
                 <div className="p-4 rounded-2xl border border-indigo-500/20 bg-indigo-500/5 space-y-4">
                   <p className="text-[10px] font-black text-indigo-300 uppercase tracking-[0.24em]">
-                    {locale === 'en' ? 'Navlungo Receiver Details' : 'Navlungo Alıcı Bilgileri'}
+                    {locale === 'en' ? 'Shipment Receiver Details' : 'Sevkiyat Alıcı Bilgileri'}
                   </p>
                   <p className="text-[11px] text-indigo-200/80">
                     {locale === 'en'

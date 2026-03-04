@@ -87,6 +87,10 @@ const DISPLAY_DISCOUNT_PERCENT: Record<BillingInterval, number> = {
 const FEATURED_PLAN: BillingPlan = "pro";
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
 type StoreCurrency = "USD" | "TRY";
+type CrispWindow = Window & {
+  $crisp?: unknown[];
+  CRISP_WEBSITE_ID?: string;
+};
 
 const EtsyPanel: React.FC = () => {
   const { shops, setShops } = useStore();
@@ -105,6 +109,7 @@ const EtsyPanel: React.FC = () => {
   const [pinnedTimerStoreId, setPinnedTimerStoreId] = useState<string | null>(null);
   const [deleteTargetShop, setDeleteTargetShop] = useState<Shop | null>(null);
   const [isDeletingStoreId, setIsDeletingStoreId] = useState<string | null>(null);
+  const [isCancelingStoreSubscriptionId, setIsCancelingStoreSubscriptionId] = useState<string | null>(null);
   const [nowTs, setNowTs] = useState<number>(Date.now());
 
   useEffect(() => {
@@ -342,7 +347,9 @@ const EtsyPanel: React.FC = () => {
     }
 
     const rows = payload.rows ?? [];
-    setShops(rows.map(mapOverviewRowToShop));
+    const mappedShops = rows.map(mapOverviewRowToShop);
+    setShops(mappedShops);
+    return mappedShops;
   }, [locale, mapOverviewRowToShop, requestStoresOverview, setShops, syncServerSession]);
 
   useEffect(() => {
@@ -450,75 +457,33 @@ const EtsyPanel: React.FC = () => {
 
   const crispWebsiteId = process.env.NEXT_PUBLIC_CRISP_WEBSITE_ID ?? DEFAULT_CRISP_WEBSITE_ID;
 
-  const openCrispChatbox = () => {
-    const crispWindow = window as Window & {
-      $crisp?: Array<unknown> & { push: (item: unknown) => number };
-    };
-
-    if (!crispWindow.$crisp || typeof crispWindow.$crisp.push !== "function") {
-      return false;
-    }
-
-    crispWindow.$crisp.push(["do", "chat:show"]);
-    crispWindow.$crisp.push(["do", "chat:open"]);
-    return true;
-  };
-
-  const ensureCrispScript = () => {
-    const crispWindow = window as Window & {
-      $crisp?: Array<unknown>;
-      CRISP_WEBSITE_ID?: string;
-    };
-
-    if (!crispWindow.$crisp) {
-      crispWindow.$crisp = [];
-    }
-
-    if (!crispWindow.CRISP_WEBSITE_ID) {
-      crispWindow.CRISP_WEBSITE_ID = crispWebsiteId;
-    }
-
-    if (document.getElementById("crisp-chat-script")) {
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.id = "crisp-chat-script";
-    script.src = "https://client.crisp.chat/l.js";
-    script.async = true;
-    document.head.appendChild(script);
-  };
-
   const handleOpenSupport = () => {
     setStoreActionMessage(null);
 
-    if (openCrispChatbox()) {
-      return;
+    // Remove any CSS that hides Crisp (set by landing/login/downloads pages)
+    document.getElementById("listflow-landing-hide-crisp")?.remove();
+    document.getElementById("listflow-login-hide-crisp")?.remove();
+    document.getElementById("listflow-downloads-hide-crisp")?.remove();
+
+    const w = window as CrispWindow;
+
+    // If $crisp is a plain array (either missing or corrupted), force a clean load.
+    // A plain array means the Crisp SDK hasn't loaded yet OR its reference was
+    // overwritten — in both cases we need to (re-)initialize.
+    if (!w.$crisp || Array.isArray(w.$crisp)) {
+      document.getElementById("crisp-chat-script")?.remove();
+      w.$crisp = [];
+      w.CRISP_WEBSITE_ID = crispWebsiteId;
+      const script = document.createElement("script");
+      script.id = "crisp-chat-script";
+      script.src = "https://client.crisp.chat/l.js";
+      script.async = true;
+      document.head.appendChild(script);
     }
 
-    ensureCrispScript();
-
-    let attempts = 0;
-    const maxAttempts = 20;
-    const poll = window.setInterval(() => {
-      attempts += 1;
-
-      if (openCrispChatbox()) {
-        window.clearInterval(poll);
-        return;
-      }
-
-      if (attempts >= maxAttempts) {
-        window.clearInterval(poll);
-        setStoreActionMessage({
-          type: "error",
-          text:
-            locale === "en"
-              ? "Support chat is still loading. Please try again in a few seconds."
-              : "Destek sohbeti hala yükleniyor. Lütfen birkaç saniye sonra tekrar deneyin.",
-        });
-      }
-    }, 150);
+    // Push commands — executed immediately if Crisp SDK is ready, queued otherwise
+    w.$crisp.push(["do", "chat:show"]);
+    w.$crisp.push(["do", "chat:open"]);
   };
 
   const handleActivateStore = (shop: Shop) => {
@@ -656,16 +621,65 @@ const EtsyPanel: React.FC = () => {
 
   const handleDeleteIntent = (shop: Shop) => {
     setStoreActionMessage(null);
+    setDeleteTargetShop(shop);
+  };
 
-    if (!shop.canDelete) {
-      setStoreActionMessage({
-        type: "error",
-        text: getDeleteBlockedMessage(shop.deleteBlockedReason ?? null),
-      });
+  const handleCancelStoreSubscription = async () => {
+    if (!deleteTargetShop) {
       return;
     }
 
-    setDeleteTargetShop(shop);
+    setIsCancelingStoreSubscriptionId(deleteTargetShop.id);
+
+    try {
+      const response = await fetch(`/api/stores/${deleteTargetShop.id}/subscription/cancel`, {
+        method: "POST",
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        alreadyStopped?: boolean;
+        hasActiveSubscription?: boolean;
+        failed?: Array<{ message?: string }>;
+      };
+
+      if (!response.ok) {
+        const detailedFailure = payload.failed?.find((item) => item?.message)?.message;
+        throw new Error(detailedFailure || payload.error || t("etsy.cancelStoreSubscriptionFailed"));
+      }
+
+      const refreshedShops = await loadStoresOverview();
+      const refreshedTarget = refreshedShops.find((shop) => shop.id === deleteTargetShop.id) ?? null;
+      setDeleteTargetShop(refreshedTarget);
+
+      if (payload.alreadyStopped) {
+        setStoreActionMessage({
+          type: "success",
+          text: t("etsy.cancelStoreSubscriptionAlreadyStopped"),
+        });
+        return;
+      }
+
+      if (payload.hasActiveSubscription) {
+        setStoreActionMessage({
+          type: "error",
+          text: t("etsy.cancelStoreSubscriptionFailed"),
+        });
+        return;
+      }
+
+      setStoreActionMessage({
+        type: "success",
+        text: t("etsy.cancelStoreSubscriptionSuccess"),
+      });
+    } catch (error) {
+      setStoreActionMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : t("etsy.cancelStoreSubscriptionFailed"),
+      });
+    } finally {
+      setIsCancelingStoreSubscriptionId(null);
+    }
   };
 
   const handleConfirmDeleteStore = async () => {
@@ -692,7 +706,17 @@ const EtsyPanel: React.FC = () => {
             type: "error",
             text: getDeleteBlockedMessage(blockedReason),
           });
-          setDeleteTargetShop(null);
+          setDeleteTargetShop((prev) => {
+            if (!prev) {
+              return prev;
+            }
+
+            return {
+              ...prev,
+              canDelete: false,
+              deleteBlockedReason: blockedReason,
+            };
+          });
           return;
         }
 
@@ -783,7 +807,7 @@ const EtsyPanel: React.FC = () => {
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.05 }}
-                  className="relative overflow-visible rounded-[28px] glass-card-pro border border-white/5 p-5 group hover:border-indigo-500/30 transition-all duration-500 flex flex-col gap-4 min-h-[270px]"
+                  className="relative overflow-visible rounded-[28px] glass-card-pro border border-white/5 p-5 group hover:border-indigo-500/30 transition-all duration-500 flex flex-col gap-4 min-h-67.5"
                 >
                   {showAutomationIndicator && (
                     <button
@@ -799,7 +823,7 @@ const EtsyPanel: React.FC = () => {
                   )}
 
                   {showAutomationIndicator && showTimer && (
-                    <div className="absolute left-3 top-10 z-10 min-w-[190px] rounded-xl border border-indigo-500/30 bg-[#0e1016] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-indigo-200 shadow-2xl">
+                    <div className="absolute left-3 top-10 z-10 min-w-47.5 rounded-xl border border-indigo-500/30 bg-[#0e1016] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-indigo-200 shadow-2xl">
                       <p className="text-indigo-300/80 mb-1">{t("etsy.automationActiveBadge")}</p>
                       <p className="text-white/90 normal-case tracking-normal text-xs">{automationText}</p>
                     </div>
@@ -873,23 +897,48 @@ const EtsyPanel: React.FC = () => {
 
       <AnimatePresence>
         {deleteTargetShop && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center px-6">
+          <div className="fixed inset-0 z-120 flex items-center justify-center px-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => isDeletingStoreId === null && setDeleteTargetShop(null)}
+              onClick={() =>
+                isDeletingStoreId !== deleteTargetShop.id &&
+                isCancelingStoreSubscriptionId !== deleteTargetShop.id &&
+                setDeleteTargetShop(null)
+              }
               className="absolute inset-0 bg-black/80 backdrop-blur-xl"
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="relative w-full max-w-lg p-8 rounded-[32px] glass-card-pro border border-white/10 shadow-2xl"
+              className="relative w-full max-w-lg p-8 rounded-4xl glass-card-pro border border-white/10 shadow-2xl"
             >
+              {(() => {
+                const isBlockedBySubscription =
+                  deleteTargetShop.deleteBlockedReason === "active_subscription" && !deleteTargetShop.canDelete;
+                const isBlockedByAutomation =
+                  deleteTargetShop.deleteBlockedReason === "automation_running" && !deleteTargetShop.canDelete;
+                const isBusy =
+                  isDeletingStoreId === deleteTargetShop.id || isCancelingStoreSubscriptionId === deleteTargetShop.id;
+                const canDeleteStore = Boolean(deleteTargetShop.canDelete);
+
+                return (
+                  <>
               <h3 className="text-2xl font-black text-white mb-2">{t("etsy.deleteStoreConfirmTitle")}</h3>
-              <p className="text-slate-300 text-sm mb-3">{t("etsy.deleteStoreConfirmText")}</p>
-              <p className="text-slate-500 text-xs font-bold mb-6">{t("etsy.deleteStoreWarning")}</p>
+              <p className="text-slate-300 text-sm mb-3">
+                {isBlockedBySubscription
+                  ? t("etsy.deleteBlockedSubscriptionModalText")
+                  : isBlockedByAutomation
+                    ? t("etsy.deleteBlockedAutomation")
+                    : t("etsy.deleteStoreConfirmText")}
+              </p>
+              <p className="text-slate-500 text-xs font-bold mb-6">
+                {isBlockedBySubscription || isBlockedByAutomation
+                  ? getDeleteBlockedMessage(deleteTargetShop.deleteBlockedReason ?? null)
+                  : t("etsy.deleteStoreWarning")}
+              </p>
 
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white mb-6">
                 {deleteTargetShop.name}
@@ -898,20 +947,38 @@ const EtsyPanel: React.FC = () => {
               <div className="flex gap-3">
                 <button
                   onClick={() => setDeleteTargetShop(null)}
-                  disabled={isDeletingStoreId === deleteTargetShop.id}
+                  disabled={isBusy}
                   className="flex-1 py-3 rounded-xl glass-pro border border-white/10 text-slate-300 font-black text-xs uppercase tracking-widest hover:text-white transition-all cursor-pointer disabled:opacity-60"
                 >
                   {t("etsy.cancel")}
                 </button>
-                <button
-                  onClick={() => void handleConfirmDeleteStore()}
-                  disabled={isDeletingStoreId === deleteTargetShop.id}
-                  className="flex-1 py-3 rounded-xl bg-red-600/90 text-white font-black text-xs uppercase tracking-widest hover:bg-red-500 transition-all cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
-                >
-                  {isDeletingStoreId === deleteTargetShop.id ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                  {t("etsy.deleteStoreApprove")}
-                </button>
+                {isBlockedBySubscription ? (
+                  <button
+                    onClick={() => void handleCancelStoreSubscription()}
+                    disabled={isBusy}
+                    className="flex-1 py-3 rounded-xl bg-amber-500/85 text-black font-black text-xs uppercase tracking-widest hover:bg-amber-400 transition-all cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
+                  >
+                    {isCancelingStoreSubscriptionId === deleteTargetShop.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : null}
+                    {isCancelingStoreSubscriptionId === deleteTargetShop.id
+                      ? t("etsy.cancelStoreSubscriptionLoading")
+                      : t("etsy.cancelStoreSubscriptionAction")}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => void handleConfirmDeleteStore()}
+                    disabled={isBusy || !canDeleteStore}
+                    className="flex-1 py-3 rounded-xl bg-red-600/90 text-white font-black text-xs uppercase tracking-widest hover:bg-red-500 transition-all cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
+                  >
+                    {isDeletingStoreId === deleteTargetShop.id ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    {canDeleteStore ? t("etsy.deleteStoreApprove") : t("etsy.deleteStoreBlockedApprove")}
+                  </button>
+                )}
               </div>
+                  </>
+                );
+              })()}
             </motion.div>
           </div>
         )}
@@ -919,7 +986,7 @@ const EtsyPanel: React.FC = () => {
 
       <AnimatePresence>
         {activationModal && (
-          <div className="fixed inset-0 z-[125] flex items-center justify-center px-6">
+          <div className="fixed inset-0 z-125 flex items-center justify-center px-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -931,7 +998,7 @@ const EtsyPanel: React.FC = () => {
               initial={{ opacity: 0, scale: 0.92, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.92, y: 20 }}
-              className="relative w-full max-w-5xl rounded-[32px] glass-card-pro border border-white/10 p-8 shadow-2xl max-h-[90vh] overflow-y-auto"
+              className="relative w-full max-w-5xl rounded-4xl glass-card-pro border border-white/10 p-8 shadow-2xl max-h-[90vh] overflow-y-auto"
             >
               <h3 className="text-2xl font-black text-white mb-1">{t("etsy.activateModalTitle")}</h3>
               <p className="text-slate-300 text-sm mb-5">{t("etsy.activateModalSubtitle")}</p>
@@ -1050,7 +1117,7 @@ const EtsyPanel: React.FC = () => {
 
       <AnimatePresence>
         {showConnect && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-6">
+          <div className="fixed inset-0 z-100 flex items-center justify-center px-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}

@@ -175,12 +175,12 @@ export const learnGuides: LearnGuide[] = [
       en: "Order and Shipment Operations",
     },
     summary: {
-      tr: "Sipariş panelinde müşteri bilgisi, navlungo quote ve gönderi başlatma adımlarını standardize eder.",
-      en: "Standardizes customer data, Navlungo quote flow, and shipment creation steps in the orders panel.",
+      tr: "Sipariş panelinde müşteri bilgisi, ShipEntegra sevkiyat başlatma ve takip adımlarını standardize eder.",
+      en: "Standardizes customer data, ShipEntegra shipment initiation, and tracking steps in the orders panel.",
     },
     tags: [
       { tr: "Order", en: "Order" },
-      { tr: "Navlungo", en: "Navlungo" },
+      { tr: "ShipEntegra", en: "ShipEntegra" },
       { tr: "Shipment", en: "Shipment" },
     ],
     youtubeId: "aqz-KE-bpKQ",
@@ -214,4 +214,3 @@ export const pickLocalizedText = (locale: SupportedLocale, value: LocalizedText)
 export const pickLocalizedTag = (locale: SupportedLocale, value: LocalizedTag) => {
   return locale === "en" ? value.en : value.tr;
 };
-

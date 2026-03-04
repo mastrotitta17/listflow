@@ -34,6 +34,7 @@
     "country-state-city": "^3.2.1",
     "crisp-sdk-web": "^1.0.27",
     "framer-motion": "^12.34.3",
+    "gsap": "^3.14.2",
     "lucide-react": "^0.575.0",
     "next": "16.1.6",
     "qrcode.react": "^4.2.0",

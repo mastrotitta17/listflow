@@ -62,8 +62,13 @@ const Footer = () => {
               <Link href="/login" className="hover:text-white transition-colors">
                 {t("footer.links.auth")}
               </Link>
-              <Link href="/learn" className="hover:text-white transition-colors">
+              {/* Şimdilik gizli, ileride eklenebilir */}
+              <Link href="/learn" className="hover:text-white transition-colors hidden">
                 {t("footer.links.learn")}
+              </Link>
+              {/* Şimdilik gizli, ileride eklenebilir */}
+              <Link href="/downloads" className="hover:text-white transition-colors hidden">
+                {locale === "en" ? "Downloads" : "İndir"}
               </Link>
               <button
                 type="button"

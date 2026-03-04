@@ -1,4 +1,4 @@
-import { getActiveStripeMode, getStripeClientForMode } from "@/lib/stripe/client";
+import { getActiveStripeMode, getStripeClientForMode, type StripeMode } from "@/lib/stripe/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 
@@ -20,6 +20,24 @@ export type StripeCancelFailure = {
   id: string;
   stripeSubscriptionId: string;
   message: string;
+};
+
+const isStripeNotFoundError = (message: string) => {
+  const normalized = message.toLowerCase();
+  return normalized.includes("no such subscription") || normalized.includes("no such customer");
+};
+
+const isStripeAlreadyEndedError = (message: string) => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("already canceled") ||
+    (normalized.includes("cannot be canceled") && normalized.includes("canceled")) ||
+    (normalized.includes("cannot be canceled") && normalized.includes("incomplete_expired"))
+  );
+};
+
+const resolveModeAttemptOrder = (activeMode: StripeMode): StripeMode[] => {
+  return activeMode === "live" ? ["live", "test"] : ["test", "live"];
 };
 
 const isMissingColumnError = (error: { message?: string } | null | undefined, column: string) => {
@@ -99,6 +117,7 @@ export const loadUserSubscriptions = async (userId: string) => {
 
 export const cancelStripeSubscriptionsNow = async (rows: SettingsSubscriptionRow[]) => {
   const activeMode = getActiveStripeMode();
+  const modeOrder = resolveModeAttemptOrder(activeMode);
   const failed: StripeCancelFailure[] = [];
   const canceledIds: string[] = [];
   const missingStripeIds: string[] = [];
@@ -110,23 +129,54 @@ export const cancelStripeSubscriptionsNow = async (rows: SettingsSubscriptionRow
       continue;
     }
 
-    try {
-      await getStripeClientForMode(activeMode).subscriptions.cancel(stripeSubscriptionId);
-      canceledIds.push(row.id);
-    } catch (error) {
-      const rawMessage = error instanceof Error ? error.message : "Stripe cancellation failed";
-      const normalized = rawMessage.toLowerCase();
-      const message =
-        normalized.includes("no such subscription") || normalized.includes("no such customer")
-          ? `Subscription/customer could not be found in active Stripe mode (${activeMode}).`
-          : rawMessage;
+    let canceled = false;
+    const attemptMessages: string[] = [];
 
-      failed.push({
-        id: row.id,
-        stripeSubscriptionId,
-        message,
-      });
+    for (const mode of modeOrder) {
+      try {
+        await getStripeClientForMode(mode).subscriptions.cancel(stripeSubscriptionId);
+        canceledIds.push(row.id);
+        canceled = true;
+        break;
+      } catch (error) {
+        const rawMessage = error instanceof Error ? error.message : "Stripe cancellation failed";
+        attemptMessages.push(`[${mode}] ${rawMessage}`);
+
+        if (isStripeAlreadyEndedError(rawMessage)) {
+          canceledIds.push(row.id);
+          canceled = true;
+          break;
+        }
+
+        if (isStripeNotFoundError(rawMessage)) {
+          continue;
+        }
+
+        break;
+      }
     }
+
+    if (canceled) {
+      continue;
+    }
+
+    const allNotFound = attemptMessages.length > 0 && attemptMessages.every((item) => isStripeNotFoundError(item));
+    if (allNotFound) {
+      // Record looks stale in Stripe (missing in tried modes) => treat as canceled to unblock store flow.
+      canceledIds.push(row.id);
+      continue;
+    }
+
+    const message =
+      attemptMessages.length > 0
+        ? attemptMessages.join(" | ")
+        : `Stripe cancellation failed in configured mode (${activeMode}).`;
+
+    failed.push({
+      id: row.id,
+      stripeSubscriptionId,
+      message,
+    });
   }
 
   return {

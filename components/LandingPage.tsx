@@ -346,6 +346,9 @@ const LandingPage: React.FC = () => {
             <a href="#landing-catalog" className="transition-colors hover:text-indigo-300">
               {t("landing.navCatalog")}
             </a>
+            <Link href="/downloads" className="transition-colors hover:text-indigo-300 hidden">
+              {locale === "en" ? "Downloads" : "İndir"}
+            </Link>
             <Link href="/pricing" className="transition-colors hover:text-indigo-300">
               {t("landing.navPricing")}
             </Link>
@@ -377,6 +380,9 @@ const LandingPage: React.FC = () => {
               <a href="#landing-catalog" className="transition-colors hover:text-indigo-300" onClick={() => setMobileNavOpen(false)}>
                 {t("landing.navCatalog")}
               </a>
+              <Link href="/downloads" className="transition-colors hover:text-indigo-300" onClick={() => setMobileNavOpen(false)}>
+                {locale === "en" ? "Downloads" : "İndir"}
+              </Link>
               <Link href="/pricing" className="transition-colors hover:text-indigo-300" onClick={() => setMobileNavOpen(false)}>
                 {t("landing.navPricing")}
               </Link>
@@ -620,9 +626,17 @@ const LandingPage: React.FC = () => {
                 {copy.finalPrimaryCta}
                 <ArrowUpRight className="h-4 w-4" />
               </Link>
+              <Link
+                href="/downloads"
+                //görünür olması için inline-flex ekle
+                className="hidden  items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-7 py-4 text-xs font-black uppercase tracking-[0.2em] text-white transition-all hover:bg-white/15"
+              >
+                {locale === "en" ? "See Downloads" : "İndirme Sayfası"}
+                <ArrowUpRight className="h-4 w-4" />
+              </Link>
               <button
                 onClick={() => router.push("/login")}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-7 py-4 text-xs font-black uppercase tracking-[0.2em] text-white transition-all hover:bg-white/15"
+                className=" inline-flex items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-7 py-4 text-xs font-black uppercase tracking-[0.2em] text-white transition-all hover:bg-white/15"
               >
                 {copy.finalSecondaryCta}
                 <ChevronRight className="h-4 w-4" />

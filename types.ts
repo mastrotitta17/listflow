@@ -93,15 +93,14 @@ export interface Order {
   price: number;
   storeId?: string | null;
   paymentStatus?: string | null;
-  navlungoStatus?: string | null;
-  navlungoError?: string | null;
-  navlungoStoreId?: string | null;
-  navlungoSearchId?: string | null;
-  navlungoQuoteReference?: string | null;
-  navlungoShipmentId?: string | null;
-  navlungoShipmentReference?: string | null;
-  navlungoTrackingUrl?: string | null;
-  navlungoLastSyncedAt?: string | null;
+  shipmentStatus?: string | null;
+  shipmentError?: string | null;
+  shipmentProvider?: string | null;
+  shipmentExternalOrderId?: string | null;
+  shipmentTrackingNumber?: string | null;
+  shipmentLabelUrl?: string | null;
+  shipmentInvoiceUrl?: string | null;
+  shipmentLastSyncedAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }

@@ -14,7 +14,7 @@ import ReferralPanel from './ReferralPanel';
 import { useStore } from '../../store';
 import { DashboardSection } from '../../types';
 import { supabase } from '../../lib/supabaseClient';
-import { BookOpen, Loader2, Menu, ShieldCheck, User } from 'lucide-react';
+import { BookOpen, Loader2, Menu, ShieldCheck } from 'lucide-react';
 import { useI18n } from '@/lib/i18n/provider';
 
 type SubscriptionSummary = {
@@ -36,6 +36,34 @@ const PLAN_PRIORITY = ["turbo", "pro", "standard"] as const;
 const TOUR_STORAGE_KEY_PREFIX = "listflow:dashboard-tour:v1:";
 const TOUR_SESSION_KEY_PREFIX = "listflow:dashboard-tour-session:v1:";
 const TOUR_SIDE_PATTERN: Array<"left" | "right"> = ["left", "right", "left", "right", "left"];
+
+const AppStoreIcon = () => (
+  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true">
+    <path
+      fill="currentColor"
+      d="M16.365 12.875c.015 2.614 2.29 3.483 2.316 3.494-.019.061-.363 1.255-1.196 2.486-.72 1.065-1.467 2.127-2.644 2.148-1.157.02-1.529-.686-2.855-.686-1.325 0-1.74.664-2.833.706-1.136.044-2.002-1.14-2.728-2.201-1.485-2.165-2.62-6.119-1.095-8.77.759-1.316 2.116-2.149 3.59-2.17 1.115-.022 2.167.748 2.857.748.69 0 1.984-.925 3.343-.789.57.024 2.17.23 3.197 1.734-.083.052-1.91 1.113-1.892 3.3M14.81 6.865c.603-.729 1.01-1.742.898-2.754-.868.035-1.918.579-2.54 1.306-.56.649-1.05 1.684-.919 2.677.967.075 1.958-.492 2.56-1.229"
+    />
+  </svg>
+);
+
+const GooglePlayIcon = () => (
+  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true">
+    <path fill="#00A0FF" d="M3.2 2.7c-.3.3-.5.8-.5 1.4v15.8c0 .6.2 1.1.5 1.4l.1.1L12.8 12 3.3 2.6l-.1.1z" />
+    <path fill="#FF3A44" d="M16 15.2l-3.2-3.2 3.3-3.3 4 2.3c1.1.6 1.1 1.6 0 2.2L16 15.2z" />
+    <path fill="#FFD400" d="M16 15.2l-3.3-3.2L3.2 21.4c.5.5 1.3.6 2.3.1L16 15.2z" />
+    <path fill="#00E676" d="M16 8.8L5.5 2.5c-1-.5-1.8-.4-2.3.1l9.5 9.4L16 8.8z" />
+  </svg>
+);
+
+const ChromeWebStoreIcon = () => (
+  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true">
+    <circle cx="12" cy="12" r="10" fill="#DB4437" />
+    <path fill="#F4B400" d="M12 12h10a10 10 0 0 1-17.3 6.9L12 12z" />
+    <path fill="#0F9D58" d="M4.7 18.9 12 6a10 10 0 0 1 10 6H12L4.7 18.9z" />
+    <circle cx="12" cy="12" r="4.4" fill="#4285F4" />
+    <circle cx="12" cy="12" r="2.1" fill="#E8F0FE" />
+  </svg>
+);
 
 type DashboardProps = {
   routeSection?: DashboardSection;
@@ -495,17 +523,17 @@ const Dashboard: React.FC<DashboardProps> = ({
               <BookOpen className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{t("dashboard.learn")}</span>
             </Link>
-            <div className="flex items-center gap-4 pl-2 group">
-              <div className="text-right hidden sm:block">
-                <p className="text-xs font-black text-white leading-none mb-1">{userName}</p>
-                <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest">
-                  {`${t("dashboard.planPrefix")}: ${planLabel}`}
-                </p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center border border-indigo-500/20 overflow-hidden">
-                <User className="text-white w-6 h-6" />
-              </div>
-            </div>
+            <Link
+              href="/downloads"
+              className="opacity-0 inline-flex items-center gap-2 rounded-xl border border-indigo-400/35 bg-indigo-500/15 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-indigo-200 transition-colors hover:border-indigo-300 hover:text-white"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <AppStoreIcon />
+                <GooglePlayIcon />
+                <ChromeWebStoreIcon />
+              </span>
+              <span>{locale === "en" ? "Download" : "İndir"}</span>
+            </Link>
           </div>
         </header>
         <main className="flex-1 overflow-hidden">

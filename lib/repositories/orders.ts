@@ -7,7 +7,7 @@ type OrdersResponse = {
   rows?: Order[];
   row?: Order;
   id?: string;
-  navlungo?: {
+  shipment?: {
     status?: "started" | "failed" | "skipped";
     reason?: string;
     message?: string;
@@ -39,7 +39,7 @@ export type CreateOrderInput = {
 
 export type CreateOrderResult = {
   order: Order | null;
-  navlungo: OrdersResponse["navlungo"] | null;
+  shipment: NonNullable<OrdersResponse["shipment"]> | null;
 };
 
 export const useOrdersRepository = () => {
@@ -95,14 +95,14 @@ export const useOrdersRepository = () => {
       setOrders((previous) => [payload.row as Order, ...previous]);
       return {
         order: payload.row as Order,
-        navlungo: payload.navlungo ?? null,
+        shipment: payload.shipment ?? null,
       };
     }
 
     await loadOrders();
     return {
       order: null,
-      navlungo: payload.navlungo ?? null,
+      shipment: payload.shipment ?? null,
     };
   }, [loadOrders]);
 
