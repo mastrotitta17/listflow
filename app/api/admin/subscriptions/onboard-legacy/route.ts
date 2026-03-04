@@ -208,22 +208,6 @@ const generateAdminMagicLink = async (email: string, appUrl: string) => {
   return typeof properties.action_link === "string" ? properties.action_link : null;
 };
 
-const dispatchMagicLinkEmail = async (email: string, appUrl: string) => {
-  const legacyRedirect = `${appUrl}/auth/callback?next=${encodeURIComponent("/legacy-onboarding")}`;
-  const result = await supabaseAdmin.auth.signInWithOtp({
-    email,
-    options: {
-      shouldCreateUser: false,
-      emailRedirectTo: legacyRedirect,
-    },
-  });
-
-  return {
-    ok: !result.error,
-    error: result.error?.message ?? null,
-  };
-};
-
 export async function POST(request: NextRequest) {
   const admin = await requireAdminRequest(request);
   if (!admin) {
@@ -363,9 +347,9 @@ export async function POST(request: NextRequest) {
     let emailDispatchError: string | null = null;
     if (strategy === "magic_link") {
       actionLink = await generateAdminMagicLink(email, appUrl);
-      const emailDispatch = await dispatchMagicLinkEmail(email, appUrl);
-      emailDispatched = emailDispatch.ok;
-      emailDispatchError = emailDispatch.error;
+      emailDispatched = false;
+      emailDispatchError =
+        "Automatic OTP mail is intentionally skipped to avoid token invalidation. Share generated action_link manually.";
     }
 
     return NextResponse.json({

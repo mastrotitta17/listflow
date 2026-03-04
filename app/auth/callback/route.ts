@@ -52,6 +52,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(redirectUrl);
     }
 
+    if (nextPath === "/legacy-onboarding") {
+      return NextResponse.redirect(new URL(nextPath, request.url));
+    }
+
     // Implicit flow: tokens are in the URL fragment (#access_token=...).
     // The server cannot read the fragment, but if we have a session_key we can
     // redirect to extension-done WITH the session_key so the client-side page

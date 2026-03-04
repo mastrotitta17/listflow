@@ -82,6 +82,41 @@ const stripUrlAuthArtifacts = () => {
   }
 };
 
+const resolveAuthErrorMessageFromUrl = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  const queryError = (url.searchParams.get("authError") ?? "").trim().toLowerCase();
+  const hashRaw = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+  const hashParams = new URLSearchParams(hashRaw);
+  const hashErrorCode = (hashParams.get("error_code") ?? "").trim().toLowerCase();
+  const hashError = (hashParams.get("error") ?? "").trim().toLowerCase();
+
+  if (hashErrorCode === "otp_expired") {
+    return "Magic link süresi dolmuş veya geçersiz. Admin panelden yeni magic link üretip tekrar deneyin.";
+  }
+
+  if (hashErrorCode === "otp_disabled") {
+    return "Magic link doğrulaması şu an devre dışı görünüyor. Lütfen destek ile iletişime geçin.";
+  }
+
+  if (hashError === "access_denied") {
+    return "Magic link doğrulanamadı. Lütfen yeni bir onboarding linki kullanın.";
+  }
+
+  if (queryError === "oauth_failed") {
+    return "Auth callback başarısız oldu. Lütfen yeni bir magic link ile tekrar deneyin.";
+  }
+
+  if (queryError === "missing_code") {
+    return "Magic link doğrulama kodu eksik. Yeni bir onboarding linki ile tekrar deneyin.";
+  }
+
+  return null;
+};
+
 const recoverSessionFromUrl = async () => {
   if (typeof window === "undefined") {
     return null;
@@ -346,6 +381,11 @@ export default function LegacyOnboardingPage() {
 
     const bootstrap = async () => {
       try {
+        const urlAuthError = resolveAuthErrorMessageFromUrl();
+        if (urlAuthError) {
+          setSessionResolveError(urlAuthError);
+        }
+
         const session = await resolveStableSession();
 
         await syncServerSession(session);
@@ -364,7 +404,7 @@ export default function LegacyOnboardingPage() {
         const message = error instanceof Error ? error.message : "Onboarding başlatılamadı.";
         toast.error(message);
         setCurrentUser(null);
-        setSessionResolveError("Oturum doğrulanamadı. Magic linki yeniden açın.");
+        setSessionResolveError(resolveAuthErrorMessageFromUrl() ?? "Oturum doğrulanamadı. Magic linki yeniden açın.");
       } finally {
         if (active) {
           setLoading(false);
