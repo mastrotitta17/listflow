@@ -69,23 +69,6 @@ const isLegacyOnboardingRequired = (user: User | null | undefined) => {
   return Boolean(metadata?.legacy_onboarding_required);
 };
 
-const hasAuthArtifactsInUrl = () => {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  const url = new URL(window.location.href);
-  const hasSearchToken =
-    url.searchParams.has("code") ||
-    url.searchParams.has("token_hash") ||
-    url.searchParams.has("access_token") ||
-    url.searchParams.has("refresh_token") ||
-    url.searchParams.has("type");
-  const hasHashToken = url.hash.includes("access_token=") || url.hash.includes("refresh_token=");
-
-  return hasSearchToken || hasHashToken;
-};
-
 const GoogleIcon = () => (
   <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
     <path
@@ -240,19 +223,6 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
       active = false;
     };
   }, [resolveMfaRequirement, router, setView, standalone]);
-
-  useEffect(() => {
-    if (!standalone) {
-      return;
-    }
-
-    if (!hasAuthArtifactsInUrl()) {
-      return;
-    }
-
-    const url = new URL(window.location.href);
-    router.replace(`/legacy-onboarding${url.search}${url.hash}`);
-  }, [router, standalone]);
 
   useEffect(() => {
     if (!standalone || typeof window === "undefined") {

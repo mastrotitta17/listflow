@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useI18n } from "@/lib/i18n/provider";
 import { sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase, SUPABASE_URL } from "@/lib/supabaseClient";
 
 type StoreCurrency = "USD" | "TRY";
 type LegacyOnboardingStep = 1 | 2;
@@ -61,6 +61,7 @@ const stripUrlAuthArtifacts = () => {
     "expires_in",
     "expires_at",
     "token_type",
+    "ml",
   ];
 
   let changed = false;
@@ -79,6 +80,42 @@ const stripUrlAuthArtifacts = () => {
     const query = url.searchParams.toString();
     const next = `${url.pathname}${query ? `?${query}` : ""}`;
     window.history.replaceState({}, "", next);
+  }
+};
+
+const decodeBase64Url = (value: string) => {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const paddingNeeded = (4 - (normalized.length % 4)) % 4;
+  const padded = `${normalized}${"=".repeat(paddingNeeded)}`;
+  return atob(padded);
+};
+
+const redirectViaRelayMagicLink = () => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const url = new URL(window.location.href);
+  const encoded = url.searchParams.get("ml");
+  if (!encoded) {
+    return false;
+  }
+
+  try {
+    const decoded = decodeBase64Url(encoded);
+    const target = new URL(decoded);
+    const supabaseHost = new URL(SUPABASE_URL).host;
+    const isTrustedHost = target.host === supabaseHost;
+    const isVerifyPath = target.pathname.includes("/auth/v1/verify");
+
+    if (!isTrustedHost || !isVerifyPath) {
+      return false;
+    }
+
+    window.location.replace(decoded);
+    return true;
+  } catch {
+    return false;
   }
 };
 
@@ -381,6 +418,11 @@ export default function LegacyOnboardingPage() {
 
     const bootstrap = async () => {
       try {
+        const redirected = redirectViaRelayMagicLink();
+        if (redirected) {
+          return;
+        }
+
         const urlAuthError = resolveAuthErrorMessageFromUrl();
         if (urlAuthError) {
           setSessionResolveError(urlAuthError);
