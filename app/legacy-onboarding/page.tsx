@@ -16,6 +16,14 @@ import { supabase } from "@/lib/supabaseClient";
 
 type StoreCurrency = "USD" | "TRY";
 type LegacyOnboardingStep = 1 | 2;
+type LegacyBootstrapUser = {
+  id: string;
+  email: string | null;
+  fullName: string | null;
+  phone: string | null;
+  legacyOnboardingRequired: boolean;
+  legacyPasswordSet: boolean;
+};
 
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
 
@@ -146,6 +154,24 @@ const resolveStableSession = async () => {
   return null;
 };
 
+const loadLegacyUserFromServerSession = async (): Promise<LegacyBootstrapUser | null> => {
+  const response = await fetch("/api/legacy-onboarding/profile", {
+    method: "GET",
+    cache: "no-store",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    user?: LegacyBootstrapUser;
+  };
+
+  return payload.user ?? null;
+};
+
 const getUserMetadata = (user: User | null | undefined) => {
   if (!user || typeof user.user_metadata !== "object" || user.user_metadata === null) {
     return {} as Record<string, unknown>;
@@ -169,6 +195,7 @@ export default function LegacyOnboardingPage() {
 
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [sessionResolveError, setSessionResolveError] = useState<string | null>(null);
   const [passwordSet, setPasswordSet] = useState(false);
   const [currentStep, setCurrentStep] = useState<LegacyOnboardingStep>(1);
 
@@ -272,6 +299,51 @@ export default function LegacyOnboardingPage() {
   useEffect(() => {
     let active = true;
 
+    const hydrateStateFromUser = (user: User, fallback: LegacyBootstrapUser | null = null) => {
+      const requiresLegacy = fallback ? fallback.legacyOnboardingRequired : isLegacyOnboardingRequired(user);
+      if (!requiresLegacy) {
+        router.replace("/categories");
+        return;
+      }
+
+      const metadata = getUserMetadata(user);
+      const nextPasswordSet = fallback ? fallback.legacyPasswordSet : isLegacyPasswordSet(user);
+      const incomingName =
+        typeof metadata.full_name === "string"
+          ? metadata.full_name
+          : (fallback?.fullName ?? "");
+      const incomingPhone = typeof metadata.phone === "string" ? metadata.phone : (fallback?.phone ?? "");
+
+      setCurrentUser(user);
+      setPasswordSet(nextPasswordSet);
+      setCurrentStep(nextPasswordSet ? 2 : 1);
+      setFullName(incomingName);
+      setPhone(incomingPhone);
+      setSessionResolveError(null);
+    };
+
+    const hydrateFromServerFallback = async () => {
+      const fallback = await loadLegacyUserFromServerSession();
+      if (!fallback) {
+        setCurrentUser(null);
+        setSessionResolveError("Oturum doğrulanamadı. Magic linki yeniden açın.");
+        return;
+      }
+
+      const pseudoUser = ({
+        id: fallback.id,
+        email: fallback.email,
+        user_metadata: {
+          full_name: fallback.fullName,
+          phone: fallback.phone,
+          legacy_onboarding_required: fallback.legacyOnboardingRequired,
+          legacy_password_set: fallback.legacyPasswordSet,
+        },
+      } as unknown) as User;
+
+      hydrateStateFromUser(pseudoUser, fallback);
+    };
+
     const bootstrap = async () => {
       try {
         const session = await resolveStableSession();
@@ -283,34 +355,16 @@ export default function LegacyOnboardingPage() {
         }
 
         if (!session?.user) {
-          router.replace("/login");
+          await hydrateFromServerFallback();
           return;
         }
 
-        if (!isLegacyOnboardingRequired(session.user)) {
-          router.replace("/categories");
-          return;
-        }
-
-        const initialPasswordSet = isLegacyPasswordSet(session.user);
-        setCurrentUser(session.user);
-        setPasswordSet(initialPasswordSet);
-        setCurrentStep(initialPasswordSet ? 2 : 1);
-
-        const metadata = getUserMetadata(session.user);
-        const incomingName =
-          typeof metadata.full_name === "string"
-            ? metadata.full_name
-            : typeof session.user.user_metadata?.full_name === "string"
-              ? (session.user.user_metadata.full_name as string)
-              : "";
-        const incomingPhone = typeof metadata.phone === "string" ? metadata.phone : "";
-
-        setFullName(incomingName);
-        setPhone(incomingPhone);
+        hydrateStateFromUser(session.user);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Onboarding başlatılamadı.";
         toast.error(message);
+        setCurrentUser(null);
+        setSessionResolveError("Oturum doğrulanamadı. Magic linki yeniden açın.");
       } finally {
         if (active) {
           setLoading(false);
@@ -331,19 +385,11 @@ export default function LegacyOnboardingPage() {
       await syncServerSession(session);
 
       if (!session?.user) {
-        router.replace("/login");
+        await hydrateFromServerFallback();
         return;
       }
 
-      if (!isLegacyOnboardingRequired(session.user)) {
-        router.replace("/categories");
-        return;
-      }
-
-      const nextPasswordSet = isLegacyPasswordSet(session.user);
-      setCurrentUser(session.user);
-      setPasswordSet(nextPasswordSet);
-      setCurrentStep(nextPasswordSet ? 2 : 1);
+      hydrateStateFromUser(session.user);
     });
 
     return () => {
@@ -483,7 +529,23 @@ export default function LegacyOnboardingPage() {
   }
 
   if (!currentUser) {
-    return null;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#07090f] px-4">
+        <Card className="w-full max-w-xl border-white/10 bg-[#0d111b]/95 text-white shadow-2xl">
+          <CardHeader>
+            <CardTitle className="text-xl font-black">Oturum Doğrulanamadı</CardTitle>
+            <CardDescription className="text-slate-400">
+              {sessionResolveError ?? "Magic link doğrulanamadı. Lütfen bağlantıyı yeniden açın."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex justify-end">
+            <Button type="button" className="cursor-pointer" onClick={() => window.location.reload()}>
+              Tekrar Dene
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (

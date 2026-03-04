@@ -89,6 +89,46 @@ const upsertProfile = async (args: {
   throw new Error(lastError?.message ?? "Profile could not be updated");
 };
 
+export async function GET(request: NextRequest) {
+  try {
+    const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
+    if (!accessToken) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const user = await getUserFromAccessToken(accessToken);
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const authUserResult = await supabaseAdmin.auth.admin.getUserById(user.id);
+    if (authUserResult.error || !authUserResult.data.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const authUser = authUserResult.data.user;
+    const metadata =
+      typeof authUser.user_metadata === "object" && authUser.user_metadata !== null
+        ? (authUser.user_metadata as Record<string, unknown>)
+        : {};
+
+    return NextResponse.json({
+      success: true,
+      user: {
+        id: authUser.id,
+        email: authUser.email ?? null,
+        fullName: typeof metadata.full_name === "string" ? metadata.full_name : null,
+        phone: typeof metadata.phone === "string" ? metadata.phone : null,
+        legacyOnboardingRequired: Boolean(metadata.legacy_onboarding_required),
+        legacyPasswordSet: Boolean(metadata.legacy_password_set),
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Legacy profile load failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;

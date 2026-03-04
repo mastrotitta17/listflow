@@ -191,11 +191,12 @@ const insertFallbackSubscription = async (params: {
 };
 
 const generateAdminMagicLink = async (email: string, appUrl: string) => {
+  const legacyRedirect = `${appUrl}/auth/callback?next=${encodeURIComponent("/legacy-onboarding")}`;
   const generateResult = await supabaseAdmin.auth.admin.generateLink({
     type: "magiclink",
     email,
     options: {
-      redirectTo: `${appUrl}/legacy-onboarding`,
+      redirectTo: legacyRedirect,
     },
   });
 
@@ -208,11 +209,12 @@ const generateAdminMagicLink = async (email: string, appUrl: string) => {
 };
 
 const dispatchMagicLinkEmail = async (email: string, appUrl: string) => {
+  const legacyRedirect = `${appUrl}/auth/callback?next=${encodeURIComponent("/legacy-onboarding")}`;
   const result = await supabaseAdmin.auth.signInWithOtp({
     email,
     options: {
       shouldCreateUser: false,
-      emailRedirectTo: `${appUrl}/legacy-onboarding`,
+      emailRedirectTo: legacyRedirect,
     },
   });
 
