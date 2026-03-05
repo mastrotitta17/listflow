@@ -126,6 +126,7 @@ const normalizeSubscriptionPlan = (value: unknown): "standard" | "pro" | "turbo"
 type StoreRow = Record<string, unknown>;
 type SubscriptionPlanRow = {
   id: string;
+  plan?: string | null;
   status?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
@@ -135,6 +136,33 @@ const toTimestamp = (value: string | null | undefined) => {
   if (!value) return 0;
   const ms = new Date(value).getTime();
   return Number.isFinite(ms) ? ms : 0;
+};
+
+const pickNonEmptyText = (primary: unknown, fallback: unknown) => {
+  const first = typeof primary === "string" ? primary.trim() : "";
+  if (first) {
+    return first;
+  }
+
+  const second = typeof fallback === "string" ? fallback.trim() : "";
+  return second || null;
+};
+
+const resolveStoreCurrencyFromRow = (row: StoreRow | null): "USD" | "TRY" | null => {
+  if (!row) {
+    return null;
+  }
+
+  const rawCurrency = pickNonEmptyText(row.store_currency, row.currency);
+  return normalizeStoreCurrency(rawCurrency);
+};
+
+const loadStoreRowById = async (storeId: string) => {
+  const result = await supabaseAdmin.from("stores").select("*").eq("id", storeId).maybeSingle<StoreRow>();
+  if (result.error) {
+    throw new Error(result.error.message || "Store could not be loaded");
+  }
+  return result.data ?? null;
 };
 
 const updateStoreWithFallback = async (storeId: string, patch: Record<string, unknown>) => {
@@ -182,12 +210,12 @@ const updateStoreWithFallback = async (storeId: string, patch: Record<string, un
 const loadStoreSubscriptionCandidates = async (storeId: string) => {
   const results = new Map<string, SubscriptionPlanRow>();
   const selectCandidates = [
-    "id,status,updated_at,created_at,store_id,shop_id",
-    "id,status,updated_at,created_at,store_id",
-    "id,status,updated_at,created_at,shop_id",
-    "id,status,created_at,store_id,shop_id",
-    "id,status,created_at,store_id",
-    "id,status,created_at,shop_id",
+    "id,plan,status,updated_at,created_at,store_id,shop_id",
+    "id,plan,status,updated_at,created_at,store_id",
+    "id,plan,status,updated_at,created_at,shop_id",
+    "id,plan,status,created_at,store_id,shop_id",
+    "id,plan,status,created_at,store_id",
+    "id,plan,status,created_at,shop_id",
   ];
 
   const collectByColumn = async (column: "store_id" | "shop_id") => {
@@ -286,6 +314,42 @@ const updateSubscriptionPlanWithFallback = async (subscriptionId: string, plan: 
   throw new Error(withTimestamp.error.message || "Subscription plan could not be updated");
 };
 
+const updateStoreCurrencyColumns = async (storeId: string, requestedCurrency: "USD" | "TRY") => {
+  const lowerCurrency = requestedCurrency.toLowerCase();
+  let writableColumnCount = 0;
+
+  const updates: Array<{ column: "store_currency" | "currency"; value: string }> = [
+    { column: "store_currency", value: requestedCurrency },
+    { column: "currency", value: lowerCurrency },
+  ];
+
+  for (const update of updates) {
+    const result = await supabaseAdmin
+      .from("stores")
+      .update({ [update.column]: update.value })
+      .eq("id", storeId)
+      .select("id")
+      .maybeSingle();
+
+    if (!result.error) {
+      writableColumnCount += 1;
+      continue;
+    }
+
+    if (isMissingColumnError(result.error, update.column)) {
+      continue;
+    }
+
+    throw new Error(result.error.message || `Store ${update.column} could not be updated`);
+  }
+
+  if (writableColumnCount === 0) {
+    throw new Error(
+      "Mağaza para birimi alanı bulunamadı (store_currency/currency). Supabase migration çalıştırılmalı: 20260306090000_stores_currency_columns.sql"
+    );
+  }
+};
+
 const patchStoreResource = async (id: string, body: Record<string, unknown>) => {
   const hasStoreNameField = Object.prototype.hasOwnProperty.call(body, "store_name");
   const hasCurrencyField =
@@ -313,34 +377,42 @@ const patchStoreResource = async (id: string, body: Record<string, unknown>) => 
     throw new Error("Geçerli güncelleme alanı yok (store_name, store_currency, plan).");
   }
 
-  const storePatch: Record<string, unknown> = {};
-  if (requestedStoreName) {
-    storePatch.store_name = requestedStoreName;
+  const currentStore = await loadStoreRowById(id);
+  if (!currentStore) {
+    throw new Error("Store not found.");
   }
-  if (requestedCurrency) {
-    storePatch.store_currency = requestedCurrency;
-    storePatch.currency = requestedCurrency.toLowerCase();
+
+  const currentStoreName = typeof currentStore.store_name === "string" ? normalizeStoreNameInput(currentStore.store_name) : "";
+  const currentCurrency = resolveStoreCurrencyFromRow(currentStore);
+
+  const storePatch: Record<string, unknown> = {};
+  if (requestedStoreName && requestedStoreName !== currentStoreName) {
+    storePatch.store_name = requestedStoreName;
   }
   if (Object.keys(storePatch).length > 0) {
     storePatch.updated_at = new Date().toISOString();
   }
 
-  const updatedStore =
+  let updatedStore =
     Object.keys(storePatch).length > 0
       ? await updateStoreWithFallback(id, storePatch)
-      : await supabaseAdmin.from("stores").select("*").eq("id", id).maybeSingle<StoreRow>().then((result) => {
-          if (result.error) {
-            throw new Error(result.error.message || "Store could not be loaded");
-          }
-          return result.data ?? null;
-        });
+      : currentStore;
 
   if (!updatedStore) {
     throw new Error("Store not found.");
   }
 
+  if (requestedCurrency && requestedCurrency !== currentCurrency) {
+    await updateStoreCurrencyColumns(id, requestedCurrency);
+    updatedStore = await loadStoreRowById(id);
+    const persistedCurrency = resolveStoreCurrencyFromRow(updatedStore);
+    if (persistedCurrency !== requestedCurrency) {
+      throw new Error("Mağaza para birimi kaydedilemedi. Lütfen tekrar deneyin.");
+    }
+  }
+
   let updatedSubscription: Record<string, unknown> | null = null;
-  if (requestedPlan) {
+  if (requestedPlan && hasPlanField) {
     const candidates = await loadStoreSubscriptionCandidates(id);
     const targetSubscription = pickSubscriptionForPlanUpdate(candidates);
 
@@ -348,7 +420,10 @@ const patchStoreResource = async (id: string, body: Record<string, unknown>) => 
       throw new Error("Bu mağaza için güncellenecek subscription kaydı bulunamadı.");
     }
 
-    updatedSubscription = await updateSubscriptionPlanWithFallback(targetSubscription.id, requestedPlan);
+    const currentPlan = normalizeSubscriptionPlan(targetSubscription.plan ?? null);
+    if (currentPlan !== requestedPlan) {
+      updatedSubscription = await updateSubscriptionPlanWithFallback(targetSubscription.id, requestedPlan);
+    }
   }
 
   return {

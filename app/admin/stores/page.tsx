@@ -755,10 +755,10 @@ export default function AdminStoresPage() {
     const currentCurrency = editingStore.storeCurrency === "TRY" ? "TRY" : "USD";
     const currentPlan = resolveEditablePlan(editingStore.plan);
     const hasSubscription = Boolean(editingStore.subscriptionId);
-    const noChanges =
-      normalizedStoreName === currentStoreName &&
-      editStoreCurrencyDraft === currentCurrency &&
-      (!hasSubscription || editStorePlanDraft === currentPlan);
+    const changedStoreName = normalizedStoreName !== currentStoreName;
+    const changedCurrency = editStoreCurrencyDraft !== currentCurrency;
+    const changedPlan = hasSubscription && editStorePlanDraft !== currentPlan;
+    const noChanges = !changedStoreName && !changedCurrency && !changedPlan;
 
     if (noChanges) {
       setSuccessMessage("Kaydedilecek bir değişiklik bulunamadı.");
@@ -776,16 +776,23 @@ export default function AdminStoresPage() {
 
     try {
       const encodedStoreId = encodeURIComponent(editingStore.storeId);
+      const patchPayload: Record<string, unknown> = {};
+      if (changedStoreName) {
+        patchPayload.store_name = normalizedStoreName;
+      }
+      if (changedCurrency) {
+        patchPayload.store_currency = editStoreCurrencyDraft;
+      }
+      if (changedPlan) {
+        patchPayload.plan = editStorePlanDraft;
+      }
+
       const response = await fetch(`/api/admin/stores/${encodedStoreId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          store_name: normalizedStoreName,
-          store_currency: editStoreCurrencyDraft,
-          plan: editingStore.subscriptionId ? editStorePlanDraft : undefined,
-        }),
+        body: JSON.stringify(patchPayload),
       });
 
       const rawBody = await response.text();
@@ -802,10 +809,11 @@ export default function AdminStoresPage() {
         throw new Error(payload.error || `Mağaza güncellenemedi (HTTP ${response.status}).`);
       }
 
-      const planText = editingStore.subscriptionId ? `, plan ${PLAN_LABELS[editStorePlanDraft]}` : "";
-      setSuccessMessage(
-        `${editingStore.storeName} mağazası ${normalizedStoreName} olarak güncellendi (para birimi ${editStoreCurrencyDraft}${planText}).`
-      );
+      const changeLabels: string[] = [];
+      if (changedStoreName) changeLabels.push(`isim: ${normalizedStoreName}`);
+      if (changedCurrency) changeLabels.push(`para birimi: ${editStoreCurrencyDraft}`);
+      if (changedPlan) changeLabels.push(`plan: ${PLAN_LABELS[editStorePlanDraft]}`);
+      setSuccessMessage(`${editingStore.storeName} mağazası güncellendi (${changeLabels.join(", ")}).`);
       setEditStoreOpen(false);
       setEditingStore(null);
       setEditStoreNameDraft("");
