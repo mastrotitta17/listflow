@@ -1,13 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 
 type ListingAdminRow = Record<string, unknown> & {
@@ -34,6 +44,32 @@ type ListingsResponse = {
   error?: string;
 };
 
+type AutomationOverviewResponse = {
+  rows?: Array<{
+    storeId?: string;
+    storeName?: string;
+  }>;
+  error?: string;
+};
+
+type ExtensionLog = {
+  id: string;
+  user_id: string | null;
+  store_id: string | null;
+  store_name: string | null;
+  level: string;
+  event: string;
+  message: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
+
+type ExtensionLogsResponse = {
+  logs?: ExtensionLog[];
+  has_more?: boolean;
+  error?: string;
+};
+
 const STATUS_OPTIONS = [
   { value: "all", label: "Tümü" },
   { value: "pending", label: "pending" },
@@ -44,6 +80,10 @@ const STATUS_OPTIONS = [
   { value: "not_uploaded", label: "Yüklenmedi" },
 ] as const;
 
+const LOG_LEVELS = ["all", "info", "warn", "error"] as const;
+type LogLevel = (typeof LOG_LEVELS)[number];
+const LOG_PAGE_SIZE = 50;
+
 const fmtDate = (value: unknown) => {
   if (!value || typeof value !== "string") return "-";
   const date = new Date(value);
@@ -52,6 +92,117 @@ const fmtDate = (value: unknown) => {
 };
 
 const toText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+const getPathValue = (source: Record<string, unknown>, path: string) => {
+  const segments = path.split(".").filter(Boolean);
+  if (!segments.length) {
+    return undefined;
+  }
+
+  let cursor: unknown = source;
+  for (const segment of segments) {
+    if (!cursor || typeof cursor !== "object") {
+      return undefined;
+    }
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return cursor;
+};
+
+const pickFirstText = (source: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = getPathValue(source, key);
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+};
+
+const pickFirstNumber = (source: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = getPathValue(source, key);
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim()) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) {
+        return numeric;
+      }
+    }
+  }
+  return null;
+};
+
+const formatMaybePrice = (value: number) =>
+  value.toLocaleString("tr-TR", {
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+
+const resolveTopCategory = (row: ListingAdminRow) =>
+  pickFirstText(row, [
+    "top_category",
+    "topCategory",
+    "main_category",
+    "mainCategory",
+    "category",
+    "category_name",
+    "parent_category",
+    "metadata.top_category",
+    "metadata.category",
+    "payload.category",
+    "product.category",
+  ]);
+
+const resolveSubCategory = (row: ListingAdminRow) =>
+  pickFirstText(row, [
+    "sub_category",
+    "subCategory",
+    "subcategory",
+    "sub_category_name",
+    "sub_product_name",
+    "product_name",
+    "metadata.sub_category",
+    "metadata.subcategory",
+    "payload.sub_category",
+    "product.sub_category",
+  ]);
+
+const resolvePrice = (row: ListingAdminRow) => {
+  const cents = pickFirstNumber(row, ["price_cents", "amount_cents"]);
+  if (cents !== null) {
+    return formatMaybePrice(cents / 100);
+  }
+
+  const numeric = pickFirstNumber(row, [
+    "price",
+    "listing_price",
+    "price_value",
+    "price_amount",
+    "amount",
+    "sale_price",
+    "metadata.price",
+    "payload.price",
+    "product.price",
+  ]);
+  if (numeric !== null) {
+    return formatMaybePrice(numeric);
+  }
+
+  return (
+    pickFirstText(row, [
+      "price",
+      "listing_price",
+      "price_value",
+      "price_amount",
+      "metadata.price",
+      "payload.price",
+      "product.price",
+    ]) || "-"
+  );
+};
 
 const StatusBadge = ({ row }: { row: ListingAdminRow }) => {
   const status = toText(row.derived_status || row.status || row.listing_status || "-").toLowerCase();
@@ -71,12 +222,28 @@ const StatusBadge = ({ row }: { row: ListingAdminRow }) => {
   return <Badge variant="outline">{status || "-"}</Badge>;
 };
 
-const UploadBadge = ({ row }: { row: ListingAdminRow }) => {
-  const uploaded = Boolean(row.is_uploaded);
-  return uploaded ? <Badge variant="success">Yüklendi</Badge> : <Badge variant="destructive">Yüklenmedi</Badge>;
+const LogLevelBadge = ({ level }: { level: string }) => {
+  if (level === "error") return <Badge variant="destructive">{level}</Badge>;
+  if (level === "warn") {
+    return (
+      <Badge variant="secondary" className="border-amber-500/30 bg-amber-500/15 text-amber-400">
+        {level}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="secondary" className="border-indigo-500/30 bg-indigo-500/15 text-indigo-300">
+      {level}
+    </Badge>
+  );
 };
 
 export default function AdminListingsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const searchTab = searchParams.get("tab") === "logs" ? "logs" : "listings";
+  const [activeTab, setActiveTab] = useState<"listings" | "logs">(searchTab);
+
   const [rows, setRows] = useState<ListingAdminRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [requeueLoadingId, setRequeueLoadingId] = useState<string | null>(null);
@@ -84,6 +251,66 @@ export default function AdminListingsPage() {
   const [clientFilter, setClientFilter] = useState("");
   const [search, setSearch] = useState("");
   const [total, setTotal] = useState(0);
+  const [storeNameByClientId, setStoreNameByClientId] = useState<Record<string, string>>({});
+
+  const [logs, setLogs] = useState<ExtensionLog[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [levelFilter, setLevelFilter] = useState<LogLevel>("all");
+  const [storeFilter, setStoreFilter] = useState("");
+  const [eventFilter, setEventFilter] = useState("");
+  const [logsHasMore, setLogsHasMore] = useState(false);
+  const [logsOffset, setLogsOffset] = useState(0);
+  const [selectedLog, setSelectedLog] = useState<ExtensionLog | null>(null);
+  const [logActionLoading, setLogActionLoading] = useState<"delete" | "requeue" | null>(null);
+
+  useEffect(() => {
+    setActiveTab(searchTab);
+  }, [searchTab]);
+
+  const updateUrlTab = useCallback(
+    (tab: "listings" | "logs") => {
+      const next = new URLSearchParams(searchParams.toString());
+      if (tab === "logs") {
+        next.set("tab", "logs");
+      } else {
+        next.delete("tab");
+      }
+      const query = next.toString();
+      router.replace(query ? `/admin/listings?${query}` : "/admin/listings", { scroll: false });
+    },
+    [router, searchParams]
+  );
+
+  const handleTabChange = useCallback(
+    (value: string) => {
+      const tab = value === "logs" ? "logs" : "listings";
+      setActiveTab(tab);
+      updateUrlTab(tab);
+    },
+    [updateUrlTab]
+  );
+
+  const fetchStoreNames = useCallback(async () => {
+    try {
+      const response = await fetch("/api/admin/stores/automation-overview", { cache: "no-store" });
+      const body = (await response.json().catch(() => ({}))) as AutomationOverviewResponse;
+
+      if (!response.ok) {
+        throw new Error(body.error || "Mağaza eşlemesi yüklenemedi.");
+      }
+
+      const map: Record<string, string> = {};
+      for (const row of body.rows ?? []) {
+        const id = toText(row.storeId);
+        if (!id) continue;
+        map[id] = toText(row.storeName) || id;
+      }
+      setStoreNameByClientId(map);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Mağaza eşlemesi yüklenemedi.";
+      toast.error(message);
+    }
+  }, []);
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -121,6 +348,64 @@ export default function AdminListingsPage() {
   useEffect(() => {
     void fetchRows();
   }, [fetchRows]);
+
+  useEffect(() => {
+    void fetchStoreNames();
+  }, [fetchStoreNames]);
+
+  const fetchLogs = useCallback(
+    async (reset: boolean, levelArg = levelFilter, storeArg = storeFilter, eventArg = eventFilter) => {
+      setLogsLoading(true);
+      const offset = reset ? 0 : logsOffset;
+
+      try {
+        const params = new URLSearchParams({ offset: String(offset) });
+        if (levelArg && levelArg !== "all") params.set("level", levelArg);
+        if (storeArg.trim()) params.set("store_name", storeArg.trim());
+        if (eventArg.trim()) params.set("event", eventArg.trim());
+
+        const response = await fetch(`/api/admin/extension-logs?${params.toString()}`, { cache: "no-store" });
+        const body = (await response.json().catch(() => ({}))) as ExtensionLogsResponse;
+        if (!response.ok) {
+          throw new Error(body.error || "Eklenti logları yüklenemedi.");
+        }
+
+        const nextRows = body.logs ?? [];
+        if (reset) {
+          setLogs(nextRows);
+          setLogsOffset(nextRows.length);
+        } else {
+          setLogs((prev) => [...prev, ...nextRows]);
+          setLogsOffset((prev) => prev + nextRows.length);
+        }
+        setLogsHasMore(Boolean(body.has_more ?? nextRows.length === LOG_PAGE_SIZE));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Eklenti logları yüklenemedi.";
+        toast.error(message);
+      } finally {
+        setLogsLoading(false);
+      }
+    },
+    [eventFilter, levelFilter, logsOffset, storeFilter]
+  );
+
+  useEffect(() => {
+    void fetchLogs(true, "all", "", "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleFilterLogs = useCallback(async () => {
+    setLogsOffset(0);
+    await fetchLogs(true, levelFilter, storeFilter, eventFilter);
+  }, [eventFilter, fetchLogs, levelFilter, storeFilter]);
+
+  const handleResetLogs = useCallback(() => {
+    setLevelFilter("all");
+    setStoreFilter("");
+    setEventFilter("");
+    setLogsOffset(0);
+    void fetchLogs(true, "all", "", "");
+  }, [fetchLogs]);
 
   const requeueRow = useCallback(
     async (row: ListingAdminRow) => {
@@ -162,6 +447,50 @@ export default function AdminListingsPage() {
     [fetchRows]
   );
 
+  const deleteLogAndOptionallyRequeue = useCallback(
+    async (opts: { requeue: boolean }) => {
+      if (!selectedLog) return;
+      setLogActionLoading(opts.requeue ? "requeue" : "delete");
+      try {
+        const response = await fetch(
+          `/api/admin/extension-logs/${selectedLog.id}?requeue=${opts.requeue ? "true" : "false"}`,
+          { method: "DELETE" }
+        );
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          listing_requeued?: boolean;
+          guest_sheet_reset?: boolean;
+        };
+
+        if (!response.ok) {
+          throw new Error(body.error || "İşlem başarısız.");
+        }
+
+        if (opts.requeue) {
+          const requeueInfo = [body.listing_requeued ? "listing requeue ✓" : null, body.guest_sheet_reset ? "sheet reset ✓" : null]
+            .filter(Boolean)
+            .join(", ");
+          toast.success(
+            requeueInfo
+              ? `Log silindi ve tekrar kuyruğa alındı (${requeueInfo}).`
+              : "Log silindi ve tekrar kuyruğa alma isteği işlendi."
+          );
+        } else {
+          toast.success("Log silindi.");
+        }
+
+        setSelectedLog(null);
+        setLogsOffset(0);
+        await fetchLogs(true, levelFilter, storeFilter, eventFilter);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "İşlem başarısız.");
+      } finally {
+        setLogActionLoading(null);
+      }
+    },
+    [eventFilter, fetchLogs, levelFilter, selectedLog, storeFilter]
+  );
+
   const columns = useMemo<ColumnDef<ListingAdminRow>[]>(
     () => [
       {
@@ -181,8 +510,12 @@ export default function AdminListingsPage() {
       },
       {
         accessorKey: "derived_client_id",
-        header: "Store / Client ID",
-        cell: ({ row }) => <span className="text-xs font-mono">{toText(row.original.derived_client_id) || "-"}</span>,
+        header: "Mağaza / Client ID",
+        cell: ({ row }) => {
+          const clientId = toText(row.original.derived_client_id);
+          const storeName = clientId ? storeNameByClientId[clientId] : "";
+          return <span className="text-xs">{storeName || clientId || "-"}</span>;
+        },
       },
       {
         accessorKey: "derived_status",
@@ -190,9 +523,26 @@ export default function AdminListingsPage() {
         cell: ({ row }) => <StatusBadge row={row.original} />,
       },
       {
-        accessorKey: "is_uploaded",
-        header: "Etsy Yükleme",
-        cell: ({ row }) => <UploadBadge row={row.original} />,
+        id: "product_info",
+        header: "Ürün Bilgisi",
+        cell: ({ row }) => {
+          const topCategory = resolveTopCategory(row.original);
+          const subCategory = resolveSubCategory(row.original);
+          const price = resolvePrice(row.original);
+          return (
+            <div className="max-w-[260px] space-y-1 text-xs">
+              <p className="text-slate-300">
+                <span className="text-slate-500">Üst:</span> {topCategory || "-"}
+              </p>
+              <p className="text-slate-300">
+                <span className="text-slate-500">Alt:</span> {subCategory || "-"}
+              </p>
+              <p className="text-slate-300">
+                <span className="text-slate-500">Fiyat:</span> {price}
+              </p>
+            </div>
+          );
+        },
       },
       {
         accessorKey: "etsy_listing_id",
@@ -239,62 +589,224 @@ export default function AdminListingsPage() {
         },
       },
     ],
-    [requeueLoadingId, requeueRow]
+    [requeueLoadingId, requeueRow, storeNameByClientId]
+  );
+
+  const logColumns = useMemo<ColumnDef<ExtensionLog>[]>(
+    () => [
+      {
+        accessorKey: "created_at",
+        header: "Tarih",
+        cell: ({ row }) => <span className="whitespace-nowrap text-xs text-muted-foreground">{fmtDate(row.original.created_at)}</span>,
+      },
+      {
+        accessorKey: "level",
+        header: "Seviye",
+        cell: ({ row }) => <LogLevelBadge level={row.original.level} />,
+      },
+      {
+        accessorKey: "store_name",
+        header: "Mağaza",
+        cell: ({ row }) => <span className="text-xs">{row.original.store_name || row.original.store_id || "-"}</span>,
+      },
+      {
+        accessorKey: "event",
+        header: "Olay",
+        cell: ({ row }) => <code className="rounded bg-white/5 px-1.5 py-0.5 text-xs">{row.original.event}</code>,
+      },
+      {
+        accessorKey: "message",
+        header: "Mesaj",
+        cell: ({ row }) => <span className="line-clamp-2 max-w-xs text-xs text-muted-foreground">{row.original.message || "-"}</span>,
+      },
+      {
+        id: "actions",
+        header: "",
+        cell: ({ row }) => (
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs cursor-pointer" onClick={() => setSelectedLog(row.original)}>
+            Detay
+          </Button>
+        ),
+      },
+    ],
+    []
   );
 
   return (
     <div className="space-y-6">
       <Card className="glass-card-pro">
         <CardHeader>
-          <CardTitle>Listing Takibi</CardTitle>
+          <CardTitle>Listing ve Eklenti Log Takibi</CardTitle>
           <CardDescription>
-            Eklentinin Etsy&apos;ye yüklediği ürünleri burada görebilir, gerekirse bir kaydı yeniden pending durumuna alabilirsiniz.
+            Listing kayıtlarını ve eklenti loglarını tek ekranda takip edebilirsiniz.
           </CardDescription>
         </CardHeader>
 
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="w-52">
-              {STATUS_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
+          <Tabs value={activeTab} onValueChange={handleTabChange}>
+            <TabsList>
+              <TabsTrigger value="listings">Listing Takibi</TabsTrigger>
+              <TabsTrigger value="logs">Eklenti Logları</TabsTrigger>
+            </TabsList>
 
-            <Input
-              value={clientFilter}
-              onChange={(event) => setClientFilter(event.target.value)}
-              placeholder="Store/Client ID filtrele"
-              className="w-56"
-            />
+            <TabsContent value="listings" className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3 lg:flex-nowrap">
+                <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 w-full sm:w-52">
+                  {STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
 
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="ID, başlık, Etsy ID ara"
-              className="w-64"
-            />
+                <Input
+                  value={clientFilter}
+                  onChange={(event) => setClientFilter(event.target.value)}
+                  placeholder="Store/Client ID filtrele"
+                  className="h-9 w-full sm:w-56"
+                />
 
-            <Button onClick={() => void fetchRows()} disabled={loading}>
-              {loading ? "Yükleniyor…" : "Yenile"}
-            </Button>
-          </div>
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="ID, başlık, Etsy ID ara"
+                  className="h-9 w-full sm:w-72"
+                />
 
-          <DataTable
-            columns={columns}
-            data={rows}
-            enableSearch={false}
-            emptyMessage="Kayıt bulunamadı."
-            statusFilterKey="derived_status"
-            statusFilterLabel="Durum"
-            dateFilterKey="updated_at"
-            dateFilterLabel="Güncelleme"
-          />
+                <Button onClick={() => void fetchRows()} disabled={loading} className="h-9 cursor-pointer">
+                  {loading ? "Yükleniyor…" : "Yenile"}
+                </Button>
+              </div>
 
-          <p className="text-xs text-slate-500">Toplam eşleşen kayıt: {total}</p>
+              <DataTable
+                columns={columns}
+                data={rows}
+                enableSearch={false}
+                emptyMessage="Kayıt bulunamadı."
+                statusFilterKey="derived_status"
+                statusFilterLabel="Durum"
+                dateFilterKey="updated_at"
+                dateFilterLabel="Güncelleme"
+              />
+
+              <p className="text-xs text-slate-500">Toplam eşleşen kayıt: {total}</p>
+            </TabsContent>
+
+            <TabsContent value="logs" className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3 lg:flex-nowrap">
+                <Select value={levelFilter} onChange={(event) => setLevelFilter(event.target.value as LogLevel)} className="h-9 w-full sm:w-44">
+                  {LOG_LEVELS.map((level) => (
+                    <option key={level} value={level}>
+                      {level === "all" ? "Tümü" : level}
+                    </option>
+                  ))}
+                </Select>
+
+                <Input
+                  placeholder="Mağaza adı filtrele..."
+                  value={storeFilter}
+                  onChange={(event) => setStoreFilter(event.target.value)}
+                  className="h-9 w-full sm:w-56"
+                />
+
+                <Input
+                  placeholder="Olay filtrele..."
+                  value={eventFilter}
+                  onChange={(event) => setEventFilter(event.target.value)}
+                  className="h-9 w-full sm:w-56"
+                />
+
+                <Button onClick={() => void handleFilterLogs()} disabled={logsLoading} className="h-9 cursor-pointer">
+                  {logsLoading ? "Yükleniyor…" : "Filtrele"}
+                </Button>
+
+                <Button variant="secondary" className="h-9 cursor-pointer" onClick={handleResetLogs} disabled={logsLoading}>
+                  Temizle
+                </Button>
+              </div>
+
+              <DataTable columns={logColumns} data={logs} enableSearch={false} emptyMessage="Log bulunamadı." />
+
+              {logsHasMore ? (
+                <div className="flex justify-center pt-2">
+                  <Button
+                    variant="secondary"
+                    className="cursor-pointer"
+                    onClick={() => void fetchLogs(false)}
+                    disabled={logsLoading}
+                  >
+                    {logsLoading ? "Yükleniyor…" : "Daha Fazla Yükle"}
+                  </Button>
+                </div>
+              ) : null}
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
+
+      <Dialog open={Boolean(selectedLog)} onOpenChange={(open) => (!open ? setSelectedLog(null) : undefined)}>
+        <DialogContent className="max-w-3xl">
+          {selectedLog ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <LogLevelBadge level={selectedLog.level} />
+                  <code className="text-sm">{selectedLog.event}</code>
+                </DialogTitle>
+                <DialogDescription>
+                  {fmtDate(selectedLog.created_at)}
+                  {selectedLog.store_name ? ` · ${selectedLog.store_name}` : ""}
+                  {selectedLog.store_id ? ` (${selectedLog.store_id})` : ""}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                {selectedLog.message ? (
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Mesaj</p>
+                    <p className="text-sm text-slate-100">{selectedLog.message}</p>
+                  </div>
+                ) : null}
+
+                {selectedLog.user_id ? (
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">User ID</p>
+                    <code className="rounded bg-white/5 px-2 py-1 text-xs">{selectedLog.user_id}</code>
+                  </div>
+                ) : null}
+
+                {selectedLog.metadata ? (
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Metadata</p>
+                    <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-white/5 p-3 text-xs">
+                      {JSON.stringify(selectedLog.metadata, null, 2)}
+                    </pre>
+                  </div>
+                ) : null}
+              </div>
+
+              <DialogFooter className="sm:justify-start sm:space-x-0 sm:gap-2">
+                <Button
+                  variant="secondary"
+                  className="cursor-pointer"
+                  disabled={Boolean(logActionLoading)}
+                  onClick={() => void deleteLogAndOptionallyRequeue({ requeue: true })}
+                >
+                  {logActionLoading === "requeue" ? "İşleniyor…" : "Sil + Tekrar Kuyruğa Al"}
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="cursor-pointer"
+                  disabled={Boolean(logActionLoading)}
+                  onClick={() => void deleteLogAndOptionallyRequeue({ requeue: false })}
+                >
+                  {logActionLoading === "delete" ? "Siliniyor…" : "Sadece Logu Sil"}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
