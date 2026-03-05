@@ -159,7 +159,15 @@ const PLAN_LABELS: Record<string, string> = {
   pro: "Pro",
   turbo: "Turbo",
 };
+type EditablePlan = "standard" | "pro" | "turbo";
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
+const resolveEditablePlan = (value: string | null | undefined): EditablePlan => {
+  const normalized = (value ?? "").toLowerCase();
+  if (normalized === "pro" || normalized === "turbo") {
+    return normalized;
+  }
+  return "standard";
+};
 
 const asText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
@@ -402,6 +410,8 @@ export default function AdminStoresPage() {
   const [editStoreOpen, setEditStoreOpen] = useState(false);
   const [editingStore, setEditingStore] = useState<AutomationOverviewRow | null>(null);
   const [editStoreNameDraft, setEditStoreNameDraft] = useState("");
+  const [editStoreCurrencyDraft, setEditStoreCurrencyDraft] = useState<"USD" | "TRY">("USD");
+  const [editStorePlanDraft, setEditStorePlanDraft] = useState<EditablePlan>("standard");
   const [savingStoreEdit, setSavingStoreEdit] = useState(false);
   const [listingViewerOpen, setListingViewerOpen] = useState(false);
   const [listingViewerStore, setListingViewerStore] = useState<AutomationOverviewRow | null>(null);
@@ -720,8 +730,11 @@ export default function AdminStoresPage() {
   ]);
 
   const openEditStoreModal = useCallback((store: AutomationOverviewRow) => {
+    const resolvedPlan = resolveEditablePlan(store.plan);
     setEditingStore(store);
     setEditStoreNameDraft(store.storeName || "");
+    setEditStoreCurrencyDraft(store.storeCurrency === "TRY" ? "TRY" : "USD");
+    setEditStorePlanDraft(resolvedPlan);
     setEditStoreOpen(true);
     setError(null);
     setSuccessMessage(null);
@@ -738,6 +751,25 @@ export default function AdminStoresPage() {
       return;
     }
 
+    const currentStoreName = normalizeStoreNameInput(editingStore.storeName || "");
+    const currentCurrency = editingStore.storeCurrency === "TRY" ? "TRY" : "USD";
+    const currentPlan = resolveEditablePlan(editingStore.plan);
+    const hasSubscription = Boolean(editingStore.subscriptionId);
+    const noChanges =
+      normalizedStoreName === currentStoreName &&
+      editStoreCurrencyDraft === currentCurrency &&
+      (!hasSubscription || editStorePlanDraft === currentPlan);
+
+    if (noChanges) {
+      setSuccessMessage("Kaydedilecek bir değişiklik bulunamadı.");
+      setEditStoreOpen(false);
+      setEditingStore(null);
+      setEditStoreNameDraft("");
+      setEditStoreCurrencyDraft("USD");
+      setEditStorePlanDraft("standard");
+      return;
+    }
+
     setSavingStoreEdit(true);
     setError(null);
     setSuccessMessage(null);
@@ -751,6 +783,8 @@ export default function AdminStoresPage() {
         },
         body: JSON.stringify({
           store_name: normalizedStoreName,
+          store_currency: editStoreCurrencyDraft,
+          plan: editingStore.subscriptionId ? editStorePlanDraft : undefined,
         }),
       });
 
@@ -768,17 +802,22 @@ export default function AdminStoresPage() {
         throw new Error(payload.error || `Mağaza güncellenemedi (HTTP ${response.status}).`);
       }
 
-      setSuccessMessage(`${editingStore.storeName} mağazası ${normalizedStoreName} olarak güncellendi.`);
+      const planText = editingStore.subscriptionId ? `, plan ${PLAN_LABELS[editStorePlanDraft]}` : "";
+      setSuccessMessage(
+        `${editingStore.storeName} mağazası ${normalizedStoreName} olarak güncellendi (para birimi ${editStoreCurrencyDraft}${planText}).`
+      );
       setEditStoreOpen(false);
       setEditingStore(null);
       setEditStoreNameDraft("");
+      setEditStoreCurrencyDraft("USD");
+      setEditStorePlanDraft("standard");
       await loadOverview();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Mağaza güncellenemedi.");
     } finally {
       setSavingStoreEdit(false);
     }
-  }, [editStoreNameDraft, editingStore, loadOverview]);
+  }, [editStoreCurrencyDraft, editStoreNameDraft, editStorePlanDraft, editingStore, loadOverview]);
 
   const openListingViewer = useCallback(async (store: AutomationOverviewRow) => {
     setListingViewerStore(store);
@@ -1572,6 +1611,8 @@ export default function AdminStoresPage() {
           if (!open) {
             setEditingStore(null);
             setEditStoreNameDraft("");
+            setEditStoreCurrencyDraft("USD");
+            setEditStorePlanDraft("standard");
           }
         }}
       >
@@ -1580,23 +1621,65 @@ export default function AdminStoresPage() {
             <DialogTitle>Mağaza Düzenle</DialogTitle>
             <DialogDescription>
               {editingStore
-                ? `${editingStore.storeId} için mağaza adını güncelle`
+                ? `${editingStore.storeId} için mağaza adı, para birimi ve abonelik planını güncelle`
                 : "Düzenlenecek mağaza seçilmedi."}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-2">
-            <label className="text-xs font-black uppercase tracking-widest text-slate-400">Mağaza Adı</label>
-            <Input
-              value={editStoreNameDraft}
-              onChange={(event) => setEditStoreNameDraft(event.target.value)}
-              onBlur={() => setEditStoreNameDraft((prev) => normalizeStoreNameInput(prev))}
-              placeholder="Örn: OrmusWallClock"
-              disabled={!editingStore || savingStoreEdit}
-            />
-            <p className="text-xs text-slate-500">
-              Etsy linki girersen otomatik mağaza adı çıkarılır.
-            </p>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400">Mağaza Adı</label>
+              <Input
+                value={editStoreNameDraft}
+                onChange={(event) => setEditStoreNameDraft(event.target.value)}
+                onBlur={() => setEditStoreNameDraft((prev) => normalizeStoreNameInput(prev))}
+                placeholder="Örn: OrmusWallClock"
+                disabled={!editingStore || savingStoreEdit}
+              />
+              <p className="text-xs text-slate-500">Etsy linki girersen otomatik mağaza adı çıkarılır.</p>
+            </div>
+
+            <div className="space-y-2 border border-white/10 rounded-xl py-2 px-3 flex justify-between items-center w-full">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400">Mağaza Para Birimi</label>
+              <div className="inline-flex rounded-xl border border-white/10 bg-white/5 p-1">
+                <button
+                  type="button"
+                  onClick={() => setEditStoreCurrencyDraft("USD")}
+                  className={`min-w-[72px] rounded-lg px-3 py-1.5 text-xs font-black uppercase tracking-widest transition-all cursor-pointer ${
+                    editStoreCurrencyDraft === "USD" ? "bg-indigo-600 text-white" : "text-slate-300"
+                  }`}
+                  disabled={!editingStore || savingStoreEdit}
+                >
+                  $ Dolar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditStoreCurrencyDraft("TRY")}
+                  className={`min-w-[72px] rounded-lg px-3 py-1.5 text-xs font-black uppercase tracking-widest transition-all cursor-pointer ${
+                    editStoreCurrencyDraft === "TRY" ? "bg-indigo-600 text-white" : "text-slate-300"
+                  }`}
+                  disabled={!editingStore || savingStoreEdit}
+                >
+                  ₺ TL
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400">Abonelik Planı</label>
+              <Select
+                value={editStorePlanDraft}
+                onChange={(event) => setEditStorePlanDraft(event.target.value as EditablePlan)}
+                disabled={!editingStore?.subscriptionId || savingStoreEdit}
+              >
+                <option value="standard">{PLAN_LABELS.standard}</option>
+                <option value="pro">{PLAN_LABELS.pro}</option>
+                <option value="turbo">{PLAN_LABELS.turbo}</option>
+              </Select>
+              {!editingStore?.subscriptionId ? (
+                <p className="text-xs text-amber-300">Bu mağazada aktif subscription kaydı yok, plan değiştirilemez.</p>
+              ) : null}
+            </div>
           </div>
 
           <DialogFooter>
@@ -1607,6 +1690,8 @@ export default function AdminStoresPage() {
                 setEditStoreOpen(false);
                 setEditingStore(null);
                 setEditStoreNameDraft("");
+                setEditStoreCurrencyDraft("USD");
+                setEditStorePlanDraft("standard");
               }}
               disabled={savingStoreEdit}
             >
