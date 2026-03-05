@@ -34,6 +34,39 @@ const safeDeleteByUser = async (table: string, userId: string, userColumn = "use
   }
 };
 
+const findAuthUsersByEmail = async (email: string) => {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) {
+    return [];
+  }
+
+  const matches: Array<{ id: string; email: string | null }> = [];
+
+  for (let page = 1; page <= 50; page += 1) {
+    const listed = await supabaseAdmin.auth.admin.listUsers({
+      page,
+      perPage: 200,
+    });
+
+    if (listed.error) {
+      throw new Error(listed.error.message);
+    }
+
+    const users = listed.data?.users ?? [];
+    for (const user of users) {
+      if ((user.email ?? "").toLowerCase() === normalized) {
+        matches.push({ id: user.id, email: user.email ?? null });
+      }
+    }
+
+    if (users.length < 200) {
+      break;
+    }
+  }
+
+  return matches;
+};
+
 const requireAdmin = async (request: NextRequest) => {
   const token = getAccessTokenFromRequest(request);
   if (!token) return null;
@@ -93,6 +126,17 @@ export async function DELETE(
 
   if (resource === "users") {
     try {
+      const profileLookup = await supabaseAdmin
+        .from("profiles")
+        .select("email")
+        .eq("user_id", id)
+        .maybeSingle<{ email?: string | null }>();
+
+      const profileEmail =
+        !profileLookup.error && typeof profileLookup.data?.email === "string"
+          ? profileLookup.data.email.trim().toLowerCase()
+          : null;
+
       await safeDeleteByUser("orders", id);
       await safeDeleteByUser("scheduler_jobs", id);
       await safeDeleteByUser("payments", id);
@@ -107,6 +151,19 @@ export async function DELETE(
       const authDelete = await supabaseAdmin.auth.admin.deleteUser(id);
       if (authDelete.error && !isNotFoundError(authDelete.error)) {
         return NextResponse.json({ error: authDelete.error.message }, { status: 500 });
+      }
+
+      if (profileEmail) {
+        const relatedAuthUsers = await findAuthUsersByEmail(profileEmail);
+        for (const authUser of relatedAuthUsers) {
+          if (!authUser?.id) {
+            continue;
+          }
+          const cleanup = await supabaseAdmin.auth.admin.deleteUser(authUser.id);
+          if (cleanup.error && !isNotFoundError(cleanup.error)) {
+            return NextResponse.json({ error: cleanup.error.message }, { status: 500 });
+          }
+        }
       }
 
       return NextResponse.json({ success: true });

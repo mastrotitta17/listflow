@@ -321,6 +321,7 @@ export default function LegacyOnboardingPage() {
 
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [sessionResolveError, setSessionResolveError] = useState<string | null>(null);
   const [passwordSet, setPasswordSet] = useState(false);
   const [currentStep, setCurrentStep] = useState<LegacyOnboardingStep>(1);
@@ -338,7 +339,10 @@ export default function LegacyOnboardingPage() {
   const [storeCurrency, setStoreCurrency] = useState<StoreCurrency>("USD");
 
   const saveLegacyProfile = async (args: { fullName: string; phone: string; password?: string }) => {
-    const session = await resolveStableSession();
+    const session = await getFreshAuthorizedSession();
+    if (!session?.access_token) {
+      throw new Error("Onboarding oturumu doğrulanamadı. Lütfen magic linki yeniden açın.");
+    }
     const response = await fetch("/api/legacy-onboarding/profile", {
       method: "POST",
       headers: buildAuthHeaders(session?.access_token),
@@ -365,6 +369,32 @@ export default function LegacyOnboardingPage() {
     if (typeof payload.profile?.phone === "string") {
       setPhone(payload.profile.phone);
     }
+  };
+
+  const getFreshAuthorizedSession = async () => {
+    const current = activeSession ?? (await supabase.auth.getSession()).data.session ?? null;
+
+    if (current?.access_token) {
+      const refreshed = await supabase.auth.refreshSession();
+      if (!refreshed.error && refreshed.data.session?.access_token) {
+        await syncServerSession(refreshed.data.session);
+        setActiveSession(refreshed.data.session);
+        return refreshed.data.session;
+      }
+
+      await syncServerSession(current);
+      setActiveSession(current);
+      return current;
+    }
+
+    const resolved = await resolveStableSession();
+    if (resolved?.access_token) {
+      await syncServerSession(resolved);
+      setActiveSession(resolved);
+      return resolved;
+    }
+
+    return null;
   };
 
   const topCategories = useMemo(() => categories, [categories]);
@@ -477,6 +507,7 @@ export default function LegacyOnboardingPage() {
         let session = await verifyRelayMagicLink();
         if (session?.access_token) {
           await syncServerSession(session);
+          setActiveSession(session);
         }
 
         const urlAuthError = resolveAuthErrorMessageFromUrl();
@@ -489,6 +520,7 @@ export default function LegacyOnboardingPage() {
         }
 
         await syncServerSession(session);
+        setActiveSession(session ?? null);
 
         if (!active) {
           return;
@@ -523,6 +555,7 @@ export default function LegacyOnboardingPage() {
       }
 
       await syncServerSession(session);
+      setActiveSession(session ?? null);
 
       if (!session?.user) {
         await hydrateFromServerFallback();
@@ -566,10 +599,11 @@ export default function LegacyOnboardingPage() {
       });
 
       if (currentUser?.email) {
-        await ensureFreshSessionAfterPasswordSet({
+        const renewedSession = await ensureFreshSessionAfterPasswordSet({
           email: currentUser.email,
           password,
         });
+        setActiveSession(renewedSession);
       }
 
       setPasswordSet(true);
@@ -616,7 +650,7 @@ export default function LegacyOnboardingPage() {
 
     setCreatingStore(true);
     try {
-      const session = await resolveStableSession();
+      const session = await getFreshAuthorizedSession();
 
       if (!session?.access_token) {
         throw new Error("Oturum bulunamadı. Tekrar giriş yapın.");
