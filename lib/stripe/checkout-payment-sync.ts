@@ -103,6 +103,16 @@ const normalizeCurrencyCode = (value: string | null | undefined) => {
   return "USD";
 };
 
+const pickNonEmptyValue = (primary: string | null | undefined, fallback: string | null | undefined) => {
+  const first = (primary ?? "").trim();
+  if (first) {
+    return first;
+  }
+
+  const second = (fallback ?? "").trim();
+  return second || null;
+};
+
 const normalizeCheckoutPaymentStatus = (
   status: string | null | undefined,
   forcedStatus?: CheckoutPaymentState
@@ -559,7 +569,9 @@ const startShipmentForPaidOrder = async (args: { orderId: string; userId: string
 
   const storeName = storeContext?.store_name ?? storeContext?.name ?? null;
   const storePhone = storeContext?.phone ?? null;
-  const storeCurrency = normalizeCurrencyCode(storeContext?.store_currency ?? storeContext?.currency ?? null);
+  const storeCurrency = normalizeCurrencyCode(
+    pickNonEmptyValue(storeContext?.store_currency ?? null, storeContext?.currency ?? null)
+  );
 
   let shipment: ShipentegraShipmentDispatchResult;
   try {

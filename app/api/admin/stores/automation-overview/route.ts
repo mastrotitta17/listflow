@@ -114,6 +114,16 @@ const normalizeCurrency = (value: string | null | undefined): StoreCurrency => {
   return "USD";
 };
 
+const pickNonEmptyCurrency = (primary: string | null | undefined, fallback: string | null | undefined) => {
+  const first = (primary ?? "").trim();
+  if (first) {
+    return first;
+  }
+
+  const second = (fallback ?? "").trim();
+  return second || null;
+};
+
 const normalizeWebhookCurrency = (value: string | null | undefined): StoreCurrency | null => {
   const normalized = (value ?? "").trim().toUpperCase();
   if (!normalized) {
@@ -284,9 +294,10 @@ const loadStoreCurrencyMap = async (storeIds: string[]) => {
       }>;
 
       for (const row of rows) {
-        const rawCurrency =
-          (candidate.hasStoreCurrency ? row.store_currency ?? null : null) ??
-          (candidate.hasCurrency ? row.currency ?? null : null);
+        const rawCurrency = pickNonEmptyCurrency(
+          candidate.hasStoreCurrency ? row.store_currency ?? null : null,
+          candidate.hasCurrency ? row.currency ?? null : null
+        );
         if (!rawCurrency || !rawCurrency.trim()) {
           continue;
         }

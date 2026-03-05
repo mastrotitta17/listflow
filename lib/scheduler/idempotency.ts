@@ -1,10 +1,11 @@
 const PLAN_WINDOW_HOURS: Record<string, number> = {
-  turbo: 2,
-  pro: 4,
-  standard: 8,
+  turbo: 4,
+  pro: 6,
+  standard: 12,
+  starter: 12,
 };
 
-export const getPlanWindowHours = (plan: string) => PLAN_WINDOW_HOURS[(plan ?? "").toLowerCase()] ?? 8;
+export const getPlanWindowHours = (plan: string) => PLAN_WINDOW_HOURS[(plan ?? "").toLowerCase()] ?? 12;
 
 type CreateScheduledSlotIdempotencyKeyInput = {
   subscriptionId: string;

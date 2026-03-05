@@ -383,7 +383,7 @@ const callCronJobOrgApi = async <T>(args: {
 };
 
 const buildFixedPlanHours = (intervalHours: number) => {
-  const safeInterval = intervalHours >= 1 ? intervalHours : 8;
+  const safeInterval = intervalHours >= 1 ? intervalHours : 12;
   const hours: number[] = [];
 
   for (let hour = 0; hour < 24; hour += safeInterval) {
