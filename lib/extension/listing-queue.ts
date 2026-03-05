@@ -1324,7 +1324,9 @@ export const resetFailedListingForUser = async (args: {
   if (!belongs) return false;
 
   const status = normalizeStatus(listing.status ?? listing.listing_status);
-  if (status !== "failed") return false;
+  // "failed" ya da "processing" kabul et: reportJobToApi network hatası alırsa listing
+  // "processing" kalabilir; extension job hatası aldığına göre reset güvenlidir.
+  if (status !== "failed" && status !== "processing") return false;
 
   const nowIso = new Date().toISOString();
   const payload: RowRecord = {};
