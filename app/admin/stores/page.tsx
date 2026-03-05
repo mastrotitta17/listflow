@@ -512,7 +512,7 @@ export default function AdminStoresPage() {
           const defaultTarget =
             row.activeWebhookConfigId && eligibleWebhookIds.includes(row.activeWebhookConfigId)
               ? row.activeWebhookConfigId
-              : eligibleWebhookIds[0] ?? "";
+              : "";
 
           next[row.storeId] = hasSelectedStillValid ? selectedCurrent : defaultTarget;
         }

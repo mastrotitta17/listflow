@@ -1040,16 +1040,7 @@ export async function GET(request: NextRequest) {
       const storeCurrency = storeCurrencyById.get(store.id) ?? "USD";
       const hasStoreCurrency = storeCurrencyById.has(store.id);
       const storeProduct = store.product_id ? productsById.get(store.product_id) : null;
-      const hasStoreBoundProduct = Boolean(store.product_id);
-      const unboundWebhooks = webhooks.filter((webhook) => !webhook.product_id);
-      const productBoundWebhooks = webhooks.filter((webhook) => Boolean(webhook.product_id));
-      const exactProductWebhooks = hasStoreBoundProduct
-        ? productBoundWebhooks.filter((webhook) => webhook.product_id === store.product_id)
-        : [];
-      const eligibleProductScopedWebhooks = hasStoreBoundProduct
-        ? (exactProductWebhooks.length ? exactProductWebhooks : unboundWebhooks)
-        : webhooks;
-      const eligibleWebhooks = eligibleProductScopedWebhooks.filter((webhook) => {
+      const eligibleWebhooks = webhooks.filter((webhook) => {
         if (!hasStoreCurrency) {
           return true;
         }

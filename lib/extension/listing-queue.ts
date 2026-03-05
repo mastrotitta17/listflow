@@ -602,21 +602,6 @@ const loadStoreAliasesByUser = async (userId: string) => {
   return aliases;
 };
 
-const resolvePreferredStoreAliases = async (userId: string, preferredClientId: string) => {
-  const rows = await loadStoreAliasRowsByUser(userId);
-
-  for (const row of rows) {
-    const aliases = getAliasesFromStoreRow(row);
-    if (!aliases.includes(preferredClientId)) {
-      continue;
-    }
-
-    return new Set<string>(aliases);
-  }
-
-  return null;
-};
-
 const rowBelongsToUser = (
   row: RowRecord,
   args: {
@@ -654,15 +639,16 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
   let preferredAliases: Set<string> | null = null;
 
   if (preferredClientId) {
-    preferredAliases = await resolvePreferredStoreAliases(args.userId, preferredClientId);
-    // Store alias eşleşmesi bulunamazsa seçili client_id ile yine claim dene.
-    if (!preferredAliases) {
-      preferredAliases = new Set([preferredClientId]);
+    if (!allStoreAliases.has(preferredClientId)) {
+      return null;
     }
+
+    // Mağaza seçildiyse claim yalnızca seçili mağazanın exact client_id değeriyle yapılır.
+    preferredAliases = new Set([preferredClientId]);
   }
 
   const allowedClientIds = preferredAliases
-    ? new Set<string>([...allStoreAliases, ...preferredAliases])
+    ? new Set<string>([...allStoreAliases])
     : allStoreAliases;
   const targetedRows = preferredClientId ? await loadRowsForPreferredClientId(preferredClientId) : [];
   const rows = targetedRows.length > 0 ? targetedRows : await loadAllListingRows();
