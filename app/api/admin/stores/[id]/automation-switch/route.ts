@@ -658,6 +658,30 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       );
     }
 
+    if (store.product_id) {
+      if (!targetWebhook.product_id) {
+        return NextResponse.json(
+          {
+            code: "WEBHOOK_PRODUCT_REQUIRED",
+            message: `Mağaza ürün bağı (${store.product_id}) var. Seçilen webhook ürün bağı içermiyor (${targetWebhook.id}).`,
+            error: "Seçilen webhook bu mağaza için ürün bağı taşımıyor.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (targetWebhook.product_id !== store.product_id) {
+        return NextResponse.json(
+          {
+            code: "WEBHOOK_PRODUCT_MISMATCH",
+            message: `Mağaza ürün bağı ${store.product_id}. Seçilen webhook ürün bağı ${targetWebhook.product_id}.`,
+            error: "Seçilen webhook mağazanın ürün/kategori bağıyla eşleşmiyor.",
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     const effectiveProductId = targetWebhook.product_id ?? store.product_id ?? null;
 
     const idempotencyKey = createManualSwitchIdempotencyKey(store.id, targetWebhook.id);

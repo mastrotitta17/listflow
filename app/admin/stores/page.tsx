@@ -274,11 +274,6 @@ const formatErrorMessage = (value: string | null | undefined) => {
   return value;
 };
 
-const normalizeCurrency = (value: string | null | undefined) => {
-  const normalized = (value ?? "").trim().toUpperCase();
-  return normalized === "TRY" || normalized === "TL" || normalized === "₺" ? "TRY" : "USD";
-};
-
 export default function AdminStoresPage() {
   const [rows, setRows] = useState<AutomationOverviewRow[]>([]);
   const [webhookOptions, setWebhookOptions] = useState<WebhookOption[]>([]);
@@ -405,20 +400,9 @@ export default function AdminStoresPage() {
         const next = { ...prev };
 
         for (const row of nextRows) {
-          const storeCurrency = normalizeCurrency(row.storeCurrency);
-          const eligibleOptions = nextWebhookOptions.filter((option) =>
-            (row.eligibleWebhookConfigIds ?? []).includes(option.id)
-          );
-          const scopedOptions = eligibleOptions.filter((option) => {
-            if (row.storeCurrencyKnown === false) {
-              return true;
-            }
-            if (!option.currency) {
-              return true;
-            }
-            return normalizeCurrency(option.currency) === storeCurrency;
-          });
-          const eligibleWebhookIds = scopedOptions.map((option) => option.id);
+          const eligibleWebhookIds = nextWebhookOptions
+            .filter((option) => (row.eligibleWebhookConfigIds ?? []).includes(option.id))
+            .map((option) => option.id);
           const selectedCurrent = next[row.storeId];
           const hasSelectedStillValid = eligibleWebhookIds.includes(selectedCurrent);
           const defaultTarget =
@@ -693,12 +677,20 @@ export default function AdminStoresPage() {
   }, [editStoreNameDraft, editingStore, loadOverview]);
 
   const runSwitch = useCallback(
-    async (store: AutomationOverviewRow) => {
-      const rowWithSelection = store as AutomationOverviewRow & { selectedWebhookConfigId?: string };
+    async (store: TableRow) => {
+      const rowWithSelection = store as TableRow;
       const targetWebhookConfigId = rowWithSelection.selectedWebhookConfigId ?? selectedWebhookByStore[store.storeId];
 
       if (!targetWebhookConfigId) {
         setError("Önce hedef webhook seçmelisin.");
+        return;
+      }
+
+      const isTargetVisibleForStore = rowWithSelection.availableWebhookOptions.some(
+        (option) => option.id === targetWebhookConfigId
+      );
+      if (!isTargetVisibleForStore) {
+        setError("Seçilen webhook bu mağaza için uygun değil. Lütfen listeden tekrar seç.");
         return;
       }
 
@@ -749,27 +741,7 @@ export default function AdminStoresPage() {
   const tableRows = useMemo<TableRow[]>(() => {
     return rows.map((row) => {
       const eligibleIds = row.eligibleWebhookConfigIds ?? [];
-      const strictOptions = webhookOptions.filter((option) =>
-        eligibleIds.includes(option.id)
-      );
-      const storeCurrency = normalizeCurrency(row.storeCurrency);
-      const matchesStoreCurrency = (option: WebhookOption) => {
-        if (row.storeCurrencyKnown === false) {
-          return true;
-        }
-        if (!option.currency) {
-          return true;
-        }
-        return normalizeCurrency(option.currency) === storeCurrency;
-      };
-      const strictCurrencyOptions = strictOptions.filter(matchesStoreCurrency);
-      const currencyWideOptions = webhookOptions.filter(matchesStoreCurrency);
-      const fallbackOptions = [
-        ...strictCurrencyOptions,
-        ...currencyWideOptions.filter(
-          (option) => !strictCurrencyOptions.some((strictOption) => strictOption.id === option.id)
-        ),
-      ];
+      const fallbackOptions = webhookOptions.filter((option) => eligibleIds.includes(option.id));
 
       const selectedCurrent = selectedWebhookByStore[row.storeId] ?? "";
       const selectedWebhookConfigId = fallbackOptions.some((option) => option.id === selectedCurrent)

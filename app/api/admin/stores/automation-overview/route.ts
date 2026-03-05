@@ -1046,8 +1046,8 @@ export async function GET(request: NextRequest) {
       const exactProductWebhooks = hasStoreBoundProduct
         ? productBoundWebhooks.filter((webhook) => webhook.product_id === store.product_id)
         : [];
-      const eligibleProductScopedWebhooks = exactProductWebhooks.length
-        ? [...exactProductWebhooks, ...unboundWebhooks]
+      const eligibleProductScopedWebhooks = hasStoreBoundProduct
+        ? (exactProductWebhooks.length ? exactProductWebhooks : unboundWebhooks)
         : webhooks;
       const eligibleWebhooks = eligibleProductScopedWebhooks.filter((webhook) => {
         if (!hasStoreCurrency) {
