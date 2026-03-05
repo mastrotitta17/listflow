@@ -131,7 +131,7 @@ const verifyRelayMagicLink = async () => {
       }
     }
 
-    const tokenHash = target.searchParams.get("token_hash");
+    const tokenHash = target.searchParams.get("token_hash") ?? target.searchParams.get("token");
     const tokenType = target.searchParams.get("type");
     if (tokenHash) {
       const verify = await supabase.auth.verifyOtp({
