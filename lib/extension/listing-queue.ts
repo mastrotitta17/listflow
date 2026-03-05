@@ -776,6 +776,8 @@ type ReportArgs = {
   userId: string;
   listingId?: string | null;
   listingKey?: string | null;
+  clientId?: string | null;
+  listingPayload?: RowRecord | null;
   status: "processing" | "completed" | "failed";
   error?: string | null;
   etsyListingId?: string | null;
@@ -815,6 +817,189 @@ const resolveIdentifierFromArgs = (args: ReportArgs): ListingIdentifier | null =
   return null;
 };
 
+const resolveIdentifierCandidatesFromArgs = (args: ReportArgs): ListingIdentifier[] => {
+  const candidates: ListingIdentifier[] = [];
+  const seen = new Set<string>();
+
+  const push = (candidate: ListingIdentifier | null) => {
+    if (!candidate) return;
+    const key = `${candidate.column}:${candidate.value}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(candidate);
+  };
+
+  const listingId = normalizeString(args.listingId);
+  const listingKey = normalizeString(args.listingKey);
+
+  if (listingId) {
+    push({ column: "id", value: listingId });
+  }
+  if (listingKey) {
+    push({ column: "key", value: listingKey });
+  }
+
+  // Some clients may accidentally post listing_key inside listing_id.
+  if (listingId && !listingKey) {
+    push({ column: "key", value: listingId });
+  }
+
+  return candidates;
+};
+
+const loadListingByEtsyListingId = async (etsyListingId: string) => {
+  const safeId = normalizeString(etsyListingId);
+  if (!safeId) {
+    return null;
+  }
+
+  const query = await supabaseAdmin.from("listing").select("*").eq("etsy_listing_id", safeId).maybeSingle<RowRecord>();
+  if (query.error) {
+    if (isMissingColumnError(query.error, "etsy_listing_id") || isMissingTableError(query.error)) {
+      return null;
+    }
+    throw new Error(query.error.message || "listing etsy_listing_id lookup failed");
+  }
+  return query.data ?? null;
+};
+
+const toRecord = (value: unknown): RowRecord | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as RowRecord;
+};
+
+const buildFallbackListingInsertPayloadFromReport = (args: ReportArgs) => {
+  const nowIso = new Date().toISOString();
+  const source = toRecord(args.listingPayload) ?? {};
+  const generatedFallbackId =
+    typeof crypto?.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `lf_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+  const listingIdFromPayload = normalizeString(source.listing_id ?? source.id);
+  const listingKeyFromPayload = normalizeString(source.listing_key ?? source.key);
+  const listingKeyFromArgs = normalizeString(args.listingKey);
+  const listingIdFromArgs = normalizeString(args.listingId);
+
+  const clientId =
+    normalizeString(args.clientId) ||
+    normalizeString(source.client_id ?? source.clientId ?? source.store_id ?? source.storeId) ||
+    null;
+
+  const tags = dedupeStrings(
+    parseTagList(readFirstValue(source, ["tags", "tag_list", "tag_values", "keywords"]))
+  ).slice(0, 13);
+
+  const payload: RowRecord = {
+    id: listingIdFromPayload || generatedFallbackId,
+    key: listingKeyFromPayload || listingKeyFromArgs || undefined,
+    client_id: clientId || undefined,
+    store_id: clientId || undefined,
+    user_id: args.userId || undefined,
+    owner_user_id: args.userId || undefined,
+    title: readFirstString(source, ["title", "name", "listing_title"]) || undefined,
+    description: readFirstString(source, ["description", "catalog_description", "listing_description"]) || undefined,
+    category: readFirstString(source, ["category", "category_name"]) || undefined,
+    tags,
+    price: toFiniteNumberOr(readFirstValue(source, ["price", "sale_price", "amount_usd"]), 0),
+    quantity: toFiniteNumberOr(readFirstValue(source, ["quantity", "qty", "stock"]), 1),
+    image_1_url: readFirstString(source, ["image_1_url", "image_url_1"]) || undefined,
+    image_2_url: readFirstString(source, ["image_2_url", "image_url_2"]) || undefined,
+    image_3_url: readFirstString(source, ["image_3_url", "image_url_3"]) || undefined,
+    image_1_base64: readFirstString(source, ["image_1_base64"]) || undefined,
+    image_2_base64: readFirstString(source, ["image_2_base64"]) || undefined,
+    image_3_base64: readFirstString(source, ["image_3_base64"]) || undefined,
+    variations: Array.isArray(source.variations) ? source.variations : undefined,
+    status: args.status,
+    listing_status: args.status,
+    updated_at: nowIso,
+    created_at: nowIso,
+    processed_at: nowIso,
+    completed_at: args.status === "completed" ? nowIso : undefined,
+    claimed_at: null,
+    claimed_by_user_id: null,
+    claimed_by: null,
+    last_error: args.error ?? null,
+    error: args.error ?? null,
+    etsy_listing_id: normalizeString(args.etsyListingId) || undefined,
+    etsy_listing_url: normalizeString(args.etsyListingUrl) || undefined,
+    etsy_store_link: normalizeString(args.etsyListingUrl) || undefined,
+  };
+
+  // If listing_id from args looks like Etsy id and there is no explicit payload id, keep it only as Etsy proof.
+  if (!listingIdFromPayload && listingIdFromArgs && /^\d{5,}$/.test(listingIdFromArgs)) {
+    if (!payload.etsy_listing_id) {
+      payload.etsy_listing_id = listingIdFromArgs;
+    }
+  } else if (!listingIdFromPayload && listingIdFromArgs) {
+    payload.id = listingIdFromArgs;
+  }
+
+  if (
+    source.shipping_template &&
+    typeof source.shipping_template === "object" &&
+    !Array.isArray(source.shipping_template)
+  ) {
+    payload.shipping_template = source.shipping_template;
+  }
+
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined && value !== "")
+  ) as RowRecord;
+};
+
+const upsertMissingListingFromReport = async (args: ReportArgs) => {
+  let insertPayload = buildFallbackListingInsertPayloadFromReport(args);
+  if (Object.keys(insertPayload).length === 0) {
+    return null;
+  }
+
+  const candidates = resolveIdentifierCandidatesFromArgs(args);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const result = await supabaseAdmin.from("listing").insert(insertPayload).select("*").maybeSingle<RowRecord>();
+    if (!result.error) {
+      const insertedRow = result.data ?? null;
+      if (!insertedRow) {
+        break;
+      }
+      const identifier = inferIdentifier(insertedRow);
+      return identifier ? { row: insertedRow, identifier } : null;
+    }
+
+    const errorMessage = result.error.message || "listing insert failed";
+    const missingColumn = extractMissingColumnName(errorMessage);
+    if (missingColumn && Object.prototype.hasOwnProperty.call(insertPayload, missingColumn)) {
+      const { [missingColumn]: _removed, ...rest } = insertPayload;
+      insertPayload = rest;
+      continue;
+    }
+
+    if (
+      /invalid input syntax for type uuid/i.test(errorMessage) &&
+      Object.prototype.hasOwnProperty.call(insertPayload, "id")
+    ) {
+      const { id: _removeId, ...rest } = insertPayload;
+      insertPayload = rest;
+      continue;
+    }
+
+    if (result.error.code === "23505") {
+      for (const candidate of candidates) {
+        const concurrentRow = await loadListingByIdentifier(candidate);
+        if (concurrentRow) {
+          return { row: concurrentRow, identifier: candidate };
+        }
+      }
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  return null;
+};
+
 const hasCompletionProof = (args: ReportArgs) => {
   const publishProof = normalizeString(args.publishProof);
   if (publishProof) {
@@ -835,21 +1020,55 @@ const hasCompletionProof = (args: ReportArgs) => {
 };
 
 export const applyListingJobReport = async (args: ReportArgs) => {
-  const identifier = resolveIdentifierFromArgs(args);
-  if (!identifier) {
+  const identifierCandidates = resolveIdentifierCandidatesFromArgs(args);
+  if (identifierCandidates.length === 0) {
     return { ok: false, reason: "identifier_missing" as const };
   }
 
-  const row = await loadListingByIdentifier(identifier);
+  let resolvedIdentifier: ListingIdentifier | null = null;
+  let row: RowRecord | null = null;
+
+  for (const candidate of identifierCandidates) {
+    const found = await loadListingByIdentifier(candidate);
+    if (found) {
+      resolvedIdentifier = candidate;
+      row = found;
+      break;
+    }
+  }
+
   if (!row) {
+    const etsyListingId = normalizeString(args.etsyListingId || args.listingId);
+    if (etsyListingId) {
+      const byEtsyId = await loadListingByEtsyListingId(etsyListingId);
+      if (byEtsyId) {
+        row = byEtsyId;
+        resolvedIdentifier = inferIdentifier(byEtsyId);
+      }
+    }
+  }
+
+  let fallbackInserted = false;
+  if (!row || !resolvedIdentifier) {
+    const inserted = await upsertMissingListingFromReport(args);
+    if (inserted) {
+      row = inserted.row;
+      resolvedIdentifier = inserted.identifier;
+      fallbackInserted = true;
+    }
+  }
+
+  if (!row || !resolvedIdentifier) {
     return { ok: false, reason: "listing_not_found" as const };
   }
 
   const allowedClientIds = await loadStoreAliasesByUser(args.userId);
-  const belongs = rowBelongsToUser(row, {
-    userId: args.userId,
-    allowedClientIds,
-  });
+  const belongs = fallbackInserted
+    ? true
+    : rowBelongsToUser(row, {
+        userId: args.userId,
+        allowedClientIds,
+      });
 
   if (!belongs) {
     return { ok: false, reason: "not_owner" as const };
@@ -870,7 +1089,7 @@ export const applyListingJobReport = async (args: ReportArgs) => {
     etsyListingUrl: normalizeString(args.etsyListingUrl) || null,
   });
 
-  await updateRowByIdentifier(identifier, payload);
+  await updateRowByIdentifier(resolvedIdentifier, payload);
   return { ok: true as const };
 };
 
