@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { notFoundResponse, requireAdminRequest } from "@/lib/auth/admin-request";
 import { normalizePhoneForStorage } from "@/lib/phone";
+import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { getStripeClientForMode } from "@/lib/stripe/client";
 import { resolveCheckoutPriceId } from "@/lib/stripe/plans";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -478,7 +479,7 @@ export async function POST(request: NextRequest) {
     const currency = asStoreCurrency(body.currency);
     const grantPlan = asBillingPlan(body.grantPlan);
     const fallbackPrefix = asTrimmedString(body.fallbackStoreNamePrefix) || "Mağaza";
-    const requestedStoreName = asTrimmedString(body.storeName);
+    const requestedStoreName = normalizeStoreNameInput(asTrimmedString(body.storeName));
     const existingCount = requestedStoreName ? 0 : await countUserStores(userId);
     const storeName = requestedStoreName || `${fallbackPrefix} ${existingCount + 1}`;
     const storeId = randomUUID();

@@ -26,6 +26,7 @@ import { buildOAuthRedirectTo } from "@/lib/auth/oauth-client";
 import { useI18n } from "@/lib/i18n/provider";
 import { normalizePhoneForStorage, sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
+import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { supabase } from "@/lib/supabaseClient";
 import type { SupportedLocale } from "@/lib/i18n/config";
 
@@ -914,7 +915,7 @@ const PricingPage = () => {
         null;
       const subCategoryId = (resolvedSubCategory?.id && resolvedSubCategory.id.trim()) || null;
 
-      const normalizedStoreName = storeName.trim();
+      const normalizedStoreName = normalizeStoreNameInput(storeName);
       const response = await fetch("/api/onboarding/store", {
         method: "POST",
         headers: {
@@ -1461,6 +1462,7 @@ const PricingPage = () => {
                             type="text"
                             value={storeName}
                             onChange={(event) => setStoreName(event.target.value)}
+                            onBlur={() => setStoreName((prev) => normalizeStoreNameInput(prev))}
                             placeholder={copy.storePlaceholderName}
                             className="w-full rounded-2xl border border-white/10 bg-white/5 pl-12 pr-4 py-3.5 text-white outline-none focus:ring-2 focus:ring-indigo-500"
                           />

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Copy, Loader2, Plus } from "lucide-react";
+import { Check, Copy, Loader2, Pencil, Plus } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sanitizePhoneInput } from "@/lib/phone";
+import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { toast } from "sonner";
 
 type LastTrigger = {
@@ -304,6 +305,10 @@ export default function AdminStoresPage() {
   const [storeCurrency, setStoreCurrency] = useState<"USD" | "TRY">("USD");
   const [grantPlanDraft, setGrantPlanDraft] = useState<"none" | "starter" | "pro" | "turbo">("none");
   const [creatingStore, setCreatingStore] = useState(false);
+  const [editStoreOpen, setEditStoreOpen] = useState(false);
+  const [editingStore, setEditingStore] = useState<AutomationOverviewRow | null>(null);
+  const [editStoreNameDraft, setEditStoreNameDraft] = useState("");
+  const [savingStoreEdit, setSavingStoreEdit] = useState(false);
 
   const webhookMap = useMemo(() => new Map(webhookOptions.map((item) => [item.id, item])), [webhookOptions]);
   const selectedParentCategory = useMemo(
@@ -560,6 +565,7 @@ export default function AdminStoresPage() {
       return;
     }
 
+    const normalizedStoreName = normalizeStoreNameInput(storeNameDraft);
     const normalizedPhone = storePhoneDraft.trim();
 
     const categoryName = resolvedSubCategory?.name || selectedParentCategory?.name || "Genel";
@@ -579,7 +585,7 @@ export default function AdminStoresPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: selectedUser.user_id,
-          storeName: storeNameDraft.trim() || null,
+          storeName: normalizedStoreName || null,
           phone: normalizedPhone || null,
           category: categoryName,
           topCategoryId,
@@ -624,6 +630,67 @@ export default function AdminStoresPage() {
     storeNameDraft,
     storePhoneDraft,
   ]);
+
+  const openEditStoreModal = useCallback((store: AutomationOverviewRow) => {
+    setEditingStore(store);
+    setEditStoreNameDraft(store.storeName || "");
+    setEditStoreOpen(true);
+    setError(null);
+    setSuccessMessage(null);
+  }, []);
+
+  const handleSaveStoreEdit = useCallback(async () => {
+    if (!editingStore) {
+      return;
+    }
+
+    const normalizedStoreName = normalizeStoreNameInput(editStoreNameDraft);
+    if (!normalizedStoreName) {
+      setError("Mağaza adı boş olamaz.");
+      return;
+    }
+
+    setSavingStoreEdit(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const encodedStoreId = encodeURIComponent(editingStore.storeId);
+      const response = await fetch(`/api/admin/stores/${encodedStoreId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          store_name: normalizedStoreName,
+        }),
+      });
+
+      const rawBody = await response.text();
+      let payload: { error?: string } = {};
+      if (rawBody.trim()) {
+        try {
+          payload = JSON.parse(rawBody) as { error?: string };
+        } catch {
+          payload = { error: rawBody };
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(payload.error || `Mağaza güncellenemedi (HTTP ${response.status}).`);
+      }
+
+      setSuccessMessage(`${editingStore.storeName} mağazası ${normalizedStoreName} olarak güncellendi.`);
+      setEditStoreOpen(false);
+      setEditingStore(null);
+      setEditStoreNameDraft("");
+      await loadOverview();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Mağaza güncellenemedi.");
+    } finally {
+      setSavingStoreEdit(false);
+    }
+  }, [editStoreNameDraft, editingStore, loadOverview]);
 
   const runSwitch = useCallback(
     async (store: AutomationOverviewRow) => {
@@ -894,6 +961,15 @@ export default function AdminStoresPage() {
                   ? "Geçiriliyor..."
                   : `${selectedWebhook?.name || "Webhook"}'a Geçir`}
               </Button>
+              <Button
+                variant="outline"
+                className="cursor-pointer w-full"
+                onClick={() => openEditStoreModal(item)}
+                disabled={savingStoreEdit}
+              >
+                <Pencil className="mr-2 h-3.5 w-3.5" />
+                Mağazayı Düzenle
+              </Button>
               {!item.selectedWebhookConfigId ? (
                 <p className="text-xs text-amber-300">
                   {item.storeCurrency} para birimi için uygun webhook bulunamadı.
@@ -906,10 +982,12 @@ export default function AdminStoresPage() {
       },
     ],
     [
+      openEditStoreModal,
       runSwitch,
       switchingStoreId,
       copiedStoreId,
       handleCopyStoreId,
+      savingStoreEdit,
     ]
   );
 
@@ -1091,6 +1169,7 @@ export default function AdminStoresPage() {
                 <Input
                   value={storeNameDraft}
                   onChange={(event) => setStoreNameDraft(event.target.value)}
+                  onBlur={() => setStoreNameDraft((prev) => normalizeStoreNameInput(prev))}
                   placeholder="Örn: Elif Design Store"
                 />
               </div>
@@ -1217,6 +1296,69 @@ export default function AdminStoresPage() {
             >
               {creatingStore ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Mağaza Ekle
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editStoreOpen}
+        onOpenChange={(open) => {
+          if (!open && savingStoreEdit) {
+            return;
+          }
+
+          setEditStoreOpen(open);
+          if (!open) {
+            setEditingStore(null);
+            setEditStoreNameDraft("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Mağaza Düzenle</DialogTitle>
+            <DialogDescription>
+              {editingStore
+                ? `${editingStore.storeId} için mağaza adını güncelle`
+                : "Düzenlenecek mağaza seçilmedi."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <label className="text-xs font-black uppercase tracking-widest text-slate-400">Mağaza Adı</label>
+            <Input
+              value={editStoreNameDraft}
+              onChange={(event) => setEditStoreNameDraft(event.target.value)}
+              onBlur={() => setEditStoreNameDraft((prev) => normalizeStoreNameInput(prev))}
+              placeholder="Örn: OrmusWallClock"
+              disabled={!editingStore || savingStoreEdit}
+            />
+            <p className="text-xs text-slate-500">
+              Etsy linki girersen otomatik mağaza adı çıkarılır.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="cursor-pointer"
+              onClick={() => {
+                setEditStoreOpen(false);
+                setEditingStore(null);
+                setEditStoreNameDraft("");
+              }}
+              disabled={savingStoreEdit}
+            >
+              Vazgeç
+            </Button>
+            <Button
+              className="cursor-pointer"
+              onClick={() => void handleSaveStoreEdit()}
+              disabled={!editingStore || savingStoreEdit}
+            >
+              {savingStoreEdit ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Kaydet
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -105,8 +105,6 @@ const fetchSheetRows = async (): Promise<SheetRow[]> => {
 // ---------------------------------------------------------------------------
 // Supabase helpers
 // ---------------------------------------------------------------------------
-const SHEET_DONE_STATUSES = new Set(["completed", "done", "published"]);
-
 // Returns set of sheet_row_ids that should be excluded (completed OR recently processing)
 const loadExcludedSheetIds = async (clientId: string): Promise<Set<string>> => {
   const { data } = await supabaseAdmin
@@ -147,6 +145,9 @@ const claimSheetRow = async (clientId: string, sheetRowId: string) => {
     { onConflict: "client_id,sheet_row_id" }
   );
 };
+
+// Sheet rows that the extension should treat as eligible to pick up
+const SHEET_PENDING_STATUSES = new Set(["", "pending"]);
 
 // Also insert into the listing table so report-job can find it
 const syncRowToListingTable = async (row: SheetRow, clientId: string) => {
@@ -228,9 +229,9 @@ export const claimNextGuestSheetListing = async (clientId: string) => {
     const rowId = row["id"];
     if (!rowId) return false;
     if (excludedIds.has(rowId)) return false;
-    // Skip rows marked as done in the sheet itself
+    // Only pick up rows that are explicitly pending (or have no status set)
     const sheetStatus = (row["status"] || "").toLowerCase();
-    if (SHEET_DONE_STATUSES.has(sheetStatus)) return false;
+    if (!SHEET_PENDING_STATUSES.has(sheetStatus)) return false;
     return true;
   });
 

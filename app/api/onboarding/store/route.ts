@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { normalizePhoneForStorage } from "@/lib/phone";
+import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { resolveCheckoutPriceId } from "@/lib/stripe/plans";
 import { getActiveStripeMode, getStripeClientForMode, resolveStripeMode, type StripeMode } from "@/lib/stripe/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -512,7 +513,7 @@ export async function POST(request: NextRequest) {
     const subCategoryId = asTrimmedString(body.subCategoryId) || null;
     const currency = asStoreCurrency(body.currency);
     const fallbackPrefix = asTrimmedString(body.fallbackStoreNamePrefix) || "Magazam";
-    const requestedStoreName = asTrimmedString(body.storeName);
+    const requestedStoreName = normalizeStoreNameInput(asTrimmedString(body.storeName));
     const existingCount = requestedStoreName ? 0 : await countUserStores(user.id);
     const storeName = requestedStoreName || `${fallbackPrefix} ${existingCount + 1}`;
     const storeId = randomUUID();

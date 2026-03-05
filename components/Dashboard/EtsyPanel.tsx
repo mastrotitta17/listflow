@@ -19,6 +19,7 @@ import {
 import { useI18n } from "@/lib/i18n/provider";
 import { normalizePhoneForStorage, sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
+import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { Select } from "@/components/ui/select";
 import type { Shop } from "@/types";
 import { toast } from "sonner";
@@ -415,11 +416,12 @@ const EtsyPanel: React.FC = () => {
         (selectedParentCategory?.id && selectedParentCategory.id.trim()) ||
         null;
       const subCategoryId = (resolvedSubCategory?.id && resolvedSubCategory.id.trim()) || null;
+      const normalizedStoreName = normalizeStoreNameInput(shopName);
       const response = await fetch("/api/onboarding/store", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          storeName: shopName.trim() || null,
+          storeName: normalizedStoreName || null,
           phone: normalizedPhone || null,
           category: categoryName,
           topCategoryId,
@@ -1148,6 +1150,7 @@ const EtsyPanel: React.FC = () => {
                       required
                       value={shopName}
                       onChange={(event) => setShopName(event.target.value)}
+                      onBlur={() => setShopName((prev) => normalizeStoreNameInput(prev))}
                       placeholder="Örn: WoodDesignTR"
                       className="w-full px-5 py-4 rounded-2xl bg-white/5 border border-white/10 text-white outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium"
                     />

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccessTokenFromRequest, getProfileByUserId, getUserFromAccessToken, isAdminRole } from "@/lib/auth/admin";
 import { isAdminResource, ADMIN_RESOURCE_MAP } from "@/lib/admin/resources";
+import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 const notFoundResponse = () => NextResponse.json({ error: "Not Found" }, { status: 404 });
@@ -92,6 +93,9 @@ export async function PATCH(
 
   const { table, idColumn } = ADMIN_RESOURCE_MAP[resource];
   const body = (await request.json()) as Record<string, unknown>;
+  if (resource === "stores" && typeof body.store_name === "string") {
+    body.store_name = normalizeStoreNameInput(body.store_name);
+  }
 
   const { data, error } = await supabaseAdmin
     .from(table)
