@@ -25,7 +25,6 @@ const NAV_ITEMS = [
   { href: "/admin/subscriptions", label: "Abonelikler" },
   { href: "/admin/webhooks", label: "Webhook Console" },
   { href: "/admin/stripe", label: "Stripe" },
-  { href: "/admin/extension-logs", label: "Eklenti Logları" },
 ];
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

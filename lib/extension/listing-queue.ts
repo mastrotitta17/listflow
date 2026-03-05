@@ -1308,6 +1308,39 @@ export const syncGuestListingPayload = async (args: GuestSyncArgs) => {
   return { ok: false as const, reason: "insert_payload_exhausted" as const };
 };
 
+export const resetFailedListingForUser = async (args: {
+  userId: string;
+  listingId: string;
+}): Promise<boolean> => {
+  const listingId = normalizeString(args.listingId);
+  if (!listingId || !args.userId) return false;
+
+  const identifier: ListingIdentifier = { column: "id", value: listingId };
+  const listing = await loadListingByIdentifier(identifier);
+  if (!listing) return false;
+
+  const allStoreAliases = await loadStoreAliasesByUser(args.userId);
+  const belongs = rowBelongsToUser(listing, { userId: args.userId, allowedClientIds: allStoreAliases });
+  if (!belongs) return false;
+
+  const status = normalizeStatus(listing.status ?? listing.listing_status);
+  if (status !== "failed") return false;
+
+  const nowIso = new Date().toISOString();
+  const payload: RowRecord = {};
+  const statusField = inferStatusFieldName(listing);
+  if (statusField) payload[statusField] = "pending";
+  addIfPresent(listing, "updated_at", nowIso, payload);
+  addIfPresent(listing, "claimed_at", null, payload);
+  addIfPresent(listing, "claimed_by_user_id", null, payload);
+  addIfPresent(listing, "claimed_by", null, payload);
+  addIfPresent(listing, "error", null, payload);
+  addIfPresent(listing, "last_error", null, payload);
+
+  await updateRowByIdentifier(identifier, payload);
+  return true;
+};
+
 export const applyGuestListingJobReport = async (args: GuestReportArgs) => {
   const clientId = normalizeString(args.clientId);
   if (!clientId) {
