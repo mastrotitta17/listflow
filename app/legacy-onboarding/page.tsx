@@ -259,14 +259,11 @@ const resolveStableSession = async () => {
 };
 
 const ensureFreshSessionAfterPasswordSet = async (args: { email: string; password: string }): Promise<Session | null> => {
-  // Try refresh first (may fail if password change invalidated the session)
-  const refreshed = await supabase.auth.refreshSession();
-  if (!refreshed.error && refreshed.data.session?.access_token) {
-    await syncServerSession(refreshed.data.session);
-    return refreshed.data.session;
-  }
-
-  // Sign in with the new password — use trimmed version to match server-side storage
+  // Do NOT call refreshSession() here — the admin password update revokes the
+  // refresh token, which causes the Supabase SDK to fire a SIGNED_OUT event.
+  // That event's handler runs hydrateFromServerFallback() asynchronously and
+  // resets currentStep back to 1, racing with handleSetPassword's setCurrentStep(2).
+  // Sign in directly with the new password to get a clean session instead.
   const relogin = await supabase.auth.signInWithPassword({
     email: args.email,
     password: args.password.trim(),
@@ -277,8 +274,9 @@ const ensureFreshSessionAfterPasswordSet = async (args: { email: string; passwor
     return relogin.data.session;
   }
 
-  // Both failed — fall back to whatever session the client still has.
-  // The access token may still be valid even though the refresh token was revoked.
+  // signInWithPassword failed — fall back to the existing client session.
+  // The access token from verifyOtp remains valid (1-hour TTL) even after
+  // the refresh token is revoked, so server API calls will still succeed.
   const fallback = (await supabase.auth.getSession()).data.session ?? null;
   return fallback;
 };
@@ -378,13 +376,12 @@ export default function LegacyOnboardingPage() {
     const current = activeSession ?? (await supabase.auth.getSession()).data.session ?? null;
 
     if (current?.access_token) {
-      const refreshed = await supabase.auth.refreshSession();
-      if (!refreshed.error && refreshed.data.session?.access_token) {
-        await syncServerSession(refreshed.data.session);
-        setActiveSession(refreshed.data.session);
-        return refreshed.data.session;
-      }
-
+      // Use the existing session directly — do NOT call refreshSession() here.
+      // Calling refreshSession() when the refresh token has been revoked (e.g.
+      // after an admin password update) fires a SIGNED_OUT event that races with
+      // handleSetPassword and resets the UI step back to 1.
+      // The access token from verifyOtp is valid for 1 hour, far longer than
+      // the onboarding flow takes, so a refresh is unnecessary.
       await syncServerSession(current);
       setActiveSession(current);
       return current;
@@ -618,8 +615,6 @@ export default function LegacyOnboardingPage() {
       setCurrentStep(2);
       setPassword("");
       setPasswordConfirm("");
-      const refreshed = await resolveStableSession();
-      setCurrentUser(refreshed?.user ?? currentUser);
       toast.success("Şifre oluşturuldu. Şimdi mağaza kurulumunu tamamlayın.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Şifre oluşturulamadı.";
