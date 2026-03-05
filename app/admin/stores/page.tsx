@@ -57,6 +57,7 @@ type AutomationOverviewRow = {
   cadenceHours: number | null;
   nextTriggerAt: string | null;
   lastTrigger: LastTrigger | null;
+  listingCount?: number;
 };
 
 type WebhookOption = {
@@ -761,6 +762,18 @@ export default function AdminStoresPage() {
       {
         accessorKey: "userLabel",
         header: "Kullanıcı",
+      },
+      {
+        accessorKey: "listingCount",
+        header: "Listing",
+        cell: ({ row }) => {
+          const count = row.original.listingCount ?? 0;
+          return (
+            <span className={`text-sm font-black ${count > 0 ? "text-emerald-400" : "text-slate-500"}`}>
+              {count}
+            </span>
+          );
+        },
       },
       {
         accessorKey: "plan",

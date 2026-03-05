@@ -875,6 +875,46 @@ const computeNextTriggerAt = (args: {
   };
 };
 
+const loadListingCounts = async (storeIds: string[]): Promise<Map<string, number>> => {
+  if (storeIds.length === 0) {
+    return new Map();
+  }
+
+  const pageSize = 1000;
+  const maxRows = 50000;
+  const counts = new Map<string, number>();
+  let from = 0;
+
+  while (from < maxRows) {
+    const to = from + pageSize - 1;
+    const query = await supabaseAdmin
+      .from("listing")
+      .select("client_id")
+      .in("client_id", storeIds)
+      .range(from, to);
+
+    if (query.error) {
+      break;
+    }
+
+    const page = (query.data ?? []) as Array<{ client_id?: string | null }>;
+    for (const row of page) {
+      const id = (row.client_id ?? "").trim();
+      if (id) {
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+    }
+
+    if (page.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
+  }
+
+  return counts;
+};
+
 export async function GET(request: NextRequest) {
   const admin = await requireAdminRequest(request);
   if (!admin) {
@@ -898,9 +938,13 @@ export async function GET(request: NextRequest) {
       loadCategories(),
     ]);
 
-    const storeCurrencyById = await loadStoreCurrencyMap(stores.map((store) => store.id));
+    const storeIds = stores.map((store) => store.id);
 
-    const storeWebhookMappingFallback = await loadStoreWebhookMappingsFromLogs(stores.map((store) => store.id));
+    const [storeCurrencyById, storeWebhookMappingFallback, listingCountByStoreId] = await Promise.all([
+      loadStoreCurrencyMap(storeIds),
+      loadStoreWebhookMappingsFromLogs(storeIds),
+      loadListingCounts(storeIds),
+    ]);
 
     const userIds = Array.from(new Set(stores.map((store) => store.user_id)));
     const profiles = await loadProfiles(userIds);
@@ -1062,6 +1106,7 @@ export async function GET(request: NextRequest) {
               webhookConfigId: lastJob.webhook_config_id,
             }
           : null,
+        listingCount: listingCountByStoreId.get(store.id) ?? 0,
       };
     });
 
