@@ -122,6 +122,28 @@ type CategoriesResponse = {
   error?: string;
 };
 
+type ListingDetailRow = Record<string, unknown> & {
+  id?: string;
+  key?: string | null;
+  title?: string | null;
+  description?: string | null;
+  tags?: unknown;
+  price?: number | string | null;
+  derived_status?: string;
+  is_uploaded?: boolean;
+  etsy_listing_id?: string | null;
+  derived_listing_url?: string | null;
+  derived_client_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+type ListingsResponse = {
+  rows?: ListingDetailRow[];
+  total?: number;
+  error?: string;
+};
+
 type CreateStoreForUserResponse = {
   id?: string;
   storeName?: string;
@@ -138,6 +160,83 @@ const PLAN_LABELS: Record<string, string> = {
   turbo: "Turbo",
 };
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
+
+const asText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+const parseListingTags = (value: unknown) => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean);
+  }
+
+  if (typeof value !== "string") {
+    return [] as string[];
+  }
+
+  const raw = value.trim();
+  if (!raw) {
+    return [] as string[];
+  }
+
+  if (raw.startsWith("[") && raw.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) => (typeof item === "string" ? item.trim() : ""))
+          .filter(Boolean);
+      }
+    } catch {
+      // Fallback to comma split
+    }
+  }
+
+  return raw
+    .split(",")
+    .map((item) => item.trim().replace(/^"+|"+$/g, ""))
+    .filter(Boolean);
+};
+
+const collectListingImages = (row: ListingDetailRow) => {
+  const candidates = [
+    row.image_1_url,
+    row.image_2_url,
+    row.image_3_url,
+    row.image_1,
+    row.image_2,
+    row.image_3,
+    row.image_url,
+    row.main_image_url,
+  ];
+
+  const deduped = Array.from(
+    new Set(
+      candidates
+        .map((candidate) => asText(candidate))
+        .filter((candidate) => candidate.startsWith("http://") || candidate.startsWith("https://") || candidate.startsWith("data:image/"))
+    )
+  );
+
+  return deduped;
+};
+
+const formatListingPrice = (value: unknown, currency: "USD" | "TRY") => {
+  const numeric = typeof value === "number" ? value : Number(asText(value));
+  if (!Number.isFinite(numeric)) {
+    return "-";
+  }
+
+  try {
+    return new Intl.NumberFormat("tr-TR", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(numeric);
+  } catch {
+    return `${currency === "TRY" ? "₺" : "$"}${numeric}`;
+  }
+};
 
 const formatDate = (value: string | null | undefined) => {
   if (!value) {
@@ -304,6 +403,11 @@ export default function AdminStoresPage() {
   const [editingStore, setEditingStore] = useState<AutomationOverviewRow | null>(null);
   const [editStoreNameDraft, setEditStoreNameDraft] = useState("");
   const [savingStoreEdit, setSavingStoreEdit] = useState(false);
+  const [listingViewerOpen, setListingViewerOpen] = useState(false);
+  const [listingViewerStore, setListingViewerStore] = useState<AutomationOverviewRow | null>(null);
+  const [listingViewerRows, setListingViewerRows] = useState<ListingDetailRow[]>([]);
+  const [listingViewerTotal, setListingViewerTotal] = useState(0);
+  const [listingViewerLoading, setListingViewerLoading] = useState(false);
 
   const webhookMap = useMemo(() => new Map(webhookOptions.map((item) => [item.id, item])), [webhookOptions]);
   const selectedParentCategory = useMemo(
@@ -676,6 +780,40 @@ export default function AdminStoresPage() {
     }
   }, [editStoreNameDraft, editingStore, loadOverview]);
 
+  const openListingViewer = useCallback(async (store: AutomationOverviewRow) => {
+    setListingViewerStore(store);
+    setListingViewerOpen(true);
+    setListingViewerLoading(true);
+    setListingViewerRows([]);
+    setListingViewerTotal(0);
+    setError(null);
+
+    try {
+      const params = new URLSearchParams({
+        status: "all",
+        client_id: store.storeId,
+        limit: "500",
+        offset: "0",
+      });
+
+      const response = await fetch(`/api/admin/listings?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as ListingsResponse;
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Listing verileri yüklenemedi.");
+      }
+
+      setListingViewerRows(payload.rows ?? []);
+      setListingViewerTotal(typeof payload.total === "number" ? payload.total : (payload.rows ?? []).length);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Listing verileri yüklenemedi.");
+    } finally {
+      setListingViewerLoading(false);
+    }
+  }, []);
+
   const runSwitch = useCallback(
     async (store: TableRow) => {
       const rowWithSelection = store as TableRow;
@@ -806,11 +944,19 @@ export default function AdminStoresPage() {
         accessorKey: "listingCount",
         header: "Listing",
         cell: ({ row }) => {
-          const count = row.original.listingCount ?? 0;
+          const item = row.original;
+          const count = item.listingCount ?? 0;
           return (
-            <span className={`text-sm font-black ${count > 0 ? "text-emerald-400" : "text-slate-500"}`}>
+            <button
+              type="button"
+              onClick={() => void openListingViewer(item)}
+              className={`text-sm font-black cursor-pointer underline-offset-2 hover:underline ${
+                count > 0 ? "text-emerald-400" : "text-slate-500"
+              }`}
+              title={`${item.storeName} listinglerini göster`}
+            >
               {count}
-            </span>
+            </button>
           );
         },
       },
@@ -955,6 +1101,7 @@ export default function AdminStoresPage() {
     ],
     [
       openEditStoreModal,
+      openListingViewer,
       runSwitch,
       switchingStoreId,
       copiedStoreId,
@@ -1270,6 +1417,147 @@ export default function AdminStoresPage() {
               Mağaza Ekle
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={listingViewerOpen}
+        onOpenChange={(open) => {
+          setListingViewerOpen(open);
+          if (!open) {
+            setListingViewerStore(null);
+            setListingViewerRows([]);
+            setListingViewerTotal(0);
+            setListingViewerLoading(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-6xl">
+          <DialogHeader>
+            <DialogTitle>Mağaza Listingleri</DialogTitle>
+            <DialogDescription>
+              {listingViewerStore
+                ? `${listingViewerStore.storeName} (${listingViewerStore.storeId})`
+                : "Mağaza seçimi yok"}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+              <Badge variant="secondary">Store ID: {listingViewerStore?.storeId ?? "-"}</Badge>
+              <Badge variant="secondary">Mağaza: {listingViewerStore?.storeName ?? "-"}</Badge>
+              <Badge variant="secondary">Toplam Listing: {listingViewerTotal}</Badge>
+            </div>
+
+            {listingViewerLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-24 w-full" />
+                <Skeleton className="h-24 w-full" />
+                <Skeleton className="h-24 w-full" />
+              </div>
+            ) : null}
+
+            {!listingViewerLoading && listingViewerRows.length === 0 ? (
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-slate-400">
+                Bu mağaza için listing kaydı bulunamadı.
+              </div>
+            ) : null}
+
+            {!listingViewerLoading && listingViewerRows.length > 0 ? (
+              <div className="max-h-[70vh] space-y-3 overflow-y-auto pr-1">
+                {listingViewerRows.map((listing, index) => {
+                  const images = collectListingImages(listing);
+                  const tags = parseListingTags(listing.tags);
+                  const listingClientId = asText(listing.derived_client_id || listing.client_id || listing.store_id) || "-";
+                  const listingTitle = asText(listing.title) || "-";
+                  const listingDescription = asText(listing.description) || "-";
+                  const listingId = asText(listing.id || listing.key) || `row-${index}`;
+                  const listingUrl = asText(listing.derived_listing_url);
+
+                  return (
+                    <div key={listingId} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                      <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+                        <div className="space-y-2">
+                          {images[0] ? (
+                            <img
+                              src={images[0]}
+                              alt={listingTitle}
+                              className="h-44 w-full rounded-xl object-cover border border-white/10"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="h-44 w-full rounded-xl border border-dashed border-white/10 bg-black/20 flex items-center justify-center text-xs text-slate-500">
+                              Görsel yok
+                            </div>
+                          )}
+                          {images.length > 1 ? (
+                            <div className="grid grid-cols-3 gap-2">
+                              {images.slice(1, 4).map((imageUrl) => (
+                                <img
+                                  key={`${listingId}-${imageUrl}`}
+                                  src={imageUrl}
+                                  alt={listingTitle}
+                                  className="h-16 w-full rounded-lg object-cover border border-white/10"
+                                  loading="lazy"
+                                />
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <Badge variant="secondary">Client ID: {listingClientId}</Badge>
+                            <Badge variant="secondary">Store ID: {listingViewerStore?.storeId ?? "-"}</Badge>
+                            <Badge variant="secondary">Store Name: {listingViewerStore?.storeName ?? "-"}</Badge>
+                            <Badge variant={Boolean(listing.is_uploaded) ? "success" : "destructive"}>
+                              {Boolean(listing.is_uploaded) ? "Yüklendi" : "Yüklenmedi"}
+                            </Badge>
+                          </div>
+
+                          <p className="text-sm font-black text-white">{listingTitle}</p>
+                          <p className="text-xs text-slate-300 whitespace-pre-wrap">{listingDescription}</p>
+
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                            <span>Fiyat: {formatListingPrice(listing.price, listingViewerStore?.storeCurrency ?? "USD")}</span>
+                            <span>Durum: {asText(listing.derived_status || listing.status || listing.listing_status) || "-"}</span>
+                            <span>Etsy ID: {asText(listing.etsy_listing_id) || "-"}</span>
+                          </div>
+
+                          {tags.length ? (
+                            <div className="flex flex-wrap gap-1">
+                              {tags.map((tag) => (
+                                <Badge key={`${listingId}-${tag}`} variant="outline">
+                                  {tag}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-500">Etiket yok</p>
+                          )}
+
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                            <span>Oluşturma: {formatDate(asText(listing.created_at) || null)}</span>
+                            <span>Güncelleme: {formatDate(asText(listing.updated_at) || null)}</span>
+                            {listingUrl ? (
+                              <a
+                                href={listingUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-indigo-300 hover:underline"
+                              >
+                                Etsy URL Aç
+                              </a>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         </DialogContent>
       </Dialog>
 
