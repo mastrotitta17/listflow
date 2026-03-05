@@ -39,8 +39,6 @@ const syncServerSession = async (session: Session | null) => {
     });
     return;
   }
-
-  await fetch("/api/auth/session", { method: "DELETE" });
 };
 
 const buildAuthHeaders = (accessToken: string | null | undefined) => {
@@ -236,6 +234,28 @@ const resolveStableSession = async () => {
   }
 
   return null;
+};
+
+const ensureFreshSessionAfterPasswordSet = async (args: { email: string; password: string }) => {
+  const refreshed = await supabase.auth.refreshSession();
+  if (!refreshed.error && refreshed.data.session?.access_token) {
+    await syncServerSession(refreshed.data.session);
+    return refreshed.data.session;
+  }
+
+  const relogin = await supabase.auth.signInWithPassword({
+    email: args.email,
+    password: args.password,
+  });
+
+  if (relogin.error || !relogin.data.session?.access_token) {
+    throw new Error(
+      relogin.error?.message || "Şifre güncellemesinden sonra oturum yenilenemedi. Lütfen magic link ile tekrar giriş yapın."
+    );
+  }
+
+  await syncServerSession(relogin.data.session);
+  return relogin.data.session;
 };
 
 const loadLegacyUserFromServerSession = async (): Promise<LegacyBootstrapUser | null> => {
@@ -520,6 +540,13 @@ export default function LegacyOnboardingPage() {
         phone: normalizedPhone,
         password,
       });
+
+      if (currentUser?.email) {
+        await ensureFreshSessionAfterPasswordSet({
+          email: currentUser.email,
+          password,
+        });
+      }
 
       setPasswordSet(true);
       setCurrentStep(2);

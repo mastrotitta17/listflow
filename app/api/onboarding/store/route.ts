@@ -496,12 +496,12 @@ export async function POST(request: NextRequest) {
     const accessToken = getAccessToken(request);
 
     if (!accessToken) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized: missing access token." }, { status: 401 });
     }
 
     const user = await getUserFromAccessToken(accessToken);
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized: invalid or expired access token." }, { status: 401 });
     }
 
     const body = (await request.json().catch(() => ({}))) as CreateStoreBody;
