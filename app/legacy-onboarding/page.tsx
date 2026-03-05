@@ -258,26 +258,29 @@ const resolveStableSession = async () => {
   return null;
 };
 
-const ensureFreshSessionAfterPasswordSet = async (args: { email: string; password: string }) => {
+const ensureFreshSessionAfterPasswordSet = async (args: { email: string; password: string }): Promise<Session | null> => {
+  // Try refresh first (may fail if password change invalidated the session)
   const refreshed = await supabase.auth.refreshSession();
   if (!refreshed.error && refreshed.data.session?.access_token) {
     await syncServerSession(refreshed.data.session);
     return refreshed.data.session;
   }
 
+  // Sign in with the new password — use trimmed version to match server-side storage
   const relogin = await supabase.auth.signInWithPassword({
     email: args.email,
-    password: args.password,
+    password: args.password.trim(),
   });
 
-  if (relogin.error || !relogin.data.session?.access_token) {
-    throw new Error(
-      relogin.error?.message || "Şifre güncellemesinden sonra oturum yenilenemedi. Lütfen magic link ile tekrar giriş yapın."
-    );
+  if (!relogin.error && relogin.data.session?.access_token) {
+    await syncServerSession(relogin.data.session);
+    return relogin.data.session;
   }
 
-  await syncServerSession(relogin.data.session);
-  return relogin.data.session;
+  // Both failed — fall back to whatever session the client still has.
+  // The access token may still be valid even though the refresh token was revoked.
+  const fallback = (await supabase.auth.getSession()).data.session ?? null;
+  return fallback;
 };
 
 const loadLegacyUserFromServerSession = async (): Promise<LegacyBootstrapUser | null> => {
@@ -603,7 +606,12 @@ export default function LegacyOnboardingPage() {
           email: currentUser.email,
           password,
         });
-        setActiveSession(renewedSession);
+        if (renewedSession) {
+          setActiveSession(renewedSession);
+        }
+        // If renewedSession is null the existing activeSession access token is
+        // still valid for the store-creation step (access tokens remain usable
+        // even after a password-change revokes the refresh token).
       }
 
       setPasswordSet(true);
@@ -751,17 +759,17 @@ export default function LegacyOnboardingPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-8">
-            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
+            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-white/3 p-2">
               <div
                 className={`rounded-xl px-3 py-2 text-center text-xs font-black tracking-wide ${
-                  currentStep === 1 ? "bg-indigo-600 text-white" : "bg-white/[0.03] text-slate-400"
+                  currentStep === 1 ? "bg-indigo-600 text-white" : "bg-white/3 text-slate-400"
                 }`}
               >
                 1. Profil ve Şifre
               </div>
               <div
                 className={`rounded-xl px-3 py-2 text-center text-xs font-black tracking-wide ${
-                  currentStep === 2 ? "bg-indigo-600 text-white" : "bg-white/[0.03] text-slate-400"
+                  currentStep === 2 ? "bg-indigo-600 text-white" : "bg-white/3 text-slate-400"
                 }`}
               >
                 2. Mağaza Kurulumu
@@ -769,7 +777,7 @@ export default function LegacyOnboardingPage() {
             </div>
 
             {currentStep === 1 ? (
-              <div className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+              <div className="space-y-4 rounded-2xl border border-white/10 bg-white/2 p-5">
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="h-4 w-4 text-indigo-300" />
                   <p className="text-sm font-black">Adım 1: Şifre ve Profil</p>
@@ -856,7 +864,7 @@ export default function LegacyOnboardingPage() {
                 )}
               </div>
             ) : (
-              <div className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+              <div className="space-y-4 rounded-2xl border border-white/10 bg-white/2 p-5">
                 <div className="flex items-center gap-2">
                   <Store className="h-4 w-4 text-indigo-300" />
                   <p className="text-sm font-black">Adım 2: Mağaza Kurulumu ve Pro Abonelik Bağlama</p>
