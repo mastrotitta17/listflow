@@ -100,15 +100,15 @@ const decodeBase64Url = (value: string) => {
   return atob(padded);
 };
 
-const redirectViaRelayMagicLink = () => {
+const verifyRelayMagicLink = async () => {
   if (typeof window === "undefined") {
-    return false;
+    return null;
   }
 
   const url = new URL(window.location.href);
   const encoded = url.searchParams.get("ml");
   if (!encoded) {
-    return false;
+    return null;
   }
 
   try {
@@ -119,13 +119,35 @@ const redirectViaRelayMagicLink = () => {
     const isVerifyPath = target.pathname.includes("/auth/v1/verify");
 
     if (!isTrustedHost || !isVerifyPath) {
-      return false;
+      return null;
     }
 
-    window.location.replace(decoded);
-    return true;
+    const code = target.searchParams.get("code");
+    if (code) {
+      const exchanged = await supabase.auth.exchangeCodeForSession(code);
+      if (!exchanged.error && exchanged.data.session) {
+        stripUrlAuthArtifacts();
+        return exchanged.data.session;
+      }
+    }
+
+    const tokenHash = target.searchParams.get("token_hash");
+    const tokenType = target.searchParams.get("type");
+    if (tokenHash) {
+      const verify = await supabase.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: ((tokenType || "magiclink") as EmailOtpType),
+      });
+
+      if (!verify.error && verify.data.session) {
+        stripUrlAuthArtifacts();
+        return verify.data.session;
+      }
+    }
+
+    return null;
   } catch {
-    return false;
+    return null;
   }
 };
 
@@ -452,9 +474,9 @@ export default function LegacyOnboardingPage() {
 
     const bootstrap = async () => {
       try {
-        const redirected = redirectViaRelayMagicLink();
-        if (redirected) {
-          return;
+        let session = await verifyRelayMagicLink();
+        if (session?.access_token) {
+          await syncServerSession(session);
         }
 
         const urlAuthError = resolveAuthErrorMessageFromUrl();
@@ -462,7 +484,9 @@ export default function LegacyOnboardingPage() {
           setSessionResolveError(urlAuthError);
         }
 
-        const session = await resolveStableSession();
+        if (!session?.access_token) {
+          session = await resolveStableSession();
+        }
 
         await syncServerSession(session);
 
