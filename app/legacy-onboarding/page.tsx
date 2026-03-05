@@ -43,6 +43,18 @@ const syncServerSession = async (session: Session | null) => {
   await fetch("/api/auth/session", { method: "DELETE" });
 };
 
+const buildAuthHeaders = (accessToken: string | null | undefined) => {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
+  return headers;
+};
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const stripUrlAuthArtifacts = () => {
@@ -284,9 +296,11 @@ export default function LegacyOnboardingPage() {
   const [storeCurrency, setStoreCurrency] = useState<StoreCurrency>("USD");
 
   const saveLegacyProfile = async (args: { fullName: string; phone: string; password?: string }) => {
+    const session = await resolveStableSession();
     const response = await fetch("/api/legacy-onboarding/profile", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildAuthHeaders(session?.access_token),
+      credentials: "include",
       body: JSON.stringify({
         fullName: args.fullName,
         phone: args.phone || null,
@@ -566,7 +580,11 @@ export default function LegacyOnboardingPage() {
 
       const response = await fetch("/api/onboarding/store", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        credentials: "include",
         body: JSON.stringify({
           storeName: normalizedStoreName,
           phone: normalizedPhone || null,

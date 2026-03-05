@@ -10,6 +10,18 @@ import { isUuid } from "@/lib/utils/uuid";
 
 export const runtime = "nodejs";
 
+const getAccessToken = (request: NextRequest) => {
+  const authorization = request.headers.get("authorization");
+  if (authorization?.startsWith("Bearer ")) {
+    const token = authorization.slice("Bearer ".length).trim();
+    if (token) {
+      return token;
+    }
+  }
+
+  return request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
+};
+
 type CreateStoreBody = {
   storeName?: unknown;
   phone?: unknown;
@@ -481,7 +493,7 @@ const bindLegacyProSubscriptionToStore = async (args: { userId: string; storeId:
 
 export async function POST(request: NextRequest) {
   try {
-    const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
+    const accessToken = getAccessToken(request);
 
     if (!accessToken) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

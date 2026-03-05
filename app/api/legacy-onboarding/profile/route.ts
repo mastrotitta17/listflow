@@ -7,6 +7,18 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const getAccessToken = (request: NextRequest) => {
+  const authorization = request.headers.get("authorization");
+  if (authorization?.startsWith("Bearer ")) {
+    const token = authorization.slice("Bearer ".length).trim();
+    if (token) {
+      return token;
+    }
+  }
+
+  return request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
+};
+
 type LegacyProfileBody = {
   fullName?: unknown;
   phone?: unknown;
@@ -91,7 +103,7 @@ const upsertProfile = async (args: {
 
 export async function GET(request: NextRequest) {
   try {
-    const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
+    const accessToken = getAccessToken(request);
     if (!accessToken) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -131,7 +143,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
+    const accessToken = getAccessToken(request);
     if (!accessToken) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
