@@ -25,6 +25,11 @@ type LegacyProfileBody = {
   password?: unknown;
 };
 
+type ProfileRow = {
+  full_name?: string | null;
+  phone?: string | null;
+};
+
 const normalizeText = (value: unknown, maxLength: number) => {
   if (typeof value !== "string") {
     return null;
@@ -45,6 +50,32 @@ const isMissingColumnError = (error: { message?: string } | null | undefined, co
 
   const message = (error.message ?? "").toLowerCase();
   return message.includes("column") && message.includes(column.toLowerCase());
+};
+
+const loadProfileWithFallback = async (userId: string) => {
+  const selectCandidates = ["full_name,phone", "full_name"] as const;
+  let fullName: string | null = null;
+  let phone: string | null = null;
+
+  for (const select of selectCandidates) {
+    const profileQuery = await supabaseAdmin
+      .from("profiles")
+      .select(select)
+      .eq("user_id", userId)
+      .maybeSingle<ProfileRow>();
+
+    if (!profileQuery.error) {
+      fullName = typeof profileQuery.data?.full_name === "string" ? profileQuery.data.full_name : null;
+      phone = typeof profileQuery.data?.phone === "string" ? profileQuery.data.phone : null;
+      break;
+    }
+
+    if (!isMissingColumnError(profileQuery.error, "phone")) {
+      throw new Error(profileQuery.error.message);
+    }
+  }
+
+  return { fullName, phone };
 };
 
 const upsertProfile = async (args: {
@@ -123,14 +154,17 @@ export async function GET(request: NextRequest) {
       typeof authUser.user_metadata === "object" && authUser.user_metadata !== null
         ? (authUser.user_metadata as Record<string, unknown>)
         : {};
+    const profile = await loadProfileWithFallback(authUser.id);
+    const metadataFullName = typeof metadata.full_name === "string" ? metadata.full_name : null;
+    const metadataPhone = typeof metadata.phone === "string" ? metadata.phone : null;
 
     return NextResponse.json({
       success: true,
       user: {
         id: authUser.id,
         email: authUser.email ?? null,
-        fullName: typeof metadata.full_name === "string" ? metadata.full_name : null,
-        phone: typeof metadata.phone === "string" ? metadata.phone : null,
+        fullName: metadataFullName ?? profile.fullName ?? null,
+        phone: metadataPhone ?? profile.phone ?? null,
         legacyOnboardingRequired: Boolean(metadata.legacy_onboarding_required),
         legacyPasswordSet: Boolean(metadata.legacy_password_set),
       },

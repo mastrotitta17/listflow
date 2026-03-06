@@ -531,7 +531,8 @@ export default function LegacyOnboardingPage() {
           return;
         }
 
-        hydrateStateFromUser(session.user);
+        const serverUserFallback = await loadLegacyUserFromServerSession();
+        hydrateStateFromUser(session.user, serverUserFallback);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Onboarding başlatılamadı.";
         toast.error(message);
@@ -562,7 +563,8 @@ export default function LegacyOnboardingPage() {
         return;
       }
 
-      hydrateStateFromUser(session.user);
+      const serverUserFallback = await loadLegacyUserFromServerSession();
+      hydrateStateFromUser(session.user, serverUserFallback);
     });
 
     return () => {

@@ -16,6 +16,14 @@ const buildRedirectWithError = (requestUrl: string, nextPath: string, authError:
   return url;
 };
 
+const appendRelayMagicLink = (url: URL, relayMl: string | null) => {
+  if (relayMl) {
+    url.searchParams.set("ml", relayMl);
+  }
+
+  return url;
+};
+
 const isValidSessionKey = (value: string | null): value is string =>
   typeof value === "string" && /^[a-f0-9-]{36}$/.test(value);
 
@@ -60,7 +68,8 @@ export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const nextPath = resolveSafeNextPath(requestUrl.searchParams.get("next"));
   const sessionKey = requestUrl.searchParams.get("session_key") ?? null;
-  const relayAuth = parseRelayMagicLink(requestUrl.searchParams.get("ml"));
+  const relayMl = requestUrl.searchParams.get("ml");
+  const relayAuth = parseRelayMagicLink(relayMl);
 
   const code = requestUrl.searchParams.get("code") ?? relayAuth?.code ?? null;
   const tokenHash = requestUrl.searchParams.get("token_hash") ?? relayAuth?.tokenHash ?? null;
@@ -81,14 +90,14 @@ export async function GET(request: NextRequest) {
         locale: "tr",
       });
 
-      const response = NextResponse.redirect(new URL(nextPath, request.url));
+      const response = NextResponse.redirect(appendRelayMagicLink(new URL(nextPath, request.url), relayMl));
       setSessionCookies(response, verified.data.session.access_token, verified.data.session.refresh_token);
       return response;
     }
   }
 
   if (!code && accessToken && refreshToken) {
-    const response = NextResponse.redirect(new URL(nextPath, request.url));
+    const response = NextResponse.redirect(appendRelayMagicLink(new URL(nextPath, request.url), relayMl));
     setSessionCookies(response, accessToken, refreshToken);
     return response;
   }
@@ -118,11 +127,11 @@ export async function GET(request: NextRequest) {
         redirectUrl.searchParams.set("session_key", sessionKey);
       }
 
-      return NextResponse.redirect(redirectUrl);
+      return NextResponse.redirect(appendRelayMagicLink(redirectUrl, relayMl));
     }
 
     if (nextPath === "/legacy-onboarding") {
-      return NextResponse.redirect(new URL(nextPath, request.url));
+      return NextResponse.redirect(appendRelayMagicLink(new URL(nextPath, request.url), relayMl));
     }
 
     // Implicit flow: tokens are in the URL fragment (#access_token=...).
@@ -132,20 +141,54 @@ export async function GET(request: NextRequest) {
     if (isValidSessionKey(sessionKey)) {
       const redirectUrl = new URL(nextPath, request.url);
       redirectUrl.searchParams.set("session_key", sessionKey);
-      return NextResponse.redirect(redirectUrl);
+      return NextResponse.redirect(appendRelayMagicLink(redirectUrl, relayMl));
     }
-    return NextResponse.redirect(buildRedirectWithError(request.url, nextPath, "missing_code"));
+    return NextResponse.redirect(appendRelayMagicLink(buildRedirectWithError(request.url, nextPath, "missing_code"), relayMl));
   }
 
-  const { data, error } = await supabaseServer.auth.exchangeCodeForSession(code);
+  let exchangeSession = await supabaseServer.auth.exchangeCodeForSession(code);
+  let session = exchangeSession.data.session ?? null;
+  let user = exchangeSession.data.user ?? null;
 
-  if (error || !data.session || !data.user) {
-    return NextResponse.redirect(buildRedirectWithError(request.url, nextPath, "oauth_failed"));
+  if ((exchangeSession.error || !session || !user) && tokenHash) {
+    const verified = await supabaseServer.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: tokenType as EmailOtpType,
+    });
+    if (!verified.error && verified.data.session && verified.data.user) {
+      session = verified.data.session;
+      user = verified.data.user;
+      exchangeSession = {
+        data: { session, user },
+        error: null,
+      } as typeof exchangeSession;
+    }
+  }
+
+  if ((exchangeSession.error || !session || !user) && accessToken && refreshToken) {
+    const candidate = await supabaseServer.auth.getUser(accessToken);
+    if (!candidate.error && candidate.data.user) {
+      user = candidate.data.user;
+      session = {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      } as typeof session;
+      exchangeSession = {
+        data: { session, user },
+        error: null,
+      } as typeof exchangeSession;
+    }
+  }
+
+  if (!session || !user) {
+    return NextResponse.redirect(
+      appendRelayMagicLink(buildRedirectWithError(request.url, nextPath, "oauth_failed"), relayMl)
+    );
   }
 
   await bootstrapProfile({
-    user: data.user,
-    fullName: (data.user.user_metadata?.full_name as string | undefined) ?? undefined,
+    user,
+    fullName: (user.user_metadata?.full_name as string | undefined) ?? undefined,
     locale: "tr",
   });
 
@@ -158,8 +201,8 @@ export async function GET(request: NextRequest) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_key: sessionKey,
-          access_token: data.session.access_token,
-          refresh_token: data.session.refresh_token,
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
         }),
       });
     } catch {
@@ -168,7 +211,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL("/auth/extension-done", request.url));
   }
 
-  const response = NextResponse.redirect(new URL(nextPath, request.url));
-  setSessionCookies(response, data.session.access_token, data.session.refresh_token);
+  const response = NextResponse.redirect(appendRelayMagicLink(new URL(nextPath, request.url), relayMl));
+  setSessionCookies(response, session.access_token, session.refresh_token);
   return response;
 }
