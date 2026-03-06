@@ -26,6 +26,12 @@ import { toast } from "sonner";
 
 type BillingPlan = "standard" | "pro" | "turbo";
 type BillingInterval = "month" | "year";
+type PublicPlanPricing = {
+  plan: BillingPlan;
+  monthlyCents: number;
+  yearlyCents: number;
+  yearlyDiscountPercent: number;
+};
 
 type StoreOverviewRow = {
   id: string;
@@ -76,14 +82,29 @@ type PlanDetails = {
 
 const DEFAULT_CRISP_WEBSITE_ID = "90902ea5-80af-4468-8f9d-d9a808ed1137";
 const PLAN_ORDER: BillingPlan[] = ["standard", "pro", "turbo"];
-const PLAN_PRICE_CENTS: Record<BillingPlan, { month: number; year: number }> = {
-  standard: { month: 2990, year: 26910 },
-  pro: { month: 4990, year: 44910 },
-  turbo: { month: 7990, year: 71910 },
+const FALLBACK_PLAN_DISCOUNT_PERCENT = 25;
+const FALLBACK_PLAN_PRICING: Record<BillingPlan, { month: number; year: number; discount: number }> = {
+  standard: { month: 2990, year: 26910, discount: FALLBACK_PLAN_DISCOUNT_PERCENT },
+  pro: { month: 4990, year: 44910, discount: FALLBACK_PLAN_DISCOUNT_PERCENT },
+  turbo: { month: 7990, year: 71910, discount: FALLBACK_PLAN_DISCOUNT_PERCENT },
 };
-const DISPLAY_DISCOUNT_PERCENT: Record<BillingInterval, number> = {
-  month: 50,
-  year: 50,
+
+const DEFAULT_PLAN_PRICING: Record<BillingPlan, { month: number; year: number; discount: number }> = {
+  standard: {
+    month: FALLBACK_PLAN_PRICING.standard.month,
+    year: FALLBACK_PLAN_PRICING.standard.year,
+    discount: FALLBACK_PLAN_PRICING.standard.discount,
+  },
+  pro: {
+    month: FALLBACK_PLAN_PRICING.pro.month,
+    year: FALLBACK_PLAN_PRICING.pro.year,
+    discount: FALLBACK_PLAN_PRICING.pro.discount,
+  },
+  turbo: {
+    month: FALLBACK_PLAN_PRICING.turbo.month,
+    year: FALLBACK_PLAN_PRICING.turbo.year,
+    discount: FALLBACK_PLAN_PRICING.turbo.discount,
+  },
 };
 const FEATURED_PLAN: BillingPlan = "pro";
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
@@ -112,6 +133,8 @@ const EtsyPanel: React.FC = () => {
   const [isDeletingStoreId, setIsDeletingStoreId] = useState<string | null>(null);
   const [isCancelingStoreSubscriptionId, setIsCancelingStoreSubscriptionId] = useState<string | null>(null);
   const [nowTs, setNowTs] = useState<number>(Date.now());
+  const [planPricing, setPlanPricing] =
+    useState<Record<BillingPlan, { month: number; year: number; discount: number }>>(DEFAULT_PLAN_PRICING);
 
   useEffect(() => {
     if (!storeActionMessage) {
@@ -133,6 +156,43 @@ const EtsyPanel: React.FC = () => {
 
     return () => {
       window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadPlanPricing = async () => {
+      try {
+        const response = await fetch("/api/billing/plans", { cache: "no-store" });
+        const payload = (await response.json().catch(() => ({}))) as {
+          plans?: PublicPlanPricing[];
+        };
+
+        if (!response.ok || !payload.plans || !mounted) {
+          return;
+        }
+
+        setPlanPricing((prev) => {
+          const next = { ...prev };
+          for (const row of payload.plans ?? []) {
+            next[row.plan] = {
+              month: row.monthlyCents,
+              year: row.yearlyCents,
+              discount: row.yearlyDiscountPercent,
+            };
+          }
+          return next;
+        });
+      } catch {
+        // Keep fallback pricing.
+      }
+    };
+
+    void loadPlanPricing();
+
+    return () => {
+      mounted = false;
     };
   }, []);
 
@@ -261,8 +321,23 @@ const EtsyPanel: React.FC = () => {
       currency: "USD",
     }).format(cents / 100);
 
-  const getOriginalCentsFromDiscounted = (discountedCents: number, interval: BillingInterval) => {
-    const discountPercent = DISPLAY_DISCOUNT_PERCENT[interval];
+  const priceFor = useCallback(
+    (plan: BillingPlan, interval: BillingInterval) => {
+      const pricing = planPricing[plan];
+      return interval === "year" ? pricing.year : pricing.month;
+    },
+    [planPricing]
+  );
+
+  const getDiscountPercent = useCallback(
+    (plan: BillingPlan) => {
+      return planPricing[plan].discount;
+    },
+    [planPricing]
+  );
+
+  const getOriginalCentsFromDiscounted = (plan: BillingPlan, discountedCents: number) => {
+    const discountPercent = getDiscountPercent(plan);
     const divisor = 1 - discountPercent / 100;
 
     if (divisor <= 0) {
@@ -427,7 +502,7 @@ const EtsyPanel: React.FC = () => {
           topCategoryId,
           subCategoryId,
           currency: storeCurrency,
-          priceCents: 2990,
+          priceCents: priceFor("standard", "month"),
           fallbackStoreNamePrefix: locale === "en" ? "My Store" : "Mağazam",
         }),
       });
@@ -1037,9 +1112,9 @@ const EtsyPanel: React.FC = () => {
                 {PLAN_ORDER.map((planKey) => {
                   const selected = activationModal.plan === planKey;
                   const isFeatured = planKey === FEATURED_PLAN;
-                  const amount = PLAN_PRICE_CENTS[planKey][activationModal.interval];
-                  const originalAmount = getOriginalCentsFromDiscounted(amount, activationModal.interval);
-                  const discountPercent = DISPLAY_DISCOUNT_PERCENT[activationModal.interval];
+                  const amount = priceFor(planKey, activationModal.interval);
+                  const originalAmount = getOriginalCentsFromDiscounted(planKey, amount);
+                  const discountPercent = getDiscountPercent(planKey);
                   const details = planDetails[planKey];
                   return (
                     <button

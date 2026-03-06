@@ -123,6 +123,7 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
   ) => {
     const [open, setOpen] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState("");
+    const searchInputRef = React.useRef<HTMLInputElement | null>(null);
 
     const options = React.useMemo(() => {
       const parsed: ParsedOption[] = [];
@@ -152,6 +153,20 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
     }, [normalizedSearchQuery, selectableOptions]);
 
     const shouldShowSearch = searchable && selectableOptions.length > 0;
+
+    React.useEffect(() => {
+      if (!open || !shouldShowSearch) {
+        return;
+      }
+
+      const frame = window.requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+
+      return () => {
+        window.cancelAnimationFrame(frame);
+      };
+    }, [open, shouldShowSearch]);
 
     return (
       <div className="w-full">
@@ -199,10 +214,20 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-500" />
                     <input
+                      ref={searchInputRef}
                       type="text"
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
-                      onKeyDown={(event) => event.stopPropagation()}
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onKeyDownCapture={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                        }
+                      }}
+                      onKeyUp={(event) => event.stopPropagation()}
                       placeholder={searchPlaceholder}
                       className="w-full rounded-md border border-white/10 bg-[#11131b] py-1.5 pl-8 pr-2 text-xs text-white outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500/70"
                     />

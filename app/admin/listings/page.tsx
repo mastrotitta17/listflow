@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Dialog,
   DialogContent,
@@ -250,6 +251,8 @@ export default function AdminListingsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [clientFilter, setClientFilter] = useState("");
   const [search, setSearch] = useState("");
+  const [updatedFrom, setUpdatedFrom] = useState<Date | undefined>(undefined);
+  const [updatedTo, setUpdatedTo] = useState<Date | undefined>(undefined);
   const [total, setTotal] = useState(0);
   const [storeNameByClientId, setStoreNameByClientId] = useState<Record<string, string>>({});
 
@@ -632,6 +635,54 @@ export default function AdminListingsPage() {
     []
   );
 
+  const dateFilteredRows = useMemo(() => {
+    if (!updatedFrom && !updatedTo) {
+      return rows;
+    }
+
+    const fromDate = updatedFrom
+      ? (() => {
+          const value = new Date(updatedFrom);
+          value.setHours(0, 0, 0, 0);
+          return value;
+        })()
+      : null;
+
+    const toDate = updatedTo
+      ? (() => {
+          const value = new Date(updatedTo);
+          value.setHours(23, 59, 59, 999);
+          return value;
+        })()
+      : null;
+
+    return rows.filter((row) => {
+      const raw = row.updated_at;
+      if (!raw || typeof raw !== "string") {
+        return false;
+      }
+      const date = new Date(raw);
+      if (Number.isNaN(date.getTime())) {
+        return false;
+      }
+      if (fromDate && date < fromDate) {
+        return false;
+      }
+      if (toDate && date > toDate) {
+        return false;
+      }
+      return true;
+    });
+  }, [rows, updatedFrom, updatedTo]);
+
+  const clearListingFilters = useCallback(() => {
+    setStatusFilter("all");
+    setClientFilter("");
+    setSearch("");
+    setUpdatedFrom(undefined);
+    setUpdatedTo(undefined);
+  }, []);
+
   return (
     <div className="space-y-6">
       <Card className="glass-card-pro">
@@ -650,8 +701,12 @@ export default function AdminListingsPage() {
             </TabsList>
 
             <TabsContent value="listings" className="space-y-4">
-              <div className="flex flex-wrap items-center gap-3 lg:flex-nowrap">
-                <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 w-full sm:w-52">
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                <Select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                  className="h-9 min-w-[12rem] w-52 shrink-0"
+                >
                   {STATUS_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -663,38 +718,61 @@ export default function AdminListingsPage() {
                   value={clientFilter}
                   onChange={(event) => setClientFilter(event.target.value)}
                   placeholder="Store/Client ID filtrele"
-                  className="h-9 w-full sm:w-56"
+                  className="h-9 min-w-[12rem] w-56 shrink-0"
                 />
 
                 <Input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="ID, başlık, Etsy ID ara"
-                  className="h-9 w-full sm:w-72"
+                  className="h-9 min-w-[15rem] w-72 shrink-0"
                 />
 
-                <Button onClick={() => void fetchRows()} disabled={loading} className="h-9 cursor-pointer">
+                <span className="px-1 text-[10px] font-black uppercase tracking-widest text-slate-500 shrink-0">Güncelleme</span>
+
+                <DatePicker
+                  value={updatedFrom}
+                  onChange={setUpdatedFrom}
+                  placeholder="Başlangıç"
+                  className="h-9 min-w-[10.5rem] w-44 shrink-0"
+                />
+                <DatePicker
+                  value={updatedTo}
+                  onChange={setUpdatedTo}
+                  placeholder="Bitiş"
+                  className="h-9 min-w-[10.5rem] w-44 shrink-0"
+                  minDate={updatedFrom}
+                />
+
+                <Button
+                  variant="secondary"
+                  onClick={clearListingFilters}
+                  className="h-9 cursor-pointer shrink-0"
+                >
+                  Temizle
+                </Button>
+
+                <Button onClick={() => void fetchRows()} disabled={loading} className="h-9 cursor-pointer shrink-0">
                   {loading ? "Yükleniyor…" : "Yenile"}
                 </Button>
               </div>
 
-              <DataTable
-                columns={columns}
-                data={rows}
-                enableSearch={false}
-                emptyMessage="Kayıt bulunamadı."
-                statusFilterKey="derived_status"
-                statusFilterLabel="Durum"
-                dateFilterKey="updated_at"
-                dateFilterLabel="Güncelleme"
-              />
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-2 sm:p-3">
+                <DataTable columns={columns} data={dateFilteredRows} enableSearch={false} emptyMessage="Kayıt bulunamadı." />
+              </div>
 
-              <p className="text-xs text-slate-500">Toplam eşleşen kayıt: {total}</p>
+              <p className="text-xs text-slate-500">
+                Görünen kayıt: {dateFilteredRows.length} / Sunucudan gelen toplam: {total}
+              </p>
             </TabsContent>
 
             <TabsContent value="logs" className="space-y-4">
-              <div className="flex flex-wrap items-center gap-3 lg:flex-nowrap">
-                <Select value={levelFilter} onChange={(event) => setLevelFilter(event.target.value as LogLevel)} className="h-9 w-full sm:w-44">
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                <Select
+                  value={levelFilter}
+                  onChange={(event) => setLevelFilter(event.target.value as LogLevel)}
+                  className="h-9 min-w-[10rem] w-44 shrink-0"
+                >
                   {LOG_LEVELS.map((level) => (
                     <option key={level} value={level}>
                       {level === "all" ? "Tümü" : level}
@@ -706,26 +784,33 @@ export default function AdminListingsPage() {
                   placeholder="Mağaza adı filtrele..."
                   value={storeFilter}
                   onChange={(event) => setStoreFilter(event.target.value)}
-                  className="h-9 w-full sm:w-56"
+                  className="h-9 min-w-[12rem] w-56 shrink-0"
                 />
 
                 <Input
                   placeholder="Olay filtrele..."
                   value={eventFilter}
                   onChange={(event) => setEventFilter(event.target.value)}
-                  className="h-9 w-full sm:w-56"
+                  className="h-9 min-w-[12rem] w-56 shrink-0"
                 />
 
-                <Button onClick={() => void handleFilterLogs()} disabled={logsLoading} className="h-9 cursor-pointer">
+                <Button onClick={() => void handleFilterLogs()} disabled={logsLoading} className="h-9 cursor-pointer shrink-0">
                   {logsLoading ? "Yükleniyor…" : "Filtrele"}
                 </Button>
 
-                <Button variant="secondary" className="h-9 cursor-pointer" onClick={handleResetLogs} disabled={logsLoading}>
+                <Button
+                  variant="secondary"
+                  className="h-9 cursor-pointer shrink-0"
+                  onClick={handleResetLogs}
+                  disabled={logsLoading}
+                >
                   Temizle
                 </Button>
               </div>
 
-              <DataTable columns={logColumns} data={logs} enableSearch={false} emptyMessage="Log bulunamadı." />
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-2 sm:p-3">
+                <DataTable columns={logColumns} data={logs} enableSearch={false} emptyMessage="Log bulunamadı." />
+              </div>
 
               {logsHasMore ? (
                 <div className="flex justify-center pt-2">

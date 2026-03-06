@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Copy, Loader2, Pencil, Plus } from "lucide-react";
+import { ArrowRightLeft, Check, Copy, Loader2, Pencil, Plus } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -1097,6 +1097,8 @@ export default function AdminStoresPage() {
                   [item.storeId]: event.target.value,
                 }))
               }
+              className="min-w-[13rem] w-full"
+              searchPlaceholder="Webhook ara..."
             >
               <option value="">Webhook seçin</option>
               {item.availableWebhookOptions.map((option) => (
@@ -1120,21 +1122,43 @@ export default function AdminStoresPage() {
             switchingStoreId === item.storeId;
 
           return (
-            <div className="space-y-1">
-              <Button onClick={() => void runSwitch(item)} disabled={switchDisabled} className="cursor-pointer">
-                {switchingStoreId === item.storeId
-                  ? "Geçiriliyor..."
-                  : `${selectedWebhook?.name || "Webhook"}'a Geçir`}
-              </Button>
-              <Button
-                variant="outline"
-                className="cursor-pointer w-full"
-                onClick={() => openEditStoreModal(item)}
-                disabled={savingStoreEdit}
-              >
-                <Pencil className="mr-2 h-3.5 w-3.5" />
-                Mağazayı Düzenle
-              </Button>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => void runSwitch(item)}
+                  disabled={switchDisabled}
+                  size="icon"
+                  className="cursor-pointer"
+                  title={
+                    switchingStoreId === item.storeId
+                      ? "Geçiş yapılıyor..."
+                      : `${selectedWebhook?.name || "Webhook"} hedefine geçir`
+                  }
+                  aria-label="Webhooka geçir"
+                >
+                  {switchingStoreId === item.storeId ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ArrowRightLeft className="h-4 w-4" />
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="cursor-pointer"
+                  onClick={() => openEditStoreModal(item)}
+                  disabled={savingStoreEdit}
+                  title="Mağazayı düzenle"
+                  aria-label="Mağazayı düzenle"
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              </div>
+              {selectedWebhook ? (
+                <p className="text-xs text-slate-400 truncate" title={selectedWebhook.name}>
+                  {selectedWebhook.name}
+                </p>
+              ) : null}
               {!item.selectedWebhookConfigId ? (
                 <p className="text-xs text-amber-300">
                   {item.storeCurrency} para birimi için uygun webhook bulunamadı.
@@ -1169,9 +1193,9 @@ export default function AdminStoresPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
             <Button
-              className="cursor-pointer"
+              className="cursor-pointer w-full sm:w-auto"
               onClick={() => {
                 setUsersError(null);
                 setUserSearch("");
@@ -1184,7 +1208,12 @@ export default function AdminStoresPage() {
               <Plus className="mr-1.5 h-4 w-4" />
               Mağaza Ekle
             </Button>
-            <Button variant="secondary" className="cursor-pointer" onClick={() => void loadOverview()} disabled={loading}>
+            <Button
+              variant="secondary"
+              className="cursor-pointer w-full sm:w-auto"
+              onClick={() => void loadOverview()}
+              disabled={loading}
+            >
               Yenile
             </Button>
           </div>
@@ -1210,27 +1239,29 @@ export default function AdminStoresPage() {
               <Skeleton className="h-12 w-full" />
             </div>
           ) : (
-            <DataTable
-              columns={columns}
-              data={tableRows}
-              searchPlaceholder="Mağaza, kullanıcı, plan ara..."
-              searchKeys={[
-                "storeName",
-                "storeId",
-                "userLabel",
-                "plan",
-                "subscriptionStatus",
-                "storeCurrency",
-                "category",
-                "activeWebhookName",
-              ]}
-              pageSize={8}
-              statusFilterKey="storeStatus"
-              dateFilterKey="automationUpdatedAt"
-              statusFilterLabel="Mağaza Durumu"
-              dateFilterLabel="Otomasyon Güncelleme"
-              filtersInline
-            />
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-2 sm:p-3">
+              <DataTable
+                columns={columns}
+                data={tableRows}
+                searchPlaceholder="Mağaza, kullanıcı, plan ara..."
+                searchKeys={[
+                  "storeName",
+                  "storeId",
+                  "userLabel",
+                  "plan",
+                  "subscriptionStatus",
+                  "storeCurrency",
+                  "category",
+                  "activeWebhookName",
+                ]}
+                pageSize={8}
+                statusFilterKey="storeStatus"
+                dateFilterKey="automationUpdatedAt"
+                statusFilterLabel="Mağaza Durumu"
+                dateFilterLabel="Otomasyon Güncelleme"
+                filtersInline
+              />
+            </div>
           )}
         </CardContent>
       </Card>

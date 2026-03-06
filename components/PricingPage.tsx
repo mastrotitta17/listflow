@@ -433,10 +433,6 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
-const DISPLAY_DISCOUNT_PERCENT: Record<BillingInterval, number> = {
-  month: 50,
-  year: 50,
-};
 const isBillingPlan = (value: string | null | undefined): value is BillingPlan =>
   value === "standard" || value === "pro" || value === "turbo";
 const isBillingInterval = (value: string | null | undefined): value is BillingInterval =>
@@ -702,8 +698,12 @@ const PricingPage = () => {
     return interval === "year" ? planPricing[plan].year : planPricing[plan].month;
   };
 
-  const getOriginalCentsFromDiscounted = (discountedCents: number, interval: BillingInterval) => {
-    const discountPercent = DISPLAY_DISCOUNT_PERCENT[interval];
+  const getDiscountPercent = (plan: BillingPlan) => {
+    return planPricing[plan].discount;
+  };
+
+  const getOriginalCentsFromDiscounted = (plan: BillingPlan, discountedCents: number) => {
+    const discountPercent = getDiscountPercent(plan);
     const divisor = 1 - discountPercent / 100;
 
     if (divisor <= 0) {
@@ -1112,8 +1112,8 @@ const PricingPage = () => {
               const planCopy = copy.plans[plan];
               const isPopular = plan === "pro";
               const cents = priceFor(plan, billingInterval);
-              const originalCents = getOriginalCentsFromDiscounted(cents, billingInterval);
-              const discountPercent = DISPLAY_DISCOUNT_PERCENT[billingInterval];
+              const originalCents = getOriginalCentsFromDiscounted(plan, cents);
+              const discountPercent = getDiscountPercent(plan);
 
               return (
                 <motion.article
@@ -1444,7 +1444,9 @@ const PricingPage = () => {
                                   <p className="text-xs text-slate-300 mb-1">
                                     {option.includedStores} {copy.storeLimitUnit}
                                   </p>
-                                  <p className="text-sm font-black text-white">{currencyFormatter.format(option.monthlyPriceCents / 100)}</p>
+                                  <p className="text-sm font-black text-white">
+                                    {currencyFormatter.format(priceFor(option.plan, "month") / 100)}
+                                  </p>
                                 </div>
                               ))}
                             </div>
@@ -1615,10 +1617,10 @@ const PricingPage = () => {
                         <div className="text-right">
                           <span className="block text-2xl font-black text-white">{currencyFormatter.format(selectedPrice / 100)}</span>
                           <span className="block text-xs font-bold text-slate-400 line-through">
-                            {currencyFormatter.format(getOriginalCentsFromDiscounted(selectedPrice, billingInterval) / 100)}
+                            {currencyFormatter.format(getOriginalCentsFromDiscounted(selectedPlan, selectedPrice) / 100)}
                           </span>
                           <span className="inline-flex mt-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-emerald-300">
-                            %{DISPLAY_DISCOUNT_PERCENT[billingInterval]}
+                            %{getDiscountPercent(selectedPlan)}
                           </span>
                         </div>
                       </div>
