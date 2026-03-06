@@ -299,6 +299,16 @@ const loadLegacyUserFromServerSession = async (): Promise<LegacyBootstrapUser | 
   return payload.user ?? null;
 };
 
+const hasServerSession = async () => {
+  const response = await fetch("/api/legacy-onboarding/profile", {
+    method: "GET",
+    cache: "no-store",
+    credentials: "include",
+  });
+
+  return response.ok;
+};
+
 const getUserMetadata = (user: User | null | undefined) => {
   if (!user || typeof user.user_metadata !== "object" || user.user_metadata === null) {
     return {} as Record<string, unknown>;
@@ -341,12 +351,10 @@ export default function LegacyOnboardingPage() {
 
   const saveLegacyProfile = async (args: { fullName: string; phone: string; password?: string }) => {
     const session = await getFreshAuthorizedSession();
-    if (!session?.access_token) {
-      throw new Error("Onboarding oturumu doğrulanamadı. Lütfen magic linki yeniden açın.");
-    }
+    const accessToken = session?.access_token ?? null;
     const response = await fetch("/api/legacy-onboarding/profile", {
       method: "POST",
-      headers: buildAuthHeaders(session?.access_token),
+      headers: buildAuthHeaders(accessToken),
       credentials: "include",
       body: JSON.stringify({
         fullName: args.fullName,
@@ -656,24 +664,33 @@ export default function LegacyOnboardingPage() {
     setCreatingStore(true);
     try {
       const session = await getFreshAuthorizedSession();
+      const accessToken = session?.access_token ?? null;
 
-      if (!session?.access_token) {
-        throw new Error("Oturum bulunamadı. Tekrar giriş yapın.");
+      if (accessToken) {
+        await syncServerSession(session);
+        setActiveSession(session);
+      } else {
+        const serverSessionOk = await hasServerSession();
+        if (!serverSessionOk) {
+          throw new Error("Oturum doğrulanamadı. Magic linki yeniden açın.");
+        }
       }
-
-      await syncServerSession(session);
 
       await saveLegacyProfile({
         fullName: normalizedName,
         phone: normalizedPhone,
       });
 
+      const requestHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (accessToken) {
+        requestHeaders.Authorization = `Bearer ${accessToken}`;
+      }
+
       const response = await fetch("/api/onboarding/store", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: requestHeaders,
         credentials: "include",
         body: JSON.stringify({
           storeName: normalizedStoreName,
