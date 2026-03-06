@@ -132,6 +132,38 @@ const normalizeStoreCurrency = (value: string | null | undefined) => {
   return null;
 };
 
+const normalizeForMatch = (value: string | null | undefined) => {
+  if (!value) {
+    return "";
+  }
+
+  return value
+    .toLocaleLowerCase("tr-TR")
+    .replaceAll("ı", "i")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+};
+
+const buildCategoryNeedles = (category: string | null | undefined) => {
+  const normalized = normalizeForMatch(category);
+  if (!normalized) {
+    return [];
+  }
+
+  const parts = Array.from(
+    new Set(
+      normalized
+        .split(/[/|>,;-]+/g)
+        .map((part) => part.trim())
+        .filter((part) => part.length >= 3)
+    )
+  );
+
+  return Array.from(new Set([normalized, ...parts]));
+};
+
 const loadStoreWebhookMappingFromLogs = async (storeId: string) => {
   const { data, error } = await supabaseAdmin
     .from("webhook_logs")
@@ -232,76 +264,85 @@ const loadAutomationWebhookConfig = async (id: string) => {
 const loadStoreActivationBinding = async (storeId: string) => {
   const candidates = [
     {
-      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id,store_currency,currency",
+      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id,store_currency,currency,category",
       hasProduct: true,
       hasSubCategory: true,
       hasActiveWebhook: true,
       hasStoreCurrency: true,
       hasCurrency: true,
+      hasCategory: true,
     },
     {
-      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id,store_currency",
+      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id,store_currency,category",
       hasProduct: true,
       hasSubCategory: true,
       hasActiveWebhook: true,
       hasStoreCurrency: true,
       hasCurrency: false,
+      hasCategory: true,
     },
     {
-      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id,currency",
+      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id,currency,category",
       hasProduct: true,
       hasSubCategory: true,
       hasActiveWebhook: true,
       hasStoreCurrency: false,
       hasCurrency: true,
+      hasCategory: true,
     },
     {
-      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id",
+      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id,category",
       hasProduct: true,
       hasSubCategory: true,
       hasActiveWebhook: true,
       hasStoreCurrency: false,
       hasCurrency: false,
+      hasCategory: true,
     },
     {
-      select: "id,product_id,active_webhook_config_id,store_currency,currency",
+      select: "id,product_id,active_webhook_config_id,store_currency,currency,category",
       hasProduct: true,
       hasSubCategory: false,
       hasActiveWebhook: true,
       hasStoreCurrency: true,
       hasCurrency: true,
+      hasCategory: true,
     },
     {
-      select: "id,product_id,active_webhook_config_id",
+      select: "id,product_id,active_webhook_config_id,category",
       hasProduct: true,
       hasSubCategory: false,
       hasActiveWebhook: true,
       hasStoreCurrency: false,
       hasCurrency: false,
+      hasCategory: true,
     },
     {
-      select: "id,active_webhook_config_id,store_currency,currency",
+      select: "id,active_webhook_config_id,store_currency,currency,category",
       hasProduct: false,
       hasSubCategory: false,
       hasActiveWebhook: true,
       hasStoreCurrency: true,
       hasCurrency: true,
+      hasCategory: true,
     },
     {
-      select: "id,active_webhook_config_id",
+      select: "id,active_webhook_config_id,category",
       hasProduct: false,
       hasSubCategory: false,
       hasActiveWebhook: true,
       hasStoreCurrency: false,
       hasCurrency: false,
+      hasCategory: true,
     },
     {
-      select: "id",
+      select: "id,category",
       hasProduct: false,
       hasSubCategory: false,
       hasActiveWebhook: false,
       hasStoreCurrency: false,
       hasCurrency: false,
+      hasCategory: true,
     },
   ] as const;
 
@@ -318,6 +359,7 @@ const loadStoreActivationBinding = async (storeId: string) => {
         active_webhook_config_id?: string | null;
         store_currency?: string | null;
         currency?: string | null;
+        category?: string | null;
       }>();
 
     if (!query.error) {
@@ -337,6 +379,7 @@ const loadStoreActivationBinding = async (storeId: string) => {
         productId,
         activeWebhookConfigId: candidate.hasActiveWebhook ? query.data?.active_webhook_config_id ?? null : null,
         storeCurrency,
+        category: candidate.hasCategory ? query.data?.category ?? null : null,
       };
     }
 
@@ -348,6 +391,7 @@ const loadStoreActivationBinding = async (storeId: string) => {
         "active_webhook_config_id",
         "store_currency",
         "currency",
+        "category",
       ])
     ) {
       throw new Error(query.error.message);
@@ -358,7 +402,81 @@ const loadStoreActivationBinding = async (storeId: string) => {
     productId: null,
     activeWebhookConfigId: null,
     storeCurrency: null,
+    category: null,
   };
+};
+
+const resolveProductIdByStoreCategory = async (category: string) => {
+  const needles = buildCategoryNeedles(category);
+  if (!needles.length) {
+    return null;
+  }
+
+  const candidates = [
+    "id,title_tr,title_en,title",
+    "id,title_tr,title",
+    "id,title_tr",
+    "id,title",
+  ] as const;
+
+  let rows: Array<{ id: string; title_tr?: string | null; title_en?: string | null; title?: string | null }> = [];
+
+  for (const select of candidates) {
+    const query = await supabaseAdmin.from("products").select(select).limit(5000);
+    if (!query.error) {
+      rows = (query.data ?? []) as unknown as Array<{
+        id: string;
+        title_tr?: string | null;
+        title_en?: string | null;
+        title?: string | null;
+      }>;
+      break;
+    }
+
+    if (!isMissingAnyColumnError(query.error, ["title_tr", "title_en", "title"])) {
+      throw new Error(query.error.message);
+    }
+  }
+
+  if (!rows.length) {
+    return null;
+  }
+
+  let bestProductId: string | null = null;
+  let bestScore = -1;
+
+  for (const row of rows) {
+    const titles = [row.title_tr ?? null, row.title_en ?? null, row.title ?? null]
+      .map((item) => normalizeForMatch(item))
+      .filter(Boolean);
+
+    if (!titles.length) {
+      continue;
+    }
+
+    let score = 0;
+    for (const title of titles) {
+      if (needles.includes(title)) {
+        score = Math.max(score, 100);
+        continue;
+      }
+
+      for (const needle of needles) {
+        if (needle === title) {
+          score = Math.max(score, 100);
+        } else if (needle.includes(title) || title.includes(needle)) {
+          score = Math.max(score, 75);
+        }
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestProductId = row.id;
+    }
+  }
+
+  return bestScore >= 75 ? bestProductId : null;
 };
 
 const pickWebhookIdByCurrencyPreference = (
@@ -502,6 +620,68 @@ const resolveWebhookByProduct = async (productId: string, preferredCurrency: "US
   );
 };
 
+const resolveSingletonAutomationWebhookByCurrency = async (preferredCurrency: "USD" | "TRY" | null) => {
+  const withCurrency = await supabaseAdmin
+    .from("webhook_configs")
+    .select("id,target_url,enabled,scope,currency")
+    .eq("enabled", true)
+    .order("updated_at", { ascending: false })
+    .limit(5000);
+
+  let rows = (withCurrency.data ?? []) as Array<{
+    id: string;
+    target_url?: string | null;
+    enabled?: boolean | null;
+    scope?: string | null;
+    currency?: string | null;
+  }>;
+
+  if (withCurrency.error) {
+    if (!isMissingColumnError(withCurrency.error, "currency")) {
+      throw new Error(withCurrency.error.message);
+    }
+
+    const withoutCurrency = await supabaseAdmin
+      .from("webhook_configs")
+      .select("id,target_url,enabled,scope")
+      .eq("enabled", true)
+      .order("updated_at", { ascending: false })
+      .limit(5000);
+
+    if (withoutCurrency.error) {
+      throw new Error(withoutCurrency.error.message);
+    }
+
+    rows = (withoutCurrency.data ?? []) as Array<{
+      id: string;
+      target_url?: string | null;
+      enabled?: boolean | null;
+      scope?: string | null;
+    }>;
+  }
+
+  const activeRows = rows.filter((row) => Boolean(row.target_url) && (row.scope ?? "automation") !== "generic");
+  if (!activeRows.length) {
+    return null;
+  }
+
+  if (!preferredCurrency) {
+    return activeRows.length === 1 ? activeRows[0].id : null;
+  }
+
+  const exact = activeRows.filter((row) => normalizeStoreCurrency(row.currency ?? null) === preferredCurrency);
+  if (exact.length === 1) {
+    return exact[0].id;
+  }
+
+  if (exact.length > 1) {
+    return null;
+  }
+
+  const generic = activeRows.filter((row) => normalizeStoreCurrency(row.currency ?? null) === null);
+  return generic.length === 1 ? generic[0].id : null;
+};
+
 const persistActivationStoreWebhookMapping = async (args: {
   storeId: string;
   webhookConfigId: string;
@@ -594,19 +774,55 @@ const ensureActivationWebhookBinding = async (args: {
     }
   }
 
-  if (!storeBinding.productId) {
+  const effectiveProductId =
+    storeBinding.productId ??
+    (storeBinding.category ? await resolveProductIdByStoreCategory(storeBinding.category) : null);
+
+  if (!effectiveProductId) {
+    const singletonWebhookId = await resolveSingletonAutomationWebhookByCurrency(storeBinding.storeCurrency);
+    if (singletonWebhookId) {
+      await updateStoreActivationBinding({
+        storeId: args.storeId,
+        webhookConfigId: singletonWebhookId,
+        productId: null,
+        userId: args.userId,
+      });
+      await persistActivationStoreWebhookMapping({
+        storeId: args.storeId,
+        webhookConfigId: singletonWebhookId,
+        idempotencyKey: args.idempotencyKey,
+        createdBy: args.userId,
+      });
+      return singletonWebhookId;
+    }
     return loadStoreWebhookConfigId(args.storeId);
   }
 
-  const webhookConfigId = await resolveWebhookByProduct(storeBinding.productId, storeBinding.storeCurrency);
+  const webhookConfigId = await resolveWebhookByProduct(effectiveProductId, storeBinding.storeCurrency);
   if (!webhookConfigId) {
+    const singletonWebhookId = await resolveSingletonAutomationWebhookByCurrency(storeBinding.storeCurrency);
+    if (singletonWebhookId) {
+      await updateStoreActivationBinding({
+        storeId: args.storeId,
+        webhookConfigId: singletonWebhookId,
+        productId: effectiveProductId,
+        userId: args.userId,
+      });
+      await persistActivationStoreWebhookMapping({
+        storeId: args.storeId,
+        webhookConfigId: singletonWebhookId,
+        idempotencyKey: args.idempotencyKey,
+        createdBy: args.userId,
+      });
+      return singletonWebhookId;
+    }
     return loadStoreWebhookConfigId(args.storeId);
   }
 
   await updateStoreActivationBinding({
     storeId: args.storeId,
     webhookConfigId,
-    productId: storeBinding.productId,
+    productId: effectiveProductId,
     userId: args.userId,
   });
 
@@ -924,8 +1140,10 @@ const upsertSubscriptionFromStripe = async (
   const metadataUserId = metadata?.userId as string | undefined;
   const emailUserId = !metadataUserId && subscriberEmail ? await findFirstProfileUserIdByEmail(subscriberEmail) : null;
   const userId = metadataUserId ?? emailUserId ?? null;
-  const shopId = metadata?.shopId as string | undefined;
-  const storeId = isUuid(shopId) ? shopId : null;
+  const metadataStoreId = typeof metadata?.storeId === "string" ? metadata.storeId.trim() : null;
+  const metadataShopId = typeof metadata?.shopId === "string" ? metadata.shopId.trim() : null;
+  const shopId = metadataShopId || metadataStoreId || undefined;
+  const storeId = isUuid(metadataStoreId) ? metadataStoreId : isUuid(metadataShopId) ? metadataShopId : null;
   const stripeUnitAmount = subscription.items.data[0]?.price?.unit_amount ?? null;
   const stripeCustomerId = typeof customerId === "string"
     ? customerId

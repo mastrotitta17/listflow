@@ -68,6 +68,7 @@ export async function POST(request: NextRequest) {
           metadata: {
             userId: user.id,
             shopId: body.shopId,
+            storeId: body.shopId,
             plan: body.plan,
             billingInterval,
             stripeMode,
@@ -76,6 +77,7 @@ export async function POST(request: NextRequest) {
         metadata: {
           userId: user.id,
           shopId: body.shopId,
+          storeId: body.shopId,
           plan: body.plan,
           billingInterval,
           stripeMode,
