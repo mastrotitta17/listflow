@@ -83,6 +83,23 @@ type CategoryRow = {
   slug: string | null;
 };
 
+type MappingTriggerType = "manual_switch" | "activation" | "auto_switch";
+
+type StoreWebhookMappingTrigger = {
+  status: "success";
+  triggerType: MappingTriggerType;
+  responseStatus: 200;
+  errorMessage: null;
+  createdAt: string | null;
+  webhookConfigId: string | null;
+};
+
+type StoreWebhookMappingSnapshot = {
+  webhookConfigIds: string[];
+  lastMappedAt: string | null;
+  lastTrigger: StoreWebhookMappingTrigger | null;
+};
+
 const isMissingColumnError = (error: { message?: string } | null | undefined, columnName: string) => {
   if (!error) {
     return false;
@@ -606,7 +623,7 @@ const loadCategories = async () => {
 
 const loadStoreWebhookMappingsFromLogs = async (storeIds: string[]) => {
   if (!storeIds.length) {
-    return new Map<string, string[]>();
+    return new Map<string, StoreWebhookMappingSnapshot>();
   }
 
   const { data, error } = await supabaseAdmin
@@ -617,13 +634,13 @@ const loadStoreWebhookMappingsFromLogs = async (storeIds: string[]) => {
     .limit(5000);
 
   if (error) {
-    return new Map<string, string[]>();
+    return new Map<string, StoreWebhookMappingSnapshot>();
   }
 
   const allowedStoreIds = new Set(storeIds);
-  const mapping = new Map<string, string[]>();
+  const mapping = new Map<string, StoreWebhookMappingSnapshot>();
 
-  for (const row of (data ?? []) as Array<{ request_body: unknown; request_url?: string | null }>) {
+  for (const row of (data ?? []) as Array<{ request_body: unknown; request_url?: string | null; created_at: string | null }>) {
     const body =
       typeof row.request_body === "object" && row.request_body !== null
         ? (row.request_body as Record<string, unknown>)
@@ -634,7 +651,9 @@ const loadStoreWebhookMappingsFromLogs = async (storeIds: string[]) => {
     const isManualBinding = sourceUrl === "store-webhook-mapping" || (idempotencyKey?.startsWith("manual_switch:") ?? false);
     const isActivationBinding =
       sourceUrl === "store-webhook-mapping-activation" || (idempotencyKey?.startsWith("activation:") ?? false);
-    if (!isManualBinding && !isActivationBinding) {
+    const isAutoBindMapping =
+      sourceUrl === "store-webhook-mapping-auto-bind" || (idempotencyKey?.startsWith("auto_bind:") ?? false);
+    if (!isManualBinding && !isActivationBinding && !isAutoBindMapping) {
       continue;
     }
 
@@ -645,10 +664,36 @@ const loadStoreWebhookMappingsFromLogs = async (storeIds: string[]) => {
       continue;
     }
 
-    const current = mapping.get(storeId) ?? [];
-    if (!current.includes(webhookConfigId)) {
-      current.push(webhookConfigId);
+    const triggerType: MappingTriggerType = isManualBinding
+      ? "manual_switch"
+      : isActivationBinding
+      ? "activation"
+      : "auto_switch";
+
+    const current = mapping.get(storeId) ?? {
+      webhookConfigIds: [],
+      lastMappedAt: row.created_at ?? null,
+      lastTrigger: null,
+    };
+    if (!current.webhookConfigIds.includes(webhookConfigId)) {
+      current.webhookConfigIds.push(webhookConfigId);
     }
+
+    if (!current.lastMappedAt) {
+      current.lastMappedAt = row.created_at ?? null;
+    }
+
+    if (!current.lastTrigger) {
+      current.lastTrigger = {
+        status: "success",
+        triggerType,
+        responseStatus: 200,
+        errorMessage: null,
+        createdAt: row.created_at ?? null,
+        webhookConfigId,
+      };
+    }
+
     mapping.set(storeId, current);
   }
 
@@ -730,6 +775,15 @@ const getJobTimestamp = (job: SchedulerJobRow) => {
   }
 
   return 0;
+};
+
+const parseIsoToMs = (value: string | null | undefined) => {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
 };
 
 const getMostRecentCadenceSuccessAt = (jobs: SchedulerJobRow[]) => {
@@ -1029,7 +1083,7 @@ export async function GET(request: NextRequest) {
         return explicitId;
       }
 
-      const fallbackCandidates = storeWebhookMappingFallback.get(store.id) ?? [];
+      const fallbackCandidates = storeWebhookMappingFallback.get(store.id)?.webhookConfigIds ?? [];
       for (const candidateId of fallbackCandidates) {
         if (activeWebhookIds.has(candidateId)) {
           return candidateId;
@@ -1046,6 +1100,7 @@ export async function GET(request: NextRequest) {
       const canSwitch = Boolean(activeSubscription);
       const lastJob = latestJobByStoreId.get(store.id) ?? null;
       const storeJobs = jobsByStoreId.get(store.id) ?? [];
+      const mappingSnapshot = storeWebhookMappingFallback.get(store.id) ?? null;
       const activeWebhookConfigId = resolveStoreWebhookId(store);
       const activeWebhook = activeWebhookConfigId ? webhookById.get(activeWebhookConfigId) ?? null : null;
       const storeCurrency = storeCurrencyById.get(store.id) ?? "USD";
@@ -1068,6 +1123,21 @@ export async function GET(request: NextRequest) {
         jobs: storeJobs,
         nowMs,
       });
+      const lastTriggerFromJob = lastJob
+        ? {
+            status: lastJob.status,
+            triggerType: lastJob.trigger_type,
+            responseStatus: lastJob.response_status,
+            errorMessage: lastJob.error_message,
+            createdAt: lastJob.run_at ?? lastJob.created_at,
+            webhookConfigId: lastJob.webhook_config_id,
+          }
+        : null;
+      const lastTriggerFromMapping = mappingSnapshot?.lastTrigger ?? null;
+      const lastTrigger =
+        parseIsoToMs(lastTriggerFromMapping?.createdAt ?? null) > parseIsoToMs(lastTriggerFromJob?.createdAt ?? null)
+          ? lastTriggerFromMapping
+          : lastTriggerFromJob;
 
       return {
         storeId: store.id,
@@ -1094,20 +1164,11 @@ export async function GET(request: NextRequest) {
         eligibilityReason: !activeSubscription ? "active_subscription_required" : null,
         activeWebhookConfigId,
         activeWebhookName: activeWebhook?.name ?? null,
-        automationUpdatedAt: store.automation_updated_at,
+        automationUpdatedAt: store.automation_updated_at ?? mappingSnapshot?.lastMappedAt ?? null,
         cadenceHours: scheduleState.cadenceHours,
         nextTriggerAt: scheduleState.nextTriggerAt,
         lastCadenceSuccessAt: scheduleState.lastCadenceSuccessAt,
-        lastTrigger: lastJob
-          ? {
-              status: lastJob.status,
-              triggerType: lastJob.trigger_type,
-              responseStatus: lastJob.response_status,
-              errorMessage: lastJob.error_message,
-              createdAt: lastJob.run_at ?? lastJob.created_at,
-              webhookConfigId: lastJob.webhook_config_id,
-            }
-          : null,
+        lastTrigger,
         listingCount: listingCountByStoreId.get(store.id) ?? 0,
       };
     });
