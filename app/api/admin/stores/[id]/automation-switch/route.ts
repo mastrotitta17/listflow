@@ -534,6 +534,27 @@ const persistFallbackStoreWebhookMapping = async (args: {
   });
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const ensureCronLifecycleSynced = async () => {
+  const retryDelaysMs = [0, 750, 1500] as const;
+  let lastResult: Awaited<ReturnType<typeof syncSchedulerCronJobLifecycle>> | null = null;
+
+  for (let index = 0; index < retryDelaysMs.length; index += 1) {
+    if (retryDelaysMs[index] > 0) {
+      await sleep(retryDelaysMs[index]);
+    }
+
+    const result = await syncSchedulerCronJobLifecycle({ force: true });
+    lastResult = result;
+    if (result.ok) {
+      return result;
+    }
+  }
+
+  throw new Error(lastResult?.message || "Cron lifecycle sync failed");
+};
+
 const updateStoreAutomationBindingWithFallback = async (args: {
   storeId: string;
   webhookConfigId: string;
@@ -742,7 +763,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       createdBy: admin.user.id,
       idempotencyKey,
     });
-    const cronSync = await syncSchedulerCronJobLifecycle({ force: true });
+    const cronSync = await ensureCronLifecycleSynced();
 
     const schedulerJobInsert = await insertSchedulerJobWithFallback({
       subscriptionId: activeSubscription.id,

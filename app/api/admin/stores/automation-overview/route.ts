@@ -1204,7 +1204,7 @@ export async function GET(request: NextRequest) {
       const lastTriggerFromJob = lastJob
         ? {
             status: lastJob.status,
-            triggerType: lastJob.trigger_type,
+            triggerType: isScheduledJob(lastJob) ? "auto_switch" : lastJob.trigger_type,
             responseStatus: lastJob.response_status,
             errorMessage: lastJob.error_message,
             createdAt: lastJob.run_at ?? lastJob.created_at,
