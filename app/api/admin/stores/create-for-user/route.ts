@@ -87,12 +87,70 @@ const toNextMonthUnix = () => {
   return Math.floor(next.getTime() / 1000);
 };
 
-const isStripeMissingCustomerError = (error: unknown) => {
-  if (!(error instanceof Error)) {
-    return false;
+const ACTIVE_CUSTOMER_SUBSCRIPTION_STATUSES = new Set([
+  "trialing",
+  "active",
+  "past_due",
+  "unpaid",
+  "incomplete",
+]);
+
+const normalizeStripeErrorMessage = (error: unknown) => {
+  const chunks: string[] = [];
+
+  if (typeof error === "string" && error.trim()) {
+    chunks.push(error.trim());
   }
 
-  return (error.message ?? "").toLowerCase().includes("no such customer");
+  if (error && typeof error === "object") {
+    const typed = error as {
+      message?: unknown;
+      code?: unknown;
+      type?: unknown;
+      raw?: { message?: unknown; code?: unknown; type?: unknown } | null;
+      cause?: { message?: unknown } | null;
+    };
+
+    if (typeof typed.message === "string" && typed.message.trim()) {
+      chunks.push(typed.message.trim());
+    }
+    if (typeof typed.code === "string" && typed.code.trim()) {
+      chunks.push(typed.code.trim());
+    }
+    if (typeof typed.type === "string" && typed.type.trim()) {
+      chunks.push(typed.type.trim());
+    }
+    if (typed.raw) {
+      if (typeof typed.raw.message === "string" && typed.raw.message.trim()) {
+        chunks.push(typed.raw.message.trim());
+      }
+      if (typeof typed.raw.code === "string" && typed.raw.code.trim()) {
+        chunks.push(typed.raw.code.trim());
+      }
+      if (typeof typed.raw.type === "string" && typed.raw.type.trim()) {
+        chunks.push(typed.raw.type.trim());
+      }
+    }
+    if (typed.cause && typeof typed.cause.message === "string" && typed.cause.message.trim()) {
+      chunks.push(typed.cause.message.trim());
+    }
+  }
+
+  return chunks.join(" | ").toLowerCase();
+};
+
+const isStripeMissingCustomerError = (error: unknown) => {
+  return normalizeStripeErrorMessage(error).includes("no such customer");
+};
+
+const isStripeCurrencyConflictError = (error: unknown) => {
+  const message = normalizeStripeErrorMessage(error);
+  return (
+    message.includes("cannot combine currencies on a single customer") ||
+    (message.includes("cannot combine currencies") && message.includes("customer")) ||
+    (message.includes("single customer") && message.includes("currency")) ||
+    (message.includes("currency") && message.includes("subscription schedule"))
+  );
 };
 
 const asStoreCurrency = (value: unknown): StoreCurrency => {
@@ -177,7 +235,65 @@ const resolveUserEmail = async (userId: string) => {
   return authEmail || null;
 };
 
-const resolveStripeCustomerId = async (userId: string, email: string | null) => {
+const resolveActiveSubscriptionCurrencies = async (
+  stripe: ReturnType<typeof getStripeClientForMode>,
+  customerId: string
+) => {
+  const currencies = new Set<string>();
+  let startingAfter: string | undefined;
+
+  for (let page = 0; page < 12; page += 1) {
+    const subscriptions = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 100,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    });
+
+    for (const subscription of subscriptions.data) {
+      if (!ACTIVE_CUSTOMER_SUBSCRIPTION_STATUSES.has(subscription.status)) {
+        continue;
+      }
+
+      for (const item of subscription.items.data) {
+        const priceCurrency = (item.price?.currency ?? "").trim().toLowerCase();
+        if (priceCurrency) {
+          currencies.add(priceCurrency);
+        }
+      }
+    }
+
+    if (!subscriptions.has_more) {
+      break;
+    }
+
+    const lastId = subscriptions.data.at(-1)?.id;
+    if (!lastId) {
+      break;
+    }
+    startingAfter = lastId;
+  }
+
+  return currencies;
+};
+
+const isStripeCustomerCompatibleForCurrency = async (
+  stripe: ReturnType<typeof getStripeClientForMode>,
+  customerId: string,
+  currency: StoreCurrency
+) => {
+  const targetCurrency = currency.toLowerCase();
+  try {
+    const activeCurrencies = await resolveActiveSubscriptionCurrencies(stripe, customerId);
+    return activeCurrencies.size === 0 || activeCurrencies.has(targetCurrency);
+  } catch {
+    // If Stripe introspection fails for any reason, do not block the flow here.
+    // Subscription create phase still has currency-conflict fallback.
+    return true;
+  }
+};
+
+const resolveStripeCustomerId = async (userId: string, email: string | null, currency: StoreCurrency) => {
   const stripe = getStripeClientForMode();
 
   const fromSubscriptions = await supabaseAdmin
@@ -200,6 +316,10 @@ const resolveStripeCustomerId = async (userId: string, email: string | null) => 
       try {
         const retrieved = await stripe.customers.retrieve(candidateId);
         if (!("deleted" in retrieved && retrieved.deleted)) {
+          const isCompatible = await isStripeCustomerCompatibleForCurrency(stripe, retrieved.id, currency);
+          if (!isCompatible) {
+            continue;
+          }
           return retrieved.id;
         }
       } catch (error) {
@@ -213,10 +333,19 @@ const resolveStripeCustomerId = async (userId: string, email: string | null) => 
   if (email) {
     const listed = await stripe.customers.list({
       email,
-      limit: 1,
+      limit: 100,
     });
-    const existing = listed.data[0];
-    if (existing && !("deleted" in existing && existing.deleted)) {
+
+    for (const existing of listed.data) {
+      if ("deleted" in existing && existing.deleted) {
+        continue;
+      }
+
+      const isCompatible = await isStripeCustomerCompatibleForCurrency(stripe, existing.id, currency);
+      if (!isCompatible) {
+        continue;
+      }
+
       return existing.id;
     }
   }
@@ -226,6 +355,7 @@ const resolveStripeCustomerId = async (userId: string, email: string | null) => 
     metadata: {
       userId,
       source: "admin_store_create",
+      preferredCurrency: currency.toLowerCase(),
     },
   });
 
@@ -246,23 +376,48 @@ const createDeferredStripeSubscription = async (args: {
   }
 
   const email = await resolveUserEmail(args.userId);
-  const stripeCustomerId = await resolveStripeCustomerId(args.userId, email);
+  const stripeCustomerId = await resolveStripeCustomerId(args.userId, email, args.currency);
   const trialEndUnix = toNextMonthUnix();
 
   const stripe = getStripeClientForMode();
-  const subscription = await stripe.subscriptions.create({
-    customer: stripeCustomerId,
-    collection_method: "charge_automatically",
-    trial_end: trialEndUnix,
-    items: [{ price: priceId, quantity: 1 }],
-    metadata: {
-      userId: args.userId,
-      shopId: args.storeId,
-      plan: args.plan,
-      billingInterval: "month",
-      adminGrant: "true",
-    },
-  });
+  const createForCustomer = async (customerId: string) =>
+    stripe.subscriptions.create({
+      customer: customerId,
+      collection_method: "charge_automatically",
+      trial_end: trialEndUnix,
+      items: [{ price: priceId, quantity: 1 }],
+      metadata: {
+        userId: args.userId,
+        shopId: args.storeId,
+        plan: args.plan,
+        billingInterval: "month",
+        billingCurrency: args.currency.toLowerCase(),
+        adminGrant: "true",
+      },
+    });
+
+  let subscription;
+  try {
+    subscription = await createForCustomer(stripeCustomerId);
+  } catch (error) {
+    if (!isStripeCurrencyConflictError(error)) {
+      throw error;
+    }
+
+    // Customer has active records in another currency.
+    // Create an isolated customer for this store currency and retry once.
+    const isolatedCustomer = await stripe.customers.create({
+      email: email ?? undefined,
+      metadata: {
+        userId: args.userId,
+        storeId: args.storeId,
+        source: "admin_store_create_currency_retry",
+        preferredCurrency: args.currency.toLowerCase(),
+      },
+    });
+
+    subscription = await createForCustomer(isolatedCustomer.id);
+  }
 
   const periodEndUnix =
     subscription.items.data[0]?.current_period_end ??
