@@ -375,12 +375,16 @@ const updateStripeSubscriptionToPro = async (args: {
 
   const item = subscription.items.data[0];
   const currentInterval = item?.price?.recurring?.interval;
+  const currentCurrency = item?.price?.currency ?? null;
 
   if (!item || (currentInterval !== "month" && currentInterval !== "year")) {
     throw new Error("Stripe subscription interval could not be resolved.");
   }
 
-  const targetPriceId = await resolveCheckoutPriceId("pro", currentInterval, { mode: args.mode });
+  const targetPriceId = await resolveCheckoutPriceId("pro", currentInterval, {
+    mode: args.mode,
+    currency: currentCurrency,
+  });
   const currentPriceId = item.price?.id ?? null;
 
   if (currentPriceId !== targetPriceId) {

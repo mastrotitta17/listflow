@@ -236,8 +236,11 @@ const createDeferredStripeSubscription = async (args: {
   userId: string;
   storeId: string;
   plan: BillingPlan;
+  currency: StoreCurrency;
 }) => {
-  const priceId = await resolveCheckoutPriceId(args.plan, "month");
+  const priceId = await resolveCheckoutPriceId(args.plan, "month", {
+    currency: args.currency,
+  });
   if (!priceId) {
     throw new Error(`Stripe fiyatı bulunamadı: ${args.plan}/month`);
   }
@@ -515,6 +518,7 @@ export async function POST(request: NextRequest) {
         userId,
         storeId,
         plan: grantPlan,
+        currency,
       });
 
       stripeSubscriptionId = stripeSubscription.stripeSubscriptionId;

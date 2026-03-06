@@ -68,6 +68,7 @@ export type StripeCatalogProduct = {
 
 type PlanOptions = {
   mode?: StripeMode;
+  currency?: string | null;
 };
 
 const isPlan = (value: string | null | undefined): value is BillingPlan => {
@@ -80,6 +81,14 @@ const isInterval = (value: string | null | undefined): value is BillingInterval 
 
 const isMode = (value: string | null | undefined): value is StripeMode => {
   return value === "live" || value === "test";
+};
+
+const normalizeCheckoutCurrency = (value: string | null | undefined) => {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "tl" || normalized === "₺" || normalized === "try") return "try";
+  if (normalized === "$" || normalized === "usd") return "usd";
+  return normalized;
 };
 
 const intervalKey = (plan: BillingPlan, interval: BillingInterval): PlanIntervalKey =>
@@ -580,21 +589,33 @@ export const resolveCheckoutPriceId = async (
   options: PlanOptions = {}
 ) => {
   const mode = options.mode ?? getActiveStripeMode();
+  const requestedCurrency = normalizeCheckoutCurrency(options.currency);
+  const matchesRequestedCurrency = (value: string | null | undefined) => {
+    if (!requestedCurrency) {
+      return true;
+    }
+    return normalizeCheckoutCurrency(value) === requestedCurrency;
+  };
+
   const stripeClient = getStripeClientForMode(mode);
   const dbRows = await readDbPlanRows(mode);
-  const dbMatch = dbRows.find((row) => row.plan === plan && row.interval === interval && row.stripe_price_id);
 
-  if (dbMatch?.stripe_price_id) {
-    const dbPrice = await retrievePriceById(stripeClient, dbMatch.stripe_price_id);
-    if (dbPrice) {
-      return dbMatch.stripe_price_id;
+  const dbCandidates = dbRows.filter((row) => row.plan === plan && row.interval === interval && row.stripe_price_id);
+  for (const dbCandidate of dbCandidates) {
+    if (!matchesRequestedCurrency(dbCandidate.currency)) {
+      continue;
+    }
+
+    const dbPrice = await retrievePriceById(stripeClient, dbCandidate.stripe_price_id);
+    if (dbPrice && matchesRequestedCurrency(dbPrice.currency)) {
+      return dbCandidate.stripe_price_id as string;
     }
   }
 
   const configured = getConfiguredPriceId(plan, interval, mode);
   if (configured) {
     const configuredPrice = await retrievePriceById(stripeClient, configured);
-    if (configuredPrice) {
+    if (configuredPrice && matchesRequestedCurrency(configuredPrice.currency)) {
       return configured;
     }
   }
@@ -610,7 +631,7 @@ export const resolveCheckoutPriceId = async (
 
   if (selected.priceId) {
     const selectedPrice = await retrievePriceById(stripeClient, selected.priceId);
-    if (selectedPrice) {
+    if (selectedPrice && matchesRequestedCurrency(selectedPrice.currency)) {
       return selected.priceId;
     }
   }
@@ -618,13 +639,40 @@ export const resolveCheckoutPriceId = async (
   const monthlyConfigured = getConfiguredPriceId(plan, "month", mode);
   const monthlyPrice = await retrievePriceById(stripeClient, monthlyConfigured);
   const monthlyCents = monthlyPrice?.unit_amount ?? snapshot.monthly.amountCents ?? PLAN_TO_MONTHLY_CENTS[plan];
-  const currency = monthlyPrice?.currency ?? snapshot.monthly.currency ?? "usd";
+  const currency =
+    requestedCurrency ??
+    normalizeCheckoutCurrency(monthlyPrice?.currency ?? null) ??
+    normalizeCheckoutCurrency(snapshot.monthly.currency) ??
+    "usd";
   const productId = await getOrCreatePlanProductId(
     stripeClient,
     plan,
     mode,
     snapshot.monthly.productId ?? snapshot.yearly.productId
   );
+
+  const existingPrices = await stripeClient.prices.list({
+    product: productId,
+    active: true,
+    limit: 100,
+  });
+  const existingMatch = existingPrices.data.find(
+    (price) =>
+      price.recurring?.interval === interval &&
+      matchesRequestedCurrency(price.currency)
+  );
+  if (existingMatch) {
+    await upsertDbPlanRow({
+      plan,
+      interval,
+      mode,
+      stripeProductId: productId,
+      stripePriceId: existingMatch.id,
+      amountCents: existingMatch.unit_amount ?? monthlyCents,
+      currency: existingMatch.currency,
+    });
+    return existingMatch.id;
+  }
 
   if (interval === "month") {
     const createdMonthlyPrice = await stripeClient.prices.create({

@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
         const item = stripeSubscription.items.data[0];
         const currentPrice = item?.price;
         const currentInterval = currentPrice?.recurring?.interval;
+        const currentCurrency = currentPrice?.currency ?? null;
 
         if (!item || !currentPrice || (currentInterval !== "month" && currentInterval !== "year")) {
           skipped.push({ subscriptionId: stripeSubscriptionId, reason: "missing_item_or_interval" });
@@ -89,7 +90,10 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        const targetPriceId = await resolveCheckoutPriceId(plan, currentInterval, { mode });
+        const targetPriceId = await resolveCheckoutPriceId(plan, currentInterval, {
+          mode,
+          currency: currentCurrency,
+        });
 
         if (targetPriceId === currentPrice.id) {
           skipped.push({ subscriptionId: stripeSubscriptionId, reason: "already_synced" });
