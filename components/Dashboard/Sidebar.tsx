@@ -225,7 +225,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
         />
       )}
       <div
-        className={`fixed inset-y-0 left-0 z-40 w-59 px-3 h-[100dvh] flex flex-col overflow-hidden sidebar-bg shrink-0 transform transition-transform duration-300 lg:relative lg:z-20 lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 w-64 h-[100dvh] px-3 flex flex-col overflow-x-hidden overflow-y-hidden sidebar-bg shrink-0 transform transition-transform duration-300 lg:relative lg:z-20 lg:translate-x-0 ${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -247,8 +247,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-width:thin] [scrollbar-color:rgba(129,140,248,0.35)_transparent]">
-        <nav className="space-y-2">
+      <div className="min-h-0 flex flex-1 flex-col overflow-x-hidden">
+        <div className="min-h-0 flex-1 overflow-x-hidden pr-1">
+        <nav className="space-y-1.5 [@media(max-height:840px)]:space-y-1">
           {menuItems.map((item) => {
             const isActive = effectiveSection === item.id;
             return (
@@ -259,7 +260,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
                   router.push(resolveSectionPath(item.id));
                   onClose?.();
                 }}
-                className={`w-full flex items-center gap-4 px-5 py-4 [@media(max-height:840px)]:py-3 rounded-[18px] transition-all duration-300 relative group cursor-pointer group/coming ${
+                className={`w-full flex items-center gap-4 px-5 py-3.5 [@media(max-height:840px)]:py-3 [@media(max-height:760px)]:py-2.5 rounded-[18px] transition-all duration-300 relative group cursor-pointer group/coming ${
                   isActive
                     ? 'bg-indigo-600/15 border border-indigo-500/40 text-white'
                     : 'hover:bg-white/5 text-slate-400 hover:text-white'
@@ -268,7 +269,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
                 <item.icon className={`w-4.5 h-4.5 transition-transform ${isActive ? 'scale-110 text-indigo-400' : 'group-hover:scale-110'}`} />
                 <span className="font-bold text-[14px] tracking-tight">{item.label}</span>
                 {item.comingSoon && (
-                  <span className="ml-auto shrink-0 rounded-full border border-amber-500/30 bg-amber-500 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-900 absolute -right-6 group-hover/coming:opacity-100 opacity-0 transition-all duration-300 z-50">
+                  <span className="ml-auto shrink-0 rounded-full border border-amber-500/30 bg-amber-500 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-900 absolute right-3 top-1/2 -translate-y-1/2 group-hover/coming:opacity-100 opacity-0 transition-all duration-300 z-50">
                     {t("common.comingSoon")}
                   </span>
                 )}
@@ -283,8 +284,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
           })}
         </nav>
 
-        {/* Footer Section */}
-        <div className="mt-4 space-y-2 pt-4 [@media(max-height:840px)]:mt-3 [@media(max-height:840px)]:pt-3 border-t border-indigo-500/10">
+        <div className="mt-3 pt-3 border-t border-indigo-500/10 [@media(max-height:840px)]:mt-2.5 [@media(max-height:840px)]:pt-2.5 [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:pt-2">
           {/* ── Referral Card ── */}
           <ReferralCard
             onClick={() => {
@@ -293,14 +293,17 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
               onClose?.();
             }}
           />
+        </div>
+        </div>
 
+        <div className="shrink-0 mt-3 space-y-2 pt-3 pb-4 border-t border-indigo-500/10 [@media(max-height:840px)]:mt-2.5 [@media(max-height:840px)]:pt-2.5 [@media(max-height:840px)]:pb-3 [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:pt-2 [@media(max-height:760px)]:pb-2">
           <button
             onClick={() => {
               setDashboardSection(DashboardSection.SETTINGS);
               router.push(resolveSectionPath(DashboardSection.SETTINGS));
               onClose?.();
             }}
-            className={`w-full flex items-center gap-4 px-5 py-4 [@media(max-height:840px)]:py-3 rounded-[18px] transition-all cursor-pointer ${
+            className={`w-full flex items-center gap-4 px-5 py-3.5 [@media(max-height:840px)]:py-3 [@media(max-height:760px)]:py-2.5 rounded-[18px] transition-all cursor-pointer ${
               effectiveSection === DashboardSection.SETTINGS
                 ? 'bg-indigo-600/15 border border-indigo-500/40 text-white'
                 : 'hover:bg-white/5 text-slate-500 hover:text-white font-bold'
@@ -311,7 +314,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
           </button>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-4 px-5 py-4 [@media(max-height:840px)]:py-3 mb-4 rounded-[18px] hover:bg-red-500/10 text-slate-500 hover:text-red-400 transition-all group font-bold cursor-pointer"
+            className="w-full flex items-center gap-4 px-5 py-3.5 [@media(max-height:840px)]:py-3 [@media(max-height:760px)]:py-2.5 rounded-[18px] hover:bg-red-500/10 text-slate-500 hover:text-red-400 transition-all group font-bold cursor-pointer"
           >
             <LogOut className="w-4.5 h-4.5 group-hover:-translate-x-1 transition-transform" />
             <span className="text-[14px]">{t("sidebar.logout")}</span>
