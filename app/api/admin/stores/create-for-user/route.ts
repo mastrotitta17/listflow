@@ -409,6 +409,67 @@ const insertStoreSubscriptionRecord = async (args: {
   throw new Error("Store subscription could not be created.");
 };
 
+const cleanupFailedGrantedPlan = async (args: {
+  userId: string;
+  storeId: string;
+  stripeSubscriptionId: string | null;
+}) => {
+  if (args.stripeSubscriptionId) {
+    try {
+      const stripe = getStripeClientForMode();
+      await stripe.subscriptions.cancel(args.stripeSubscriptionId);
+    } catch {
+      // ignore rollback cancellation errors
+    }
+  }
+
+  try {
+    const deleteByStoreId = await supabaseAdmin
+      .from("subscriptions")
+      .delete()
+      .eq("user_id", args.userId)
+      .eq("store_id", args.storeId);
+
+    if (deleteByStoreId.error && !isMissingColumnError(deleteByStoreId.error, "store_id")) {
+      throw deleteByStoreId.error;
+    }
+  } catch {
+    // best effort cleanup
+  }
+
+  try {
+    await supabaseAdmin
+      .from("subscriptions")
+      .delete()
+      .eq("user_id", args.userId)
+      .eq("shop_id", args.storeId);
+  } catch {
+    // best effort cleanup
+  }
+
+  try {
+    if (args.stripeSubscriptionId) {
+      await supabaseAdmin
+        .from("subscriptions")
+        .delete()
+        .eq("user_id", args.userId)
+        .eq("stripe_subscription_id", args.stripeSubscriptionId);
+    }
+  } catch {
+    // best effort cleanup
+  }
+
+  try {
+    await supabaseAdmin
+      .from("stores")
+      .delete()
+      .eq("id", args.storeId)
+      .eq("user_id", args.userId);
+  } catch {
+    // best effort cleanup
+  }
+};
+
 const updateStoreStatus = async (storeId: string, status: "pending" | "active") => {
   const withTimestamp = await supabaseAdmin
     .from("stores")
@@ -515,26 +576,38 @@ export async function POST(request: NextRequest) {
     let stripeSubscriptionId: string | null = null;
     let nextChargeAt: string | null = null;
     if (grantPlan) {
-      const stripeSubscription = await createDeferredStripeSubscription({
-        userId,
-        storeId,
-        plan: grantPlan,
-        currency,
-      });
+      try {
+        const stripeSubscription = await createDeferredStripeSubscription({
+          userId,
+          storeId,
+          plan: grantPlan,
+          currency,
+        });
 
-      stripeSubscriptionId = stripeSubscription.stripeSubscriptionId;
-      nextChargeAt = stripeSubscription.trialEnd;
-      grantedSubscriptionId = await insertStoreSubscriptionRecord({
-        userId,
-        storeId,
-        plan: grantPlan,
-        stripeSubscriptionId: stripeSubscription.stripeSubscriptionId,
-        stripeCustomerId: stripeSubscription.stripeCustomerId,
-        status: stripeSubscription.status,
-        currentPeriodEnd: stripeSubscription.currentPeriodEnd,
-      });
+        stripeSubscriptionId = stripeSubscription.stripeSubscriptionId;
+        nextChargeAt = stripeSubscription.trialEnd;
+        grantedSubscriptionId = await insertStoreSubscriptionRecord({
+          userId,
+          storeId,
+          plan: grantPlan,
+          stripeSubscriptionId: stripeSubscription.stripeSubscriptionId,
+          stripeCustomerId: stripeSubscription.stripeCustomerId,
+          status: stripeSubscription.status,
+          currentPeriodEnd: stripeSubscription.currentPeriodEnd,
+        });
 
-      await updateStoreStatus(storeId, "active");
+        await updateStoreStatus(storeId, "active");
+      } catch (error) {
+        await cleanupFailedGrantedPlan({
+          userId,
+          storeId,
+          stripeSubscriptionId,
+        });
+
+        const message =
+          error instanceof Error ? error.message : "Plan bağlama sırasında hata oluştu. Mağaza geri alındı.";
+        return NextResponse.json({ error: message }, { status: 500 });
+      }
     }
 
     return NextResponse.json({

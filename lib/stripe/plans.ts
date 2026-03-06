@@ -325,7 +325,11 @@ const toEntry = (
   };
 };
 
-const retrievePriceById = async (stripeClient: Stripe, priceId: string | null | undefined) => {
+const retrievePriceById = async (
+  stripeClient: Stripe,
+  priceId: string | null | undefined,
+  options?: { requireActive?: boolean }
+) => {
   if (!priceId) {
     return null;
   }
@@ -336,6 +340,10 @@ const retrievePriceById = async (stripeClient: Stripe, priceId: string | null | 
     })) as StripePriceWithProduct;
 
     if (!price.recurring || !isInterval(price.recurring.interval)) {
+      return null;
+    }
+
+    if (options?.requireActive && !price.active) {
       return null;
     }
 
@@ -606,7 +614,9 @@ export const resolveCheckoutPriceId = async (
       continue;
     }
 
-    const dbPrice = await retrievePriceById(stripeClient, dbCandidate.stripe_price_id);
+    const dbPrice = await retrievePriceById(stripeClient, dbCandidate.stripe_price_id, {
+      requireActive: true,
+    });
     if (dbPrice && matchesRequestedCurrency(dbPrice.currency)) {
       return dbCandidate.stripe_price_id as string;
     }
@@ -614,7 +624,9 @@ export const resolveCheckoutPriceId = async (
 
   const configured = getConfiguredPriceId(plan, interval, mode);
   if (configured) {
-    const configuredPrice = await retrievePriceById(stripeClient, configured);
+    const configuredPrice = await retrievePriceById(stripeClient, configured, {
+      requireActive: true,
+    });
     if (configuredPrice && matchesRequestedCurrency(configuredPrice.currency)) {
       return configured;
     }
@@ -630,7 +642,9 @@ export const resolveCheckoutPriceId = async (
   const selected = interval === "year" ? snapshot.yearly : snapshot.monthly;
 
   if (selected.priceId) {
-    const selectedPrice = await retrievePriceById(stripeClient, selected.priceId);
+    const selectedPrice = await retrievePriceById(stripeClient, selected.priceId, {
+      requireActive: true,
+    });
     if (selectedPrice && matchesRequestedCurrency(selectedPrice.currency)) {
       return selected.priceId;
     }
