@@ -545,9 +545,9 @@ const ensureCronLifecycleSynced = async () => {
       await sleep(retryDelaysMs[index]);
     }
 
-    const result = await syncSchedulerCronJobLifecycle({ force: true });
+    const result = await syncSchedulerCronJobLifecycle();
     lastResult = result;
-    if (result.ok) {
+    if (result.ok || result.status === "skipped") {
       return result;
     }
   }
