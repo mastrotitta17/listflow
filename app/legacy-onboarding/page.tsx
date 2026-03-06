@@ -504,6 +504,16 @@ export default function LegacyOnboardingPage() {
 
     const bootstrap = async () => {
       try {
+        const initialUrl = new URL(window.location.href);
+        const legacyMagicLink = initialUrl.searchParams.get("ml");
+        if (legacyMagicLink) {
+          const callbackUrl = new URL("/auth/callback", window.location.origin);
+          callbackUrl.searchParams.set("next", "/legacy-onboarding");
+          callbackUrl.searchParams.set("ml", legacyMagicLink);
+          window.location.replace(callbackUrl.toString());
+          return;
+        }
+
         let session = await verifyRelayMagicLink();
         if (session?.access_token) {
           await syncServerSession(session);

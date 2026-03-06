@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { EmailOtpType } from "@supabase/supabase-js";
 import { bootstrapProfile } from "@/lib/auth/bootstrap";
 import { setSessionCookies } from "@/lib/auth/session";
 import { supabaseServer } from "@/lib/supabase/admin";
@@ -18,11 +19,79 @@ const buildRedirectWithError = (requestUrl: string, nextPath: string, authError:
 const isValidSessionKey = (value: string | null): value is string =>
   typeof value === "string" && /^[a-f0-9-]{36}$/.test(value);
 
+const decodeBase64Url = (value: string) => {
+  try {
+    return Buffer.from(value, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+};
+
+const parseRelayMagicLink = (encoded: string | null) => {
+  if (!encoded) {
+    return null;
+  }
+
+  const decoded = decodeBase64Url(encoded);
+  if (!decoded) {
+    return null;
+  }
+
+  try {
+    const target = new URL(decoded);
+    const supabaseHost = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").host;
+    if (!supabaseHost || target.host !== supabaseHost || !target.pathname.includes("/auth/v1/verify")) {
+      return null;
+    }
+
+    return {
+      code: target.searchParams.get("code"),
+      tokenHash: target.searchParams.get("token_hash") ?? target.searchParams.get("token"),
+      tokenType: target.searchParams.get("type") ?? "magiclink",
+      accessToken: target.searchParams.get("access_token"),
+      refreshToken: target.searchParams.get("refresh_token"),
+    };
+  } catch {
+    return null;
+  }
+};
+
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
-  const code = requestUrl.searchParams.get("code");
   const nextPath = resolveSafeNextPath(requestUrl.searchParams.get("next"));
   const sessionKey = requestUrl.searchParams.get("session_key") ?? null;
+  const relayAuth = parseRelayMagicLink(requestUrl.searchParams.get("ml"));
+
+  const code = requestUrl.searchParams.get("code") ?? relayAuth?.code ?? null;
+  const tokenHash = requestUrl.searchParams.get("token_hash") ?? relayAuth?.tokenHash ?? null;
+  const tokenType = requestUrl.searchParams.get("type") ?? relayAuth?.tokenType ?? "magiclink";
+  const accessToken = requestUrl.searchParams.get("access_token") ?? relayAuth?.accessToken ?? null;
+  const refreshToken = requestUrl.searchParams.get("refresh_token") ?? relayAuth?.refreshToken ?? null;
+
+  if (!code && tokenHash) {
+    const verified = await supabaseServer.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: tokenType as EmailOtpType,
+    });
+
+    if (!verified.error && verified.data.session && verified.data.user) {
+      await bootstrapProfile({
+        user: verified.data.user,
+        fullName: (verified.data.user.user_metadata?.full_name as string | undefined) ?? undefined,
+        locale: "tr",
+      });
+
+      const response = NextResponse.redirect(new URL(nextPath, request.url));
+      setSessionCookies(response, verified.data.session.access_token, verified.data.session.refresh_token);
+      return response;
+    }
+  }
+
+  if (!code && accessToken && refreshToken) {
+    const response = NextResponse.redirect(new URL(nextPath, request.url));
+    setSessionCookies(response, accessToken, refreshToken);
+    return response;
+  }
 
   if (!code) {
     const passthroughKeys = [

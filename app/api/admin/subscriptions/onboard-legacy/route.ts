@@ -210,7 +210,7 @@ const generateAdminMagicLink = async (email: string, appUrl: string) => {
 
 const buildRelayMagicLink = (rawActionLink: string, appUrl: string) => {
   const encoded = Buffer.from(rawActionLink, "utf8").toString("base64url");
-  return `${appUrl}/legacy-onboarding?ml=${encodeURIComponent(encoded)}`;
+  return `${appUrl}/auth/callback?next=${encodeURIComponent("/legacy-onboarding")}&ml=${encodeURIComponent(encoded)}`;
 };
 
 export async function POST(request: NextRequest) {
