@@ -191,7 +191,7 @@ const insertFallbackSubscription = async (params: {
 };
 
 const generateAdminMagicLink = async (email: string, appUrl: string) => {
-  const legacyRedirect = `${appUrl}/legacy-onboarding`;
+  const legacyRedirect = `${appUrl}/auth/callback?next=${encodeURIComponent("/legacy-onboarding")}`;
   const generateResult = await supabaseAdmin.auth.admin.generateLink({
     type: "magiclink",
     email,
@@ -206,11 +206,6 @@ const generateAdminMagicLink = async (email: string, appUrl: string) => {
 
   const properties = (generateResult.data?.properties ?? {}) as Record<string, unknown>;
   return typeof properties.action_link === "string" ? properties.action_link : null;
-};
-
-const buildRelayMagicLink = (rawActionLink: string, appUrl: string) => {
-  const encoded = Buffer.from(rawActionLink, "utf8").toString("base64url");
-  return `${appUrl}/auth/callback?next=${encodeURIComponent("/legacy-onboarding")}&ml=${encodeURIComponent(encoded)}`;
 };
 
 export async function POST(request: NextRequest) {
@@ -352,7 +347,7 @@ export async function POST(request: NextRequest) {
     let emailDispatchError: string | null = null;
     if (strategy === "magic_link") {
       const rawActionLink = await generateAdminMagicLink(email, appUrl);
-      actionLink = rawActionLink ? buildRelayMagicLink(rawActionLink, appUrl) : null;
+      actionLink = rawActionLink;
       emailDispatched = false;
       emailDispatchError =
         "Automatic OTP mail is intentionally skipped to avoid token invalidation. Share generated action_link manually.";
