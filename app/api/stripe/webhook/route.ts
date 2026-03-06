@@ -113,6 +113,25 @@ const isUniqueViolation = (error: { message?: string; code?: string } | null | u
   return error.code === "23505" || message.includes("duplicate");
 };
 
+const normalizeStoreCurrency = (value: string | null | undefined) => {
+  const normalized = (value ?? "").trim().toUpperCase();
+  if (
+    normalized === "TRY" ||
+    normalized === "TL" ||
+    normalized === "₺" ||
+    normalized === "TURKISHLIRA" ||
+    normalized === "TURKISH_LIRA"
+  ) {
+    return "TRY" as const;
+  }
+
+  if (normalized === "USD") {
+    return "USD" as const;
+  }
+
+  return null;
+};
+
 const loadStoreWebhookMappingFromLogs = async (storeId: string) => {
   const { data, error } = await supabaseAdmin
     .from("webhook_logs")
@@ -212,10 +231,78 @@ const loadAutomationWebhookConfig = async (id: string) => {
 
 const loadStoreActivationBinding = async (storeId: string) => {
   const candidates = [
-    { select: "id,product_id,active_webhook_config_id", hasProduct: true, hasActiveWebhook: true },
-    { select: "id,product_id", hasProduct: true, hasActiveWebhook: false },
-    { select: "id,active_webhook_config_id", hasProduct: false, hasActiveWebhook: true },
-    { select: "id", hasProduct: false, hasActiveWebhook: false },
+    {
+      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id,store_currency,currency",
+      hasProduct: true,
+      hasSubCategory: true,
+      hasActiveWebhook: true,
+      hasStoreCurrency: true,
+      hasCurrency: true,
+    },
+    {
+      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id,store_currency",
+      hasProduct: true,
+      hasSubCategory: true,
+      hasActiveWebhook: true,
+      hasStoreCurrency: true,
+      hasCurrency: false,
+    },
+    {
+      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id,currency",
+      hasProduct: true,
+      hasSubCategory: true,
+      hasActiveWebhook: true,
+      hasStoreCurrency: false,
+      hasCurrency: true,
+    },
+    {
+      select: "id,product_id,sub_category_id,subcategory_id,active_webhook_config_id",
+      hasProduct: true,
+      hasSubCategory: true,
+      hasActiveWebhook: true,
+      hasStoreCurrency: false,
+      hasCurrency: false,
+    },
+    {
+      select: "id,product_id,active_webhook_config_id,store_currency,currency",
+      hasProduct: true,
+      hasSubCategory: false,
+      hasActiveWebhook: true,
+      hasStoreCurrency: true,
+      hasCurrency: true,
+    },
+    {
+      select: "id,product_id,active_webhook_config_id",
+      hasProduct: true,
+      hasSubCategory: false,
+      hasActiveWebhook: true,
+      hasStoreCurrency: false,
+      hasCurrency: false,
+    },
+    {
+      select: "id,active_webhook_config_id,store_currency,currency",
+      hasProduct: false,
+      hasSubCategory: false,
+      hasActiveWebhook: true,
+      hasStoreCurrency: true,
+      hasCurrency: true,
+    },
+    {
+      select: "id,active_webhook_config_id",
+      hasProduct: false,
+      hasSubCategory: false,
+      hasActiveWebhook: true,
+      hasStoreCurrency: false,
+      hasCurrency: false,
+    },
+    {
+      select: "id",
+      hasProduct: false,
+      hasSubCategory: false,
+      hasActiveWebhook: false,
+      hasStoreCurrency: false,
+      hasCurrency: false,
+    },
   ] as const;
 
   for (const candidate of candidates) {
@@ -223,16 +310,46 @@ const loadStoreActivationBinding = async (storeId: string) => {
       .from("stores")
       .select(candidate.select)
       .eq("id", storeId)
-      .maybeSingle<{ id: string; product_id?: string | null; active_webhook_config_id?: string | null }>();
+      .maybeSingle<{
+        id: string;
+        product_id?: string | null;
+        sub_category_id?: string | null;
+        subcategory_id?: string | null;
+        active_webhook_config_id?: string | null;
+        store_currency?: string | null;
+        currency?: string | null;
+      }>();
 
     if (!query.error) {
+      const productId =
+        (candidate.hasProduct ? query.data?.product_id ?? null : null) ??
+        (candidate.hasSubCategory ? query.data?.sub_category_id ?? query.data?.subcategory_id ?? null : null) ??
+        null;
+      const storeCurrency = normalizeStoreCurrency(
+        candidate.hasStoreCurrency
+          ? query.data?.store_currency ?? null
+          : candidate.hasCurrency
+            ? query.data?.currency ?? null
+            : null
+      );
+
       return {
-        productId: candidate.hasProduct ? query.data?.product_id ?? null : null,
+        productId,
         activeWebhookConfigId: candidate.hasActiveWebhook ? query.data?.active_webhook_config_id ?? null : null,
+        storeCurrency,
       };
     }
 
-    if (!isMissingAnyColumnError(query.error, ["product_id", "active_webhook_config_id"])) {
+    if (
+      !isMissingAnyColumnError(query.error, [
+        "product_id",
+        "sub_category_id",
+        "subcategory_id",
+        "active_webhook_config_id",
+        "store_currency",
+        "currency",
+      ])
+    ) {
       throw new Error(query.error.message);
     }
   }
@@ -240,19 +357,50 @@ const loadStoreActivationBinding = async (storeId: string) => {
   return {
     productId: null,
     activeWebhookConfigId: null,
+    storeCurrency: null,
   };
 };
 
-const resolveWebhookByProduct = async (productId: string) => {
+const pickWebhookIdByCurrencyPreference = (
+  rows: Array<{ id: string; currency?: string | null }>,
+  preferredCurrency: "USD" | "TRY" | null
+) => {
+  if (!rows.length) {
+    return null;
+  }
+
+  const normalized = rows.map((row) => ({
+    id: row.id,
+    currency: normalizeStoreCurrency(row.currency ?? null),
+  }));
+
+  if (preferredCurrency) {
+    const exact = normalized.find((row) => row.currency === preferredCurrency);
+    if (exact) {
+      return exact.id;
+    }
+  }
+
+  const generic = normalized.find((row) => row.currency === null);
+  if (generic) {
+    return generic.id;
+  }
+
+  return normalized[0]?.id ?? null;
+};
+
+const resolveWebhookByProduct = async (productId: string, preferredCurrency: "USD" | "TRY" | null) => {
   const withProductScope = await supabaseAdmin
     .from("webhook_configs")
-    .select("id,target_url,method,headers,enabled,scope,product_id")
+    .select("id,target_url,method,headers,enabled,scope,product_id,currency")
     .eq("enabled", true)
     .eq("scope", "automation")
     .eq("product_id", productId)
     .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{
+    .limit(100);
+
+  if (!withProductScope.error) {
+    const rows = (withProductScope.data ?? []) as Array<{
       id: string;
       target_url: string;
       method: string | null;
@@ -260,33 +408,76 @@ const resolveWebhookByProduct = async (productId: string) => {
       enabled: boolean | null;
       scope?: string | null;
       product_id?: string | null;
-    }>();
+      currency?: string | null;
+    }>;
 
-  if (!withProductScope.error) {
-    return withProductScope.data?.id ?? null;
+    return pickWebhookIdByCurrencyPreference(rows, preferredCurrency);
   }
 
-  if (!isMissingAnyColumnError(withProductScope.error, ["scope", "product_id"])) {
+  if (!isMissingAnyColumnError(withProductScope.error, ["scope", "product_id", "currency"])) {
     throw new Error(withProductScope.error.message);
+  }
+
+  if (!isMissingColumnError(withProductScope.error, "scope") && !isMissingColumnError(withProductScope.error, "product_id")) {
+    const noCurrency = await supabaseAdmin
+      .from("webhook_configs")
+      .select("id,target_url,method,headers,enabled,scope,product_id")
+      .eq("enabled", true)
+      .eq("scope", "automation")
+      .eq("product_id", productId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{
+        id: string;
+      }>();
+
+    if (!noCurrency.error) {
+      return noCurrency.data?.id ?? null;
+    }
+
+    if (!isMissingAnyColumnError(noCurrency.error, ["scope", "product_id"])) {
+      throw new Error(noCurrency.error.message);
+    }
   }
 
   const fallbackRows = await supabaseAdmin
     .from("webhook_configs")
-    .select("id,target_url,method,headers,enabled,scope")
+    .select("id,target_url,method,headers,enabled,scope,currency")
     .eq("enabled", true)
     .order("updated_at", { ascending: false })
     .limit(5000);
 
-  if (fallbackRows.error) {
-    throw new Error(fallbackRows.error.message);
-  }
-
-  const candidates = (fallbackRows.data ?? []) as Array<{
+  let rows = (fallbackRows.data ?? []) as Array<{
     id: string;
     scope?: string | null;
     target_url?: string | null;
+    currency?: string | null;
   }>;
-  const activeAutomationConfigIds = candidates
+
+  if (fallbackRows.error) {
+    if (!isMissingColumnError(fallbackRows.error, "currency")) {
+      throw new Error(fallbackRows.error.message);
+    }
+
+    const noCurrencyFallbackRows = await supabaseAdmin
+      .from("webhook_configs")
+      .select("id,target_url,method,headers,enabled,scope")
+      .eq("enabled", true)
+      .order("updated_at", { ascending: false })
+      .limit(5000);
+
+    if (noCurrencyFallbackRows.error) {
+      throw new Error(noCurrencyFallbackRows.error.message);
+    }
+
+    rows = (noCurrencyFallbackRows.data ?? []) as Array<{
+      id: string;
+      scope?: string | null;
+      target_url?: string | null;
+    }>;
+  }
+
+  const activeAutomationConfigIds = rows
     .filter((row) => Boolean(row.target_url) && (row.scope ?? "automation") !== "generic")
     .map((row) => row.id);
 
@@ -295,13 +486,20 @@ const resolveWebhookByProduct = async (productId: string) => {
   }
 
   const productMap = await loadWebhookConfigProductMap(activeAutomationConfigIds);
-  for (const id of activeAutomationConfigIds) {
-    if (productMap.get(id) === productId) {
-      return id;
-    }
+  const matchingRows = rows.filter(
+    (row) =>
+      activeAutomationConfigIds.includes(row.id) &&
+      productMap.get(row.id) === productId
+  );
+
+  if (!matchingRows.length) {
+    return null;
   }
 
-  return null;
+  return pickWebhookIdByCurrencyPreference(
+    matchingRows.map((row) => ({ id: row.id, currency: row.currency ?? null })),
+    preferredCurrency
+  );
 };
 
 const persistActivationStoreWebhookMapping = async (args: {
@@ -400,7 +598,7 @@ const ensureActivationWebhookBinding = async (args: {
     return loadStoreWebhookConfigId(args.storeId);
   }
 
-  const webhookConfigId = await resolveWebhookByProduct(storeBinding.productId);
+  const webhookConfigId = await resolveWebhookByProduct(storeBinding.productId, storeBinding.storeCurrency);
   if (!webhookConfigId) {
     return loadStoreWebhookConfigId(args.storeId);
   }
@@ -956,6 +1154,7 @@ export async function POST(request: NextRequest) {
 
   try {
     let shouldSyncCronLifecycle = false;
+    let forceCronSync = false;
 
     switch (event.type) {
       case "checkout.session.completed": {
@@ -963,6 +1162,7 @@ export async function POST(request: NextRequest) {
 
         if (session.mode === "subscription" && typeof session.subscription === "string") {
           shouldSyncCronLifecycle = true;
+          forceCronSync = true;
           const subscription = await getStripe().subscriptions.retrieve(session.subscription);
           const subscriberEmail =
             session.customer_details?.email ??
@@ -999,6 +1199,7 @@ export async function POST(request: NextRequest) {
       }
       case "customer.subscription.created": {
         shouldSyncCronLifecycle = true;
+        forceCronSync = true;
         const subscription = event.data.object as Stripe.Subscription;
         const subscriberEmail = await resolveCustomerEmail(subscription.customer);
         await upsertSubscriptionFromStripe(subscription, subscription.metadata, subscription.customer, subscriberEmail, {
@@ -1017,6 +1218,7 @@ export async function POST(request: NextRequest) {
       }
       case "customer.subscription.deleted": {
         shouldSyncCronLifecycle = true;
+        forceCronSync = true;
         const subscription = event.data.object as Stripe.Subscription;
         const existingSubscription = await supabaseAdmin
           .from("subscriptions")
@@ -1094,7 +1296,7 @@ export async function POST(request: NextRequest) {
     let cronSyncError: string | null = null;
     if (shouldSyncCronLifecycle) {
       try {
-        await syncSchedulerCronJobLifecycle();
+        await syncSchedulerCronJobLifecycle(forceCronSync ? { force: true } : undefined);
       } catch (error) {
         cronSyncError = error instanceof Error ? error.message : "Cron sync failed";
       }

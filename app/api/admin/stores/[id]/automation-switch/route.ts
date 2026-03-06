@@ -742,7 +742,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       createdBy: admin.user.id,
       idempotencyKey,
     });
-    const cronSync = await syncSchedulerCronJobLifecycle();
+    const cronSync = await syncSchedulerCronJobLifecycle({ force: true });
 
     const schedulerJobInsert = await insertSchedulerJobWithFallback({
       subscriptionId: activeSubscription.id,

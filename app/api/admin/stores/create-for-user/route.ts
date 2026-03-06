@@ -300,6 +300,7 @@ const insertStore = async (payload: {
   const optionalInsertPayload: Record<string, unknown> = {
     category: payload.category,
     price_cents: payload.priceCents,
+    product_id: payload.subCategoryId && isUuid(payload.subCategoryId) ? payload.subCategoryId : null,
     category_id: payload.topCategoryId,
     sub_category_id: payload.subCategoryId,
     subcategory_id: payload.subCategoryId,
