@@ -190,23 +190,10 @@ const insertFallbackSubscription = async (params: {
   return false;
 };
 
-const generateAdminMagicLink = async (email: string, appUrl: string) => {
-  const callbackRedirect = new URL("/auth/callback", appUrl);
-  callbackRedirect.searchParams.set("next", "/legacy-onboarding");
-  const generateResult = await supabaseAdmin.auth.admin.generateLink({
-    type: "magiclink",
-    email,
-    options: {
-      redirectTo: callbackRedirect.toString(),
-    },
-  });
-
-  if (generateResult.error) {
-    throw new Error(generateResult.error.message);
-  }
-
-  const properties = (generateResult.data?.properties ?? {}) as Record<string, unknown>;
-  return typeof properties.action_link === "string" ? properties.action_link : null;
+const buildLegacyOnboardingLink = (appUrl: string, onboardingToken: string) => {
+  const onboardingUrl = new URL("/legacy-onboarding", appUrl);
+  onboardingUrl.searchParams.set("token", onboardingToken);
+  return onboardingUrl.toString();
 };
 
 export async function POST(request: NextRequest) {
@@ -292,6 +279,8 @@ export async function POST(request: NextRequest) {
         ? (authUser.user_metadata as Record<string, unknown>)
         : {};
 
+    const onboardingToken = randomBytes(32).toString("hex");
+
     const onboardingMetadata: Record<string, unknown> = {
       ...currentMetadata,
       full_name:
@@ -303,6 +292,7 @@ export async function POST(request: NextRequest) {
       legacy_target_plan: "pro",
       legacy_onboarding_email: email,
       legacy_onboarding_started_at: new Date().toISOString(),
+      legacy_onboarding_token: onboardingToken,
       legacy_stripe_subscription_id: stripeSubscriptionId,
       legacy_stripe_customer_id: stripeCustomerId,
       legacy_stripe_mode: stripeMode,
@@ -347,10 +337,9 @@ export async function POST(request: NextRequest) {
     let emailDispatched = false;
     let emailDispatchError: string | null = null;
     if (strategy === "magic_link") {
-      actionLink = await generateAdminMagicLink(email, appUrl);
+      actionLink = buildLegacyOnboardingLink(appUrl, onboardingToken);
       emailDispatched = false;
-      emailDispatchError =
-        "Automatic OTP mail is intentionally skipped to avoid token invalidation. Share generated action_link manually.";
+      emailDispatchError = "Mail otomatik gönderilmez. Uretilen onboarding linkini manuel paylaşın.";
     }
 
     return NextResponse.json({

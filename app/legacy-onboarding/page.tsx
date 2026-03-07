@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import type { EmailOtpType, Session, User } from "@supabase/supabase-js";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, Rocket, ShieldCheck, Store } from "lucide-react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
@@ -12,7 +11,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useI18n } from "@/lib/i18n/provider";
 import { sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
-import { supabase, SUPABASE_URL } from "@/lib/supabaseClient";
 
 type StoreCurrency = "USD" | "TRY";
 type LegacyOnboardingStep = 1 | 2;
@@ -26,266 +24,18 @@ type LegacyBootstrapUser = {
 };
 
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
+const LEGACY_ONBOARDING_TOKEN_HEADER = "x-legacy-onboarding-token";
 
-const syncServerSession = async (session: Session | null) => {
-  if (session?.access_token) {
-    await fetch("/api/auth/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        accessToken: session.access_token,
-        refreshToken: session.refresh_token,
-      }),
-    });
-    return;
-  }
-};
+const buildLegacyHeaders = (onboardingToken: string) => ({
+  "Content-Type": "application/json",
+  [LEGACY_ONBOARDING_TOKEN_HEADER]: onboardingToken,
+});
 
-const buildAuthHeaders = (accessToken: string | null | undefined) => {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (accessToken) {
-    headers.Authorization = `Bearer ${accessToken}`;
-  }
-
-  return headers;
-};
-
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const stripUrlAuthArtifacts = () => {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  const url = new URL(window.location.href);
-  const removableParams = [
-    "token_hash",
-    "type",
-    "code",
-    "authError",
-    "access_token",
-    "refresh_token",
-    "expires_in",
-    "expires_at",
-    "token_type",
-    "ml",
-  ];
-
-  let changed = false;
-  for (const key of removableParams) {
-    if (url.searchParams.has(key)) {
-      url.searchParams.delete(key);
-      changed = true;
-    }
-  }
-
-  if (url.hash) {
-    changed = true;
-  }
-
-  if (changed) {
-    const query = url.searchParams.toString();
-    const next = `${url.pathname}${query ? `?${query}` : ""}`;
-    window.history.replaceState({}, "", next);
-  }
-};
-
-const decodeBase64Url = (value: string) => {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const paddingNeeded = (4 - (normalized.length % 4)) % 4;
-  const padded = `${normalized}${"=".repeat(paddingNeeded)}`;
-  return atob(padded);
-};
-
-const verifyRelayMagicLink = async () => {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const url = new URL(window.location.href);
-  const encoded = url.searchParams.get("ml");
-  if (!encoded) {
-    return null;
-  }
-
-  try {
-    const decoded = decodeBase64Url(encoded);
-    const target = new URL(decoded);
-    const supabaseHost = new URL(SUPABASE_URL).host;
-    const isTrustedHost = target.host === supabaseHost;
-    const isVerifyPath = target.pathname.includes("/auth/v1/verify");
-
-    if (!isTrustedHost || !isVerifyPath) {
-      return null;
-    }
-
-    const code = target.searchParams.get("code");
-    if (code) {
-      const exchanged = await supabase.auth.exchangeCodeForSession(code);
-      if (!exchanged.error && exchanged.data.session) {
-        stripUrlAuthArtifacts();
-        return exchanged.data.session;
-      }
-    }
-
-    const tokenHash = target.searchParams.get("token_hash") ?? target.searchParams.get("token");
-    const tokenType = target.searchParams.get("type");
-    if (tokenHash) {
-      const verify = await supabase.auth.verifyOtp({
-        token_hash: tokenHash,
-        type: ((tokenType || "magiclink") as EmailOtpType),
-      });
-
-      if (!verify.error && verify.data.session) {
-        stripUrlAuthArtifacts();
-        return verify.data.session;
-      }
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-};
-
-const resolveAuthErrorMessageFromUrl = () => {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const url = new URL(window.location.href);
-  const queryError = (url.searchParams.get("authError") ?? "").trim().toLowerCase();
-  const hashRaw = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
-  const hashParams = new URLSearchParams(hashRaw);
-  const hashErrorCode = (hashParams.get("error_code") ?? "").trim().toLowerCase();
-  const hashError = (hashParams.get("error") ?? "").trim().toLowerCase();
-
-  if (hashErrorCode === "otp_expired") {
-    return "Magic link süresi dolmuş veya geçersiz. Admin panelden yeni magic link üretip tekrar deneyin.";
-  }
-
-  if (hashErrorCode === "otp_disabled") {
-    return "Magic link doğrulaması şu an devre dışı görünüyor. Lütfen destek ile iletişime geçin.";
-  }
-
-  if (hashError === "access_denied") {
-    return "Magic link doğrulanamadı. Lütfen yeni bir onboarding linki kullanın.";
-  }
-
-  if (queryError === "oauth_failed") {
-    return "Auth callback başarısız oldu. Lütfen yeni bir magic link ile tekrar deneyin.";
-  }
-
-  if (queryError === "missing_code") {
-    return "Magic link doğrulama kodu eksik. Yeni bir onboarding linki ile tekrar deneyin.";
-  }
-
-  return null;
-};
-
-const recoverSessionFromUrl = async () => {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const url = new URL(window.location.href);
-  const authCode = url.searchParams.get("code");
-  if (authCode) {
-    const exchanged = await supabase.auth.exchangeCodeForSession(authCode);
-    if (!exchanged.error && exchanged.data.session) {
-      stripUrlAuthArtifacts();
-      return exchanged.data.session;
-    }
-  }
-
-  const tokenHash = url.searchParams.get("token_hash") ?? url.searchParams.get("token");
-  const tokenType = url.searchParams.get("type");
-
-  if (tokenHash && tokenType) {
-    const verify = await supabase.auth.verifyOtp({
-      token_hash: tokenHash,
-      type: tokenType as EmailOtpType,
-    });
-
-    if (!verify.error && verify.data.session) {
-      stripUrlAuthArtifacts();
-      return verify.data.session;
-    }
-  }
-
-  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
-  const hashParams = new URLSearchParams(hash);
-  const accessToken = hashParams.get("access_token");
-  const refreshToken = hashParams.get("refresh_token");
-
-  if (accessToken && refreshToken) {
-    const setSession = await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
-
-    if (!setSession.error && setSession.data.session) {
-      stripUrlAuthArtifacts();
-      return setSession.data.session;
-    }
-  }
-
-  return null;
-};
-
-const resolveStableSession = async () => {
-  const initial = await supabase.auth.getSession();
-  if (initial.data.session) {
-    return initial.data.session;
-  }
-
-  const recovered = await recoverSessionFromUrl();
-  if (recovered) {
-    return recovered;
-  }
-
-  for (const delayMs of [250, 500, 1000]) {
-    await wait(delayMs);
-    const retried = await supabase.auth.getSession();
-    if (retried.data.session) {
-      return retried.data.session;
-    }
-  }
-
-  return null;
-};
-
-const ensureFreshSessionAfterPasswordSet = async (args: { email: string; password: string }): Promise<Session | null> => {
-  // Do NOT call refreshSession() here — the admin password update revokes the
-  // refresh token, which causes the Supabase SDK to fire a SIGNED_OUT event.
-  // That event's handler runs hydrateFromServerFallback() asynchronously and
-  // resets currentStep back to 1, racing with handleSetPassword's setCurrentStep(2).
-  // Sign in directly with the new password to get a clean session instead.
-  const relogin = await supabase.auth.signInWithPassword({
-    email: args.email,
-    password: args.password.trim(),
-  });
-
-  if (!relogin.error && relogin.data.session?.access_token) {
-    await syncServerSession(relogin.data.session);
-    return relogin.data.session;
-  }
-
-  // signInWithPassword failed — fall back to the existing client session.
-  // The access token from verifyOtp remains valid (1-hour TTL) even after
-  // the refresh token is revoked, so server API calls will still succeed.
-  const fallback = (await supabase.auth.getSession()).data.session ?? null;
-  return fallback;
-};
-
-const loadLegacyUserFromServerSession = async (): Promise<LegacyBootstrapUser | null> => {
+const loadLegacyOnboardingUser = async (onboardingToken: string): Promise<LegacyBootstrapUser | null> => {
   const response = await fetch("/api/legacy-onboarding/profile", {
     method: "GET",
     cache: "no-store",
-    credentials: "include",
+    headers: buildLegacyHeaders(onboardingToken),
   });
 
   if (!response.ok) {
@@ -299,41 +49,16 @@ const loadLegacyUserFromServerSession = async (): Promise<LegacyBootstrapUser | 
   return payload.user ?? null;
 };
 
-const hasServerSession = async () => {
-  const response = await fetch("/api/legacy-onboarding/profile", {
-    method: "GET",
-    cache: "no-store",
-    credentials: "include",
-  });
-
-  return response.ok;
-};
-
-const getUserMetadata = (user: User | null | undefined) => {
-  if (!user || typeof user.user_metadata !== "object" || user.user_metadata === null) {
-    return {} as Record<string, unknown>;
-  }
-
-  return user.user_metadata as Record<string, unknown>;
-};
-
-const isLegacyOnboardingRequired = (user: User | null | undefined) => {
-  return Boolean(getUserMetadata(user).legacy_onboarding_required);
-};
-
-const isLegacyPasswordSet = (user: User | null | undefined) => {
-  return Boolean(getUserMetadata(user).legacy_password_set);
-};
-
 export default function LegacyOnboardingPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { locale } = useI18n();
   const { categories } = useCategoriesRepository(locale);
+  const onboardingToken = (searchParams.get("token") ?? "").trim();
 
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [activeSession, setActiveSession] = useState<Session | null>(null);
-  const [sessionResolveError, setSessionResolveError] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<LegacyBootstrapUser | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [passwordSet, setPasswordSet] = useState(false);
   const [currentStep, setCurrentStep] = useState<LegacyOnboardingStep>(1);
 
@@ -350,12 +75,13 @@ export default function LegacyOnboardingPage() {
   const [storeCurrency, setStoreCurrency] = useState<StoreCurrency>("USD");
 
   const saveLegacyProfile = async (args: { fullName: string; phone: string; password?: string }) => {
-    const session = await getFreshAuthorizedSession();
-    const accessToken = session?.access_token ?? null;
+    if (!onboardingToken) {
+      throw new Error("Onboarding bağlantısı bulunamadı.");
+    }
+
     const response = await fetch("/api/legacy-onboarding/profile", {
       method: "POST",
-      headers: buildAuthHeaders(accessToken),
-      credentials: "include",
+      headers: buildLegacyHeaders(onboardingToken),
       body: JSON.stringify({
         fullName: args.fullName,
         phone: args.phone || null,
@@ -378,31 +104,6 @@ export default function LegacyOnboardingPage() {
     if (typeof payload.profile?.phone === "string") {
       setPhone(payload.profile.phone);
     }
-  };
-
-  const getFreshAuthorizedSession = async () => {
-    const current = activeSession ?? (await supabase.auth.getSession()).data.session ?? null;
-
-    if (current?.access_token) {
-      // Use the existing session directly — do NOT call refreshSession() here.
-      // Calling refreshSession() when the refresh token has been revoked (e.g.
-      // after an admin password update) fires a SIGNED_OUT event that races with
-      // handleSetPassword and resets the UI step back to 1.
-      // The access token from verifyOtp is valid for 1 hour, far longer than
-      // the onboarding flow takes, so a refresh is unnecessary.
-      await syncServerSession(current);
-      setActiveSession(current);
-      return current;
-    }
-
-    const resolved = await resolveStableSession();
-    if (resolved?.access_token) {
-      await syncServerSession(resolved);
-      setActiveSession(resolved);
-      return resolved;
-    }
-
-    return null;
   };
 
   const topCategories = useMemo(() => categories, [categories]);
@@ -465,87 +166,42 @@ export default function LegacyOnboardingPage() {
   useEffect(() => {
     let active = true;
 
-    const hydrateStateFromUser = (user: User, fallback: LegacyBootstrapUser | null = null) => {
-      const requiresLegacy = fallback ? fallback.legacyOnboardingRequired : isLegacyOnboardingRequired(user);
-      if (!requiresLegacy) {
-        router.replace("/categories");
-        return;
-      }
-
-      const metadata = getUserMetadata(user);
-      const nextPasswordSet = fallback ? fallback.legacyPasswordSet : isLegacyPasswordSet(user);
-      const incomingName =
-        typeof metadata.full_name === "string"
-          ? metadata.full_name
-          : (fallback?.fullName ?? "");
-      const incomingPhone = typeof metadata.phone === "string" ? metadata.phone : (fallback?.phone ?? "");
-
-      setCurrentUser(user);
-      setPasswordSet(nextPasswordSet);
-      setCurrentStep(nextPasswordSet ? 2 : 1);
-      setFullName(incomingName);
-      setPhone(incomingPhone);
-      setSessionResolveError(null);
-    };
-
-    const hydrateFromServerFallback = async () => {
-      const fallback = await loadLegacyUserFromServerSession();
-      if (!fallback) {
-        setCurrentUser(null);
-        setSessionResolveError("Oturum doğrulanamadı. Magic linki yeniden açın.");
-        return;
-      }
-
-      const pseudoUser = ({
-        id: fallback.id,
-        email: fallback.email,
-        user_metadata: {
-          full_name: fallback.fullName,
-          phone: fallback.phone,
-          legacy_onboarding_required: fallback.legacyOnboardingRequired,
-          legacy_password_set: fallback.legacyPasswordSet,
-        },
-      } as unknown) as User;
-
-      hydrateStateFromUser(pseudoUser, fallback);
-    };
-
     const bootstrap = async () => {
       try {
-        let session = await verifyRelayMagicLink();
-        if (session?.access_token) {
-          await syncServerSession(session);
-          setActiveSession(session);
+        if (!onboardingToken) {
+          setCurrentUser(null);
+          setBootstrapError("Onboarding bağlantısı eksik. Admin panelden yeni link üretin.");
+          return;
         }
 
-        const urlAuthError = resolveAuthErrorMessageFromUrl();
-        if (urlAuthError) {
-          setSessionResolveError(urlAuthError);
-        }
-
-        if (!session?.access_token) {
-          session = await resolveStableSession();
-        }
-
-        await syncServerSession(session);
-        setActiveSession(session ?? null);
-
+        const legacyUser = await loadLegacyOnboardingUser(onboardingToken);
         if (!active) {
           return;
         }
 
-        if (!session?.user) {
-          await hydrateFromServerFallback();
+        if (!legacyUser) {
+          setCurrentUser(null);
+          setBootstrapError("Onboarding bağlantısı geçersiz, süresi dolmuş veya zaten kullanılmış.");
           return;
         }
 
-        const serverUserFallback = await loadLegacyUserFromServerSession();
-        hydrateStateFromUser(session.user, serverUserFallback);
+        if (!legacyUser.legacyOnboardingRequired) {
+          setCurrentUser(null);
+          setBootstrapError("Bu onboarding bağlantısı zaten tamamlanmış. Giriş yapın veya yeni link isteyin.");
+          return;
+        }
+
+        setCurrentUser(legacyUser);
+        setPasswordSet(legacyUser.legacyPasswordSet);
+        setCurrentStep(legacyUser.legacyPasswordSet ? 2 : 1);
+        setFullName(legacyUser.fullName ?? "");
+        setPhone(legacyUser.phone ?? "");
+        setBootstrapError(null);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Onboarding başlatılamadı.";
         toast.error(message);
         setCurrentUser(null);
-        setSessionResolveError(resolveAuthErrorMessageFromUrl() ?? "Oturum doğrulanamadı. Magic linki yeniden açın.");
+        setBootstrapError("Onboarding bağlantısı doğrulanamadı. Admin panelden yeni link üretin.");
       } finally {
         if (active) {
           setLoading(false);
@@ -555,31 +211,10 @@ export default function LegacyOnboardingPage() {
 
     void bootstrap();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, incomingSession) => {
-      let session = incomingSession;
-      if (!session) {
-        session = await resolveStableSession();
-      }
-
-      await syncServerSession(session);
-      setActiveSession(session ?? null);
-
-      if (!session?.user) {
-        await hydrateFromServerFallback();
-        return;
-      }
-
-      const serverUserFallback = await loadLegacyUserFromServerSession();
-      hydrateStateFromUser(session.user, serverUserFallback);
-    });
-
     return () => {
       active = false;
-      subscription.unsubscribe();
     };
-  }, [router]);
+  }, [onboardingToken]);
 
   const handleSetPassword = async () => {
     const normalizedName = fullName.trim();
@@ -607,19 +242,6 @@ export default function LegacyOnboardingPage() {
         phone: normalizedPhone,
         password,
       });
-
-      if (currentUser?.email) {
-        const renewedSession = await ensureFreshSessionAfterPasswordSet({
-          email: currentUser.email,
-          password,
-        });
-        if (renewedSession) {
-          setActiveSession(renewedSession);
-        }
-        // If renewedSession is null the existing activeSession access token is
-        // still valid for the store-creation step (access tokens remain usable
-        // even after a password-change revokes the refresh token).
-      }
 
       setPasswordSet(true);
       setCurrentStep(2);
@@ -663,35 +285,18 @@ export default function LegacyOnboardingPage() {
 
     setCreatingStore(true);
     try {
-      const session = await getFreshAuthorizedSession();
-      const accessToken = session?.access_token ?? null;
-
-      if (accessToken) {
-        await syncServerSession(session);
-        setActiveSession(session);
-      } else {
-        const serverSessionOk = await hasServerSession();
-        if (!serverSessionOk) {
-          throw new Error("Oturum doğrulanamadı. Magic linki yeniden açın.");
-        }
-      }
-
       await saveLegacyProfile({
         fullName: normalizedName,
         phone: normalizedPhone,
       });
 
-      const requestHeaders: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (accessToken) {
-        requestHeaders.Authorization = `Bearer ${accessToken}`;
+      if (!onboardingToken) {
+        throw new Error("Onboarding bağlantısı bulunamadı.");
       }
 
       const response = await fetch("/api/onboarding/store", {
         method: "POST",
-        headers: requestHeaders,
-        credentials: "include",
+        headers: buildLegacyHeaders(onboardingToken),
         body: JSON.stringify({
           storeName: normalizedStoreName,
           phone: normalizedPhone || null,
@@ -715,7 +320,10 @@ export default function LegacyOnboardingPage() {
       }
 
       toast.success("Mağaza oluşturuldu ve Pro abonelik mağazaya bağlandı.");
-      router.replace("/etsy-automation");
+      const nextUrl = currentUser?.email
+        ? `/login?email=${encodeURIComponent(currentUser.email)}&legacyOnboarding=completed`
+        : "/login?legacyOnboarding=completed";
+      router.replace(nextUrl);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Kurulum tamamlanamadı.";
       toast.error(message);
@@ -740,9 +348,9 @@ export default function LegacyOnboardingPage() {
       <div className="min-h-screen flex items-center justify-center bg-[#07090f] px-4">
         <Card className="w-full max-w-xl border-white/10 bg-[#0d111b]/95 text-white shadow-2xl">
           <CardHeader>
-            <CardTitle className="text-xl font-black">Oturum Doğrulanamadı</CardTitle>
+            <CardTitle className="text-xl font-black">Bağlantı Doğrulanamadı</CardTitle>
             <CardDescription className="text-slate-400">
-              {sessionResolveError ?? "Magic link doğrulanamadı. Lütfen bağlantıyı yeniden açın."}
+              {bootstrapError ?? "Onboarding bağlantısı doğrulanamadı. Lütfen yeni link kullanın."}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex justify-end">

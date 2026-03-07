@@ -1,23 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
-import { getUserFromAccessToken } from "@/lib/auth/admin";
+import { resolveLegacyOnboardingRequestUser } from "@/lib/auth/legacy-onboarding";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const getAccessToken = (request: NextRequest) => {
-  const authorization = request.headers.get("authorization");
-  if (authorization?.startsWith("Bearer ")) {
-    const token = authorization.slice("Bearer ".length).trim();
-    if (token) {
-      return token;
-    }
-  }
-
-  return request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
-};
 
 type LegacyProfileBody = {
   fullName?: unknown;
@@ -134,22 +121,12 @@ const upsertProfile = async (args: {
 
 export async function GET(request: NextRequest) {
   try {
-    const accessToken = getAccessToken(request);
-    if (!accessToken) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const resolvedUser = await resolveLegacyOnboardingRequestUser(request);
+    if (!resolvedUser) {
+      return NextResponse.json({ error: "Invalid onboarding link." }, { status: 401 });
     }
 
-    const user = await getUserFromAccessToken(accessToken);
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const authUserResult = await supabaseAdmin.auth.admin.getUserById(user.id);
-    if (authUserResult.error || !authUserResult.data.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const authUser = authUserResult.data.user;
+    const authUser = resolvedUser.authUser;
     const metadata =
       typeof authUser.user_metadata === "object" && authUser.user_metadata !== null
         ? (authUser.user_metadata as Record<string, unknown>)
@@ -177,14 +154,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const accessToken = getAccessToken(request);
-    if (!accessToken) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await getUserFromAccessToken(accessToken);
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const resolvedUser = await resolveLegacyOnboardingRequestUser(request);
+    if (!resolvedUser) {
+      return NextResponse.json({ error: "Invalid onboarding link." }, { status: 401 });
     }
 
     const body = (await request.json().catch(() => ({}))) as LegacyProfileBody;
@@ -201,12 +173,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Şifre en az 8 karakter olmalı." }, { status: 400 });
     }
 
-    const authUserResult = await supabaseAdmin.auth.admin.getUserById(user.id);
-    if (authUserResult.error || !authUserResult.data.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const authUser = authUserResult.data.user;
+    const authUser = resolvedUser.authUser;
     const currentMetadata =
       typeof authUser.user_metadata === "object" && authUser.user_metadata !== null
         ? (authUser.user_metadata as Record<string, unknown>)
@@ -231,13 +198,13 @@ export async function POST(request: NextRequest) {
       updatePayload.password = password;
     }
 
-    const updated = await supabaseAdmin.auth.admin.updateUserById(user.id, updatePayload);
+    const updated = await supabaseAdmin.auth.admin.updateUserById(authUser.id, updatePayload);
     if (updated.error) {
       return NextResponse.json({ error: updated.error.message }, { status: 500 });
     }
 
     await upsertProfile({
-      userId: user.id,
+      userId: authUser.id,
       email: authUser.email ?? null,
       fullName,
       phone: phone ?? null,
@@ -246,7 +213,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       profile: {
-        userId: user.id,
+        userId: authUser.id,
         email: authUser.email ?? null,
         fullName,
         phone: phone ?? null,

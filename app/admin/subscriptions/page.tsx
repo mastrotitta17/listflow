@@ -447,7 +447,9 @@ export default function AdminSubscriptionsPage() {
       const fallbackInfo = payload.insertedFallback ? " (fallback insert yapıldı)" : "";
       const magicMailInfo =
         onboardStrategy === "magic_link"
-          ? payload.emailDispatched
+          ? payload.actionLink
+            ? " | Onboarding linki üretildi."
+            : payload.emailDispatched
             ? " | Magic link maili gönderildi."
             : ` | Mail gönderimi başarısız: ${payload.emailDispatchError ?? "bilinmeyen hata"}. Linki manuel paylaş.`
           : "";

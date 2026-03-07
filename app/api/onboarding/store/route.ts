@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
-import { getUserFromAccessToken } from "@/lib/auth/admin";
+import { resolveLegacyOnboardingRequestUser } from "@/lib/auth/legacy-onboarding";
 import { syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeStoreNameInput } from "@/lib/stores/name";
@@ -12,18 +11,6 @@ import { isUuid } from "@/lib/utils/uuid";
 import { loadWebhookConfigProductMap } from "@/lib/webhooks/config-product-map";
 
 export const runtime = "nodejs";
-
-const getAccessToken = (request: NextRequest) => {
-  const authorization = request.headers.get("authorization");
-  if (authorization?.startsWith("Bearer ")) {
-    const token = authorization.slice("Bearer ".length).trim();
-    if (token) {
-      return token;
-    }
-  }
-
-  return request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
-};
 
 type CreateStoreBody = {
   storeName?: unknown;
@@ -863,6 +850,7 @@ const bindLegacyProSubscriptionToStore = async (args: { userId: string; storeId:
     legacy_bound_store_id: args.storeId,
     legacy_target_plan: "pro",
     legacy_onboarding_completed_at: new Date().toISOString(),
+    legacy_onboarding_token: null,
   };
 
   const metadataUpdate = await supabaseAdmin.auth.admin.updateUserById(args.userId, {
@@ -883,16 +871,11 @@ const bindLegacyProSubscriptionToStore = async (args: { userId: string; storeId:
 
 export async function POST(request: NextRequest) {
   try {
-    const accessToken = getAccessToken(request);
-
-    if (!accessToken) {
-      return NextResponse.json({ error: "Unauthorized: missing access token." }, { status: 401 });
+    const resolvedUser = await resolveLegacyOnboardingRequestUser(request);
+    if (!resolvedUser) {
+      return NextResponse.json({ error: "Unauthorized: invalid onboarding token or access token." }, { status: 401 });
     }
-
-    const user = await getUserFromAccessToken(accessToken);
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized: invalid or expired access token." }, { status: 401 });
-    }
+    const user = resolvedUser.user;
 
     const body = (await request.json().catch(() => ({}))) as CreateStoreBody;
 
