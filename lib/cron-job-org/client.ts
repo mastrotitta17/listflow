@@ -155,6 +155,36 @@ export type DirectAutomationCronJob = {
   plan: string | null;
 };
 
+export type CronJobOrgExecutionStatus = {
+  state: "pending" | "success" | "failed";
+  label: string;
+  isSuccess: boolean;
+};
+
+export const describeCronJobOrgExecutionStatus = (status: number | null | undefined): CronJobOrgExecutionStatus => {
+  if (status === null || status === undefined || status === 0) {
+    return {
+      state: "pending",
+      label: "Bekliyor",
+      isSuccess: false,
+    };
+  }
+
+  if (status === 1) {
+    return {
+      state: "success",
+      label: "OK",
+      isSuccess: true,
+    };
+  }
+
+  return {
+    state: "failed",
+    label: `Hata (${status})`,
+    isSuccess: false,
+  };
+};
+
 const mapCronSummaryToDirectAutomationJob = (job: CronJobSummary): DirectAutomationCronJob | null => {
   if (!isAutomationManagedTitle(job.title)) {
     return null;
@@ -203,6 +233,39 @@ const resolveSchedulerBaseUrl = () => {
 };
 
 const schedulerTickUrl = () => `${resolveSchedulerBaseUrl()}/api/scheduler/tick`;
+
+const parseUrlSafe = (value: string | null | undefined) => {
+  if (!value || !value.trim()) {
+    return null;
+  }
+
+  try {
+    return new URL(value.trim());
+  } catch {
+    return null;
+  }
+};
+
+const buildSchedulerTickUrlCandidates = () => {
+  const target = schedulerTickUrl();
+  const targetUrl = parseUrlSafe(target);
+  if (!targetUrl) {
+    return [target];
+  }
+
+  const candidates = new Set<string>([target]);
+  const hostname = targetUrl.hostname.toLowerCase();
+  const canToggleWww =
+    hostname === "listflow.pro" || hostname === "www.listflow.pro";
+
+  if (canToggleWww) {
+    const alias = new URL(targetUrl.toString());
+    alias.hostname = hostname === "www.listflow.pro" ? "listflow.pro" : "www.listflow.pro";
+    candidates.add(stripTrailingSlashes(alias.toString()));
+  }
+
+  return Array.from(candidates);
+};
 
 const createSchedule = (): CronJobSchedule => {
   // Direct mode uses per-webhook cron jobs for production dispatch.
@@ -262,6 +325,26 @@ const resolveConfiguredJobId = () => {
 
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isSchedulerManagedJob = (job: CronJobSummary, candidateUrls: Set<string>) => {
+  const title = (job.title ?? "").trim();
+  const normalizedUrl = stripTrailingSlashes((job.url ?? "").trim());
+
+  if (title === LISTFLOW_SCHEDULER_TITLE && candidateUrls.has(normalizedUrl)) {
+    return true;
+  }
+
+  if (candidateUrls.has(normalizedUrl)) {
+    return true;
+  }
+
+  const parsedUrl = parseUrlSafe(normalizedUrl);
+  if (!parsedUrl) {
+    return false;
+  }
+
+  return parsedUrl.pathname === "/api/scheduler/tick" && title === LISTFLOW_SCHEDULER_TITLE;
 };
 
 const resolveCronApiKey = () => {
@@ -1098,7 +1181,7 @@ export const findStrictDirectAutomationCronJob = async (args: {
   );
 };
 
-const findExistingSchedulerJobId = async (apiKey: string) => {
+const findSchedulerJobCandidates = async (apiKey: string) => {
   const configuredJobId = resolveConfiguredJobId();
   const listResponse = await callCronJobOrgApi<CronJobListResponse>({
     method: "GET",
@@ -1107,26 +1190,45 @@ const findExistingSchedulerJobId = async (apiKey: string) => {
   });
 
   const jobs = listResponse.jobs ?? [];
+  const candidateUrls = new Set(buildSchedulerTickUrlCandidates().map((url) => stripTrailingSlashes(url)));
+  const matches = jobs.filter((job) => isSchedulerManagedJob(job, candidateUrls));
 
-  if (configuredJobId !== null) {
-    const exactById = jobs.find((job) => job.jobId === configuredJobId);
+  return {
+    configuredJobId,
+    targetUrl: stripTrailingSlashes(schedulerTickUrl()),
+    matches,
+  };
+};
+
+const pickExistingSchedulerJobId = (args: {
+  configuredJobId: number | null;
+  targetUrl: string;
+  matches: CronJobSummary[];
+}) => {
+  if (args.configuredJobId !== null) {
+    const exactById = args.matches.find((job) => job.jobId === args.configuredJobId);
     if (exactById) {
       return exactById.jobId;
     }
   }
 
-  const targetUrl = schedulerTickUrl();
-  const byTitleAndUrl = jobs.find(
-    (job) => (job.title ?? "").trim() === LISTFLOW_SCHEDULER_TITLE && (job.url ?? "").trim() === targetUrl
+  const byTitleAndUrl = args.matches.find(
+    (job) =>
+      (job.title ?? "").trim() === LISTFLOW_SCHEDULER_TITLE &&
+      stripTrailingSlashes((job.url ?? "").trim()) === args.targetUrl
   );
 
   if (byTitleAndUrl) {
     return byTitleAndUrl.jobId;
   }
 
-  const byUrl = jobs.find((job) => (job.url ?? "").trim() === targetUrl);
+  const byUrl = args.matches.find((job) => stripTrailingSlashes((job.url ?? "").trim()) === args.targetUrl);
   if (byUrl) {
     return byUrl.jobId;
+  }
+
+  if (args.matches[0]) {
+    return args.matches[0].jobId;
   }
 
   return null;
@@ -1146,7 +1248,12 @@ export const ensureSchedulerCronJob = async (): Promise<SchedulerCronSyncResult>
   const payload = createSchedulerJobPayload();
 
   try {
-    const existingJobId = await findExistingSchedulerJobId(apiKey);
+    const { matches, targetUrl } = await findSchedulerJobCandidates(apiKey);
+    const existingJobId = pickExistingSchedulerJobId({
+      configuredJobId: resolveConfiguredJobId(),
+      targetUrl,
+      matches,
+    });
 
     if (existingJobId !== null) {
       await callCronJobOrgApi<Record<string, never>>({
@@ -1158,11 +1265,22 @@ export const ensureSchedulerCronJob = async (): Promise<SchedulerCronSyncResult>
         apiKey,
       });
 
+      const staleJobs = matches.filter((job) => job.jobId !== existingJobId);
+      for (const staleJob of staleJobs) {
+        await callCronJobOrgApi<Record<string, never>>({
+          method: "DELETE",
+          path: `/jobs/${staleJob.jobId}`,
+          apiKey,
+        });
+      }
+
       return {
         ok: true,
         status: "updated",
         jobId: existingJobId,
-        message: `Cron job güncellendi (jobId=${existingJobId}, url=${payload.url}).`,
+        message: `Cron job güncellendi (jobId=${existingJobId}, url=${targetUrl}).${
+          staleJobs.length ? ` ${staleJobs.length} eski scheduler job temizlendi.` : ""
+        }`,
       };
     }
 
@@ -1220,8 +1338,8 @@ export const deleteSchedulerCronJob = async (): Promise<SchedulerCronSyncResult>
   }
 
   try {
-    const existingJobId = await findExistingSchedulerJobId(apiKey);
-    if (existingJobId === null) {
+    const { matches } = await findSchedulerJobCandidates(apiKey);
+    if (!matches.length) {
       return {
         ok: true,
         status: "noop",
@@ -1229,17 +1347,19 @@ export const deleteSchedulerCronJob = async (): Promise<SchedulerCronSyncResult>
       };
     }
 
-    await callCronJobOrgApi<Record<string, never>>({
-      method: "DELETE",
-      path: `/jobs/${existingJobId}`,
-      apiKey,
-    });
+    for (const job of matches) {
+      await callCronJobOrgApi<Record<string, never>>({
+        method: "DELETE",
+        path: `/jobs/${job.jobId}`,
+        apiKey,
+      });
+    }
 
     return {
       ok: true,
       status: "deleted",
-      jobId: existingJobId,
-      message: `Scheduler cron job silindi (jobId=${existingJobId}).`,
+      jobId: matches[0]?.jobId,
+      message: `Scheduler cron job silindi (${matches.length} adet).`,
     };
   } catch (error) {
     if (isCronJobOrgRateLimitedError(error)) {

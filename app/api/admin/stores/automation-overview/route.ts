@@ -6,7 +6,7 @@ import {
   extractScheduledSlotDueIso,
   getPlanWindowHours,
 } from "@/lib/scheduler/idempotency";
-import { loadDirectAutomationCronJobs } from "@/lib/cron-job-org/client";
+import { describeCronJobOrgExecutionStatus, loadDirectAutomationCronJobs } from "@/lib/cron-job-org/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 import { loadWebhookConfigProductMap } from "@/lib/webhooks/config-product-map";
@@ -90,6 +90,8 @@ type StoreWebhookMappingTrigger = {
   status: "success";
   triggerType: MappingTriggerType;
   responseStatus: 200;
+  responseStatusLabel: "HTTP 200";
+  responseStatusSource: "http";
   errorMessage: null;
   createdAt: string | null;
   webhookConfigId: string | null;
@@ -689,6 +691,8 @@ const loadStoreWebhookMappingsFromLogs = async (storeIds: string[]) => {
         status: "success",
         triggerType,
         responseStatus: 200,
+        responseStatusLabel: "HTTP 200",
+        responseStatusSource: "http",
         errorMessage: null,
         createdAt: row.created_at ?? null,
         webhookConfigId,
@@ -1242,29 +1246,29 @@ export async function GET(request: NextRequest) {
             status: lastJob.status,
             triggerType: isScheduledJob(lastJob) ? "auto_switch" : lastJob.trigger_type,
             responseStatus: lastJob.response_status,
+            responseStatusLabel:
+              lastJob.response_status !== null && lastJob.response_status !== undefined
+                ? `HTTP ${lastJob.response_status}`
+                : null,
+            responseStatusSource: "http",
             errorMessage: lastJob.error_message,
             createdAt: lastJob.run_at ?? lastJob.created_at,
             webhookConfigId: lastJob.webhook_config_id,
           }
         : null;
       const lastTriggerFromMapping = mappingSnapshot?.lastTrigger ?? null;
+      const directCronStatus = describeCronJobOrgExecutionStatus(directCronSnapshot?.lastStatus);
       const lastTriggerFromDirectCron =
         directCronSnapshot?.lastExecutionAt
           ? {
-              status:
-                directCronSnapshot.lastStatus !== null &&
-                directCronSnapshot.lastStatus >= 200 &&
-                directCronSnapshot.lastStatus < 400
-                  ? "success"
-                  : directCronSnapshot.lastStatus !== null
-                    ? "failed"
-                    : "success",
+              status: directCronStatus.state,
               triggerType: "auto_switch",
               responseStatus: directCronSnapshot.lastStatus,
-              errorMessage:
-                directCronSnapshot.lastStatus !== null && directCronSnapshot.lastStatus >= 400
-                  ? `cron-job.org son durum HTTP ${directCronSnapshot.lastStatus}`
-                  : null,
+              responseStatusLabel: `cron-job.org ${directCronStatus.label}${
+                directCronSnapshot.lastStatus !== null ? ` (${directCronSnapshot.lastStatus})` : ""
+              }`,
+              responseStatusSource: "cron-job.org",
+              errorMessage: directCronStatus.state === "failed" ? `cron-job.org ${directCronStatus.label}` : null,
               createdAt: directCronSnapshot.lastExecutionAt,
               webhookConfigId: directCronSnapshot.webhookConfigId,
             }

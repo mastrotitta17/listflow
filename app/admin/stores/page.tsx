@@ -27,6 +27,8 @@ type LastTrigger = {
   status: string | null;
   triggerType: string | null;
   responseStatus: number | null;
+  responseStatusLabel?: string | null;
+  responseStatusSource?: "http" | "cron-job.org" | null;
   errorMessage: string | null;
   createdAt: string | null;
   webhookConfigId: string | null;
@@ -1065,7 +1067,9 @@ export default function AdminStoresPage() {
                 {trigger.triggerType || "scheduled"} / {trigger.status || "-"}
               </Badge>
               <p className="text-xs text-slate-500">
-                HTTP {trigger.responseStatus ?? "-"} - {formatDate(trigger.createdAt)}
+                {trigger.responseStatusSource === "cron-job.org"
+                  ? `${trigger.responseStatusLabel ?? "cron-job.org"} - ${formatDate(trigger.createdAt)}`
+                  : `${trigger.responseStatusLabel ?? `HTTP ${trigger.responseStatus ?? "-"}`} - ${formatDate(trigger.createdAt)}`}
               </p>
               {triggerWebhookName ? <p className="text-xs text-slate-400">{triggerWebhookName}</p> : null}
               {trigger.errorMessage ? <p className="text-xs text-red-300">{formatErrorMessage(trigger.errorMessage)}</p> : null}

@@ -21,6 +21,7 @@ import { normalizePhoneForStorage, sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
 import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { Select } from "@/components/ui/select";
+import { openCrispChat } from "@/lib/crisp";
 import type { Shop } from "@/types";
 import { toast } from "sonner";
 
@@ -80,7 +81,6 @@ type PlanDetails = {
   features: PlanFeature[];
 };
 
-const DEFAULT_CRISP_WEBSITE_ID = "90902ea5-80af-4468-8f9d-d9a808ed1137";
 const PLAN_ORDER: BillingPlan[] = ["standard", "pro", "turbo"];
 const FALLBACK_PLAN_DISCOUNT_PERCENT = 25;
 const FALLBACK_PLAN_PRICING: Record<BillingPlan, { month: number; year: number; discount: number }> = {
@@ -109,11 +109,6 @@ const DEFAULT_PLAN_PRICING: Record<BillingPlan, { month: number; year: number; d
 const FEATURED_PLAN: BillingPlan = "pro";
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
 type StoreCurrency = "USD" | "TRY";
-type CrispWindow = Window & {
-  $crisp?: unknown[];
-  CRISP_WEBSITE_ID?: string;
-};
-
 const EtsyPanel: React.FC = () => {
   const { shops, setShops } = useStore();
   const { t, locale } = useI18n();
@@ -532,35 +527,23 @@ const EtsyPanel: React.FC = () => {
     }
   };
 
-  const crispWebsiteId = process.env.NEXT_PUBLIC_CRISP_WEBSITE_ID ?? DEFAULT_CRISP_WEBSITE_ID;
-
-  const handleOpenSupport = () => {
+  const handleOpenSupport = async () => {
     setStoreActionMessage(null);
 
-    // Remove any CSS that hides Crisp (set by landing/login/downloads pages)
-    document.getElementById("listflow-landing-hide-crisp")?.remove();
-    document.getElementById("listflow-login-hide-crisp")?.remove();
-    document.getElementById("listflow-downloads-hide-crisp")?.remove();
+    try {
+      const opened = await openCrispChat({
+        source: "dashboard_etsy_automation",
+        section: "etsy_automation",
+        locale,
+        shops,
+      });
 
-    const w = window as CrispWindow;
-
-    // If $crisp is a plain array (either missing or corrupted), force a clean load.
-    // A plain array means the Crisp SDK hasn't loaded yet OR its reference was
-    // overwritten — in both cases we need to (re-)initialize.
-    if (!w.$crisp || Array.isArray(w.$crisp)) {
-      document.getElementById("crisp-chat-script")?.remove();
-      w.$crisp = [];
-      w.CRISP_WEBSITE_ID = crispWebsiteId;
-      const script = document.createElement("script");
-      script.id = "crisp-chat-script";
-      script.src = "https://client.crisp.chat/l.js";
-      script.async = true;
-      document.head.appendChild(script);
+      if (!opened) {
+        throw new Error(locale === "en" ? "Support chat could not be opened." : "Canlı destek açılamadı.");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : locale === "en" ? "Support chat could not be opened." : "Canlı destek açılamadı.");
     }
-
-    // Push commands — executed immediately if Crisp SDK is ready, queued otherwise
-    w.$crisp.push(["do", "chat:show"]);
-    w.$crisp.push(["do", "chat:open"]);
   };
 
   const handleActivateStore = (shop: Shop) => {
