@@ -131,10 +131,10 @@ const LandingPage: React.FC = () => {
           plans: [
             {
               name: "Starter",
-              cadence: "Automatic Product Upload Every 8 Hours",
+              cadence: "Automatic Product Upload Every 12 Hours",
               detail: "Ideal starter package for beginners and users who want to test the system.",
               highlights: [
-                "Automatic product listing every 8 hours",
+                "Automatic product listing every 12 hours",
                 "Start automation from one selected category",
                 "SEO-friendly Etsy title + description built on trend keywords",
                 "When an order arrives, products are shipped from suppliers in Turkey",
@@ -146,10 +146,10 @@ const LandingPage: React.FC = () => {
             },
             {
               name: "Pro",
-              cadence: "Automatic Product Upload Every 4 Hours + 1:1 Setup",
+              cadence: "Automatic Product Upload Every 6 Hours + 1:1 Setup",
               detail: "For users who want to grow and build their business professionally.",
               highlights: [
-                "Automatic product listing every 4 hours",
+                "Automatic product listing every 6 hours",
                 "Choose products from your preferred category",
                 "Free one-on-one Etsy store setup support",
                 "Trend keyword analysis + SEO-friendly title & description",
@@ -161,10 +161,10 @@ const LandingPage: React.FC = () => {
             },
             {
               name: "Turbo",
-              cadence: "Upload Every 2 Hours - Fast Results Package",
+              cadence: "Upload Every 4 Hours - Fast Results Package",
               detail: "For users who want aggressive growth and faster outcomes.",
               highlights: [
-                "Automatic product listing every 2 hours",
+                "Automatic product listing every 4 hours",
                 "Category + niche optimization",
                 "Free one-on-one setup and strategic store configuration",
                 "Advanced trend analysis and high-demand product selection",
@@ -222,10 +222,10 @@ const LandingPage: React.FC = () => {
           plans: [
             {
               name: "Starter",
-              cadence: "8 Saatte Bir Otomatik Ürün Yükleme",
+              cadence: "12 Saatte Bir Otomatik Ürün Yükleme",
               detail: "Yeni başlayanlar ve sistemi test etmek isteyenler için ideal başlangıç paketi.",
               highlights: [
-                "8 saatte bir otomatik ürün listeleme",
+                "12 saatte bir otomatik ürün listeleme",
                 "Seçtiğin 1 kategori üzerinden otomasyon başlatma",
                 "Etsy’de aranan trend anahtar kelimelerle SEO uyumlu başlık + açıklama",
                 "Sipariş geldiğinde ürünler Türkiye’deki tedarikçiden gönderilir",
@@ -237,10 +237,10 @@ const LandingPage: React.FC = () => {
             },
             {
               name: "Pro",
-              cadence: "4 Saatte Bir Otomatik Ürün Yükleme + Birebir Kurulum",
+              cadence: "6 Saatte Bir Otomatik Ürün Yükleme + Birebir Kurulum",
               detail: "Büyümek ve işi profesyonel kurmak isteyenler için.",
               highlights: [
-                "4 saatte bir otomatik ürün listeleme",
+                "6 saatte bir otomatik ürün listeleme",
                 "İstediğin kategoriden ürün seçebilme",
                 "Birebir Etsy mağaza açılış ve kurulum desteği (ücretsiz)",
                 "Trend kelime analizi + SEO uyumlu başlık & açıklama",
@@ -252,10 +252,10 @@ const LandingPage: React.FC = () => {
             },
             {
               name: "Turbo",
-              cadence: "2 Saatte Bir Yükleme - Hızlı Sonuç Paketi",
+              cadence: "4 Saatte Bir Yükleme - Hızlı Sonuç Paketi",
               detail: "Agresif büyüme ve hızlı sonuç almak isteyenler için.",
               highlights: [
-                "2 saatte bir otomatik ürün listeleme",
+                "4 saatte bir otomatik ürün listeleme",
                 "Kategori + niş optimizasyonu",
                 "Birebir mağaza kurulum ve stratejik yapılandırma (ücretsiz)",
                 "Gelişmiş trend analizi ve yüksek talep ürün seçimi",

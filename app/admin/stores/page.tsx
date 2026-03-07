@@ -1051,6 +1051,9 @@ export default function AdminStoresPage() {
         header: "Son Tetik",
         cell: ({ row }) => {
           const trigger = row.original.lastTrigger;
+          const triggerWebhookName = trigger?.webhookConfigId
+            ? webhookMap.get(trigger.webhookConfigId)?.name ?? trigger.webhookConfigId
+            : null;
 
           if (!trigger) {
             return <span className="text-xs text-slate-500">Henüz job yok</span>;
@@ -1064,6 +1067,7 @@ export default function AdminStoresPage() {
               <p className="text-xs text-slate-500">
                 HTTP {trigger.responseStatus ?? "-"} - {formatDate(trigger.createdAt)}
               </p>
+              {triggerWebhookName ? <p className="text-xs text-slate-400">{triggerWebhookName}</p> : null}
               {trigger.errorMessage ? <p className="text-xs text-red-300">{formatErrorMessage(trigger.errorMessage)}</p> : null}
             </div>
           );
@@ -1178,6 +1182,7 @@ export default function AdminStoresPage() {
       copiedStoreId,
       handleCopyStoreId,
       savingStoreEdit,
+      webhookMap,
     ]
   );
 

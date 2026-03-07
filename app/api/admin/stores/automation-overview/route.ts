@@ -788,9 +788,13 @@ const parseIsoToMs = (value: string | null | undefined) => {
 };
 
 type DirectCronSnapshot = {
+  webhookConfigId: string | null;
   plan: string | null;
   cadenceHours: number | null;
   nextTriggerAt: string | null;
+  lastExecutionAt: string | null;
+  lastStatus: number | null;
+  verifiedJobId: number | null;
 };
 
 const loadDirectCronByStoreId = async (storeIds: string[]) => {
@@ -802,7 +806,17 @@ const loadDirectCronByStoreId = async (storeIds: string[]) => {
   try {
     const rows = await loadDirectAutomationCronJobs();
     const storeIdSet = new Set(storeIds);
-    const bestByStoreId = new Map<string, { nextExecution: number | null; plan: string | null }>();
+    const bestByStoreId = new Map<
+      string,
+      {
+        nextExecution: number | null;
+        lastExecution: number | null;
+        lastStatus: number | null;
+        plan: string | null;
+        webhookConfigId: string | null;
+        verifiedJobId: number | null;
+      }
+    >();
 
     for (const row of rows) {
       const storeId = typeof row.storeId === "string" ? row.storeId : null;
@@ -817,7 +831,12 @@ const loadDirectCronByStoreId = async (storeIds: string[]) => {
       if (!current) {
         bestByStoreId.set(storeId, {
           nextExecution: candidateNextExecution,
+          lastExecution:
+            typeof row.lastExecution === "number" && Number.isFinite(row.lastExecution) ? row.lastExecution : null,
+          lastStatus: typeof row.lastStatus === "number" && Number.isFinite(row.lastStatus) ? row.lastStatus : null,
           plan: row.plan ?? null,
+          webhookConfigId: row.webhookConfigId ?? null,
+          verifiedJobId: row.jobId ?? null,
         });
         continue;
       }
@@ -825,7 +844,13 @@ const loadDirectCronByStoreId = async (storeIds: string[]) => {
       if (current.nextExecution === null && candidateNextExecution !== null) {
         bestByStoreId.set(storeId, {
           nextExecution: candidateNextExecution,
+          lastExecution:
+            typeof row.lastExecution === "number" && Number.isFinite(row.lastExecution) ? row.lastExecution : current.lastExecution,
+          lastStatus:
+            typeof row.lastStatus === "number" && Number.isFinite(row.lastStatus) ? row.lastStatus : current.lastStatus,
           plan: row.plan ?? current.plan ?? null,
+          webhookConfigId: row.webhookConfigId ?? current.webhookConfigId ?? null,
+          verifiedJobId: row.jobId ?? current.verifiedJobId ?? null,
         });
         continue;
       }
@@ -837,7 +862,13 @@ const loadDirectCronByStoreId = async (storeIds: string[]) => {
       ) {
         bestByStoreId.set(storeId, {
           nextExecution: candidateNextExecution,
+          lastExecution:
+            typeof row.lastExecution === "number" && Number.isFinite(row.lastExecution) ? row.lastExecution : current.lastExecution,
+          lastStatus:
+            typeof row.lastStatus === "number" && Number.isFinite(row.lastStatus) ? row.lastStatus : current.lastStatus,
           plan: row.plan ?? current.plan ?? null,
+          webhookConfigId: row.webhookConfigId ?? current.webhookConfigId ?? null,
+          verifiedJobId: row.jobId ?? current.verifiedJobId ?? null,
         });
       }
     }
@@ -850,9 +881,14 @@ const loadDirectCronByStoreId = async (storeIds: string[]) => {
         : null;
 
       map.set(storeId, {
+        webhookConfigId: row.webhookConfigId ?? null,
         plan,
         cadenceHours,
         nextTriggerAt,
+        lastExecutionAt:
+          row.lastExecution !== null ? new Date(row.lastExecution * 1000).toISOString() : null,
+        lastStatus: row.lastStatus ?? null,
+        verifiedJobId: row.verifiedJobId ?? null,
       });
     }
   } catch {
@@ -1212,10 +1248,31 @@ export async function GET(request: NextRequest) {
           }
         : null;
       const lastTriggerFromMapping = mappingSnapshot?.lastTrigger ?? null;
+      const lastTriggerFromDirectCron =
+        directCronSnapshot?.lastExecutionAt
+          ? {
+              status:
+                directCronSnapshot.lastStatus !== null &&
+                directCronSnapshot.lastStatus >= 200 &&
+                directCronSnapshot.lastStatus < 400
+                  ? "success"
+                  : directCronSnapshot.lastStatus !== null
+                    ? "failed"
+                    : "success",
+              triggerType: "auto_switch",
+              responseStatus: directCronSnapshot.lastStatus,
+              errorMessage:
+                directCronSnapshot.lastStatus !== null && directCronSnapshot.lastStatus >= 400
+                  ? `cron-job.org son durum HTTP ${directCronSnapshot.lastStatus}`
+                  : null,
+              createdAt: directCronSnapshot.lastExecutionAt,
+              webhookConfigId: directCronSnapshot.webhookConfigId,
+            }
+          : null;
       const lastTrigger =
-        parseIsoToMs(lastTriggerFromMapping?.createdAt ?? null) > parseIsoToMs(lastTriggerFromJob?.createdAt ?? null)
-          ? lastTriggerFromMapping
-          : lastTriggerFromJob;
+        [lastTriggerFromJob, lastTriggerFromMapping, lastTriggerFromDirectCron]
+          .filter((trigger): trigger is NonNullable<typeof lastTriggerFromJob> => Boolean(trigger))
+          .sort((left, right) => parseIsoToMs(right.createdAt ?? null) - parseIsoToMs(left.createdAt ?? null))[0] ?? null;
       const cadenceHours = directCronSnapshot?.cadenceHours ?? scheduleState.cadenceHours;
       const nextTriggerAt = directCronSnapshot?.nextTriggerAt ?? scheduleState.nextTriggerAt;
 

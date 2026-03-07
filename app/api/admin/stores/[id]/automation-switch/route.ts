@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminRequest, notFoundResponse } from "@/lib/auth/admin-request";
 import { getSubscriptionMonthIndex } from "@/lib/admin/automation";
-import { syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
+import {
+  findStrictDirectAutomationCronJob,
+  isDirectAutomationMode,
+  syncSchedulerCronJobLifecycle,
+} from "@/lib/cron-job-org/client";
 import { dispatchN8nTrigger } from "@/lib/n8n/client";
 import { createManualSwitchIdempotencyKey } from "@/lib/scheduler/idempotency";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -545,14 +549,101 @@ const ensureCronLifecycleSynced = async () => {
       await sleep(retryDelaysMs[index]);
     }
 
-    const result = await syncSchedulerCronJobLifecycle();
+    const result = await syncSchedulerCronJobLifecycle({ force: true });
     lastResult = result;
-    if (result.ok || result.status === "skipped") {
+    if (result.ok) {
       return result;
     }
   }
 
   throw new Error(lastResult?.message || "Cron lifecycle sync failed");
+};
+
+const persistCronVerificationLog = async (args: {
+  storeId: string;
+  webhookConfigId: string;
+  webhookName: string;
+  schedulerMessage: string;
+  verifiedJobId: number;
+  nextExecutionUnix: number | null;
+  lastExecutionUnix: number | null;
+  lastStatus: number | null;
+  createdBy: string;
+}) => {
+  const responseBody = JSON.stringify({
+    scheduler_message: args.schedulerMessage,
+    store_id: args.storeId,
+    webhook_config_id: args.webhookConfigId,
+    webhook_name: args.webhookName,
+    verified_job_id: args.verifiedJobId,
+    next_execution_unix: args.nextExecutionUnix,
+    next_execution_at:
+      args.nextExecutionUnix !== null ? new Date(args.nextExecutionUnix * 1000).toISOString() : null,
+    last_execution_unix: args.lastExecutionUnix,
+    last_execution_at:
+      args.lastExecutionUnix !== null ? new Date(args.lastExecutionUnix * 1000).toISOString() : null,
+    last_status: args.lastStatus,
+  });
+
+  const payloads: Array<Record<string, unknown>> = [
+    {
+      request_url: "store-webhook-cron-sync",
+      request_method: "STORE_WEBHOOK_CRON_SYNC",
+      request_headers: {},
+      request_body: {
+        store_id: args.storeId,
+        webhook_config_id: args.webhookConfigId,
+        webhook_name: args.webhookName,
+        verified_job_id: args.verifiedJobId,
+      },
+      response_status: 200,
+      response_body: responseBody,
+      duration_ms: 0,
+      created_by: args.createdBy,
+    },
+    {
+      request_url: "store-webhook-cron-sync",
+      request_method: "STORE_WEBHOOK_CRON_SYNC",
+      request_body: {
+        store_id: args.storeId,
+        webhook_config_id: args.webhookConfigId,
+        webhook_name: args.webhookName,
+        verified_job_id: args.verifiedJobId,
+      },
+      response_status: 200,
+      response_body: responseBody,
+      duration_ms: 0,
+      created_by: args.createdBy,
+    },
+    {
+      request_url: "store-webhook-cron-sync",
+      request_method: "STORE_WEBHOOK_CRON_SYNC",
+      response_status: 200,
+      response_body: responseBody,
+      duration_ms: 0,
+      created_by: args.createdBy,
+    },
+  ];
+
+  for (const payload of payloads) {
+    const attempt = await supabaseAdmin.from("webhook_logs").insert(payload);
+    if (!attempt.error) {
+      return;
+    }
+
+    if (
+      !isMissingAnyColumnError(attempt.error, [
+        "request_headers",
+        "request_body",
+        "response_status",
+        "response_body",
+        "duration_ms",
+        "created_by",
+      ])
+    ) {
+      return;
+    }
+  }
 };
 
 const updateStoreAutomationBindingWithFallback = async (args: {
@@ -764,6 +855,59 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       idempotencyKey,
     });
     const cronSync = await ensureCronLifecycleSynced();
+    let directCronVerification:
+      | {
+          jobId: number;
+          nextExecution: number | null;
+          lastExecution: number | null;
+          lastStatus: number | null;
+        }
+      | null = null;
+
+    if (isDirectAutomationMode()) {
+      const verifiedJob = await findStrictDirectAutomationCronJob({
+        storeId: store.id,
+        webhookConfigId: targetWebhook.id,
+      });
+
+      if (!verifiedJob) {
+        if (transitionId) {
+          await supabaseAdmin
+            .from("store_automation_transitions")
+            .update({
+              status: "failed",
+              trigger_response_body: "Direct cron job dogrulanamadi.",
+            })
+            .eq("id", transitionId);
+        }
+
+        return NextResponse.json(
+          {
+            error: `Direct cron dogrulamasi basarisiz. ${store.store_currency} / ${targetWebhook.name} icin cron-job.org kaydi olusmadi.`,
+          },
+          { status: 503 }
+        );
+      }
+
+      directCronVerification = {
+        jobId: verifiedJob.jobId,
+        nextExecution: verifiedJob.nextExecution ?? null,
+        lastExecution: verifiedJob.lastExecution ?? null,
+        lastStatus: verifiedJob.lastStatus ?? null,
+      };
+
+      await persistCronVerificationLog({
+        storeId: store.id,
+        webhookConfigId: targetWebhook.id,
+        webhookName: targetWebhook.name,
+        schedulerMessage: cronSync.message,
+        verifiedJobId: verifiedJob.jobId,
+        nextExecutionUnix: verifiedJob.nextExecution ?? null,
+        lastExecutionUnix: verifiedJob.lastExecution ?? null,
+        lastStatus: verifiedJob.lastStatus ?? null,
+        createdBy: admin.user.id,
+      });
+    }
 
     const schedulerJobInsert = await insertSchedulerJobWithFallback({
       subscriptionId: activeSubscription.id,
@@ -847,6 +991,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         idempotencyKey,
         storeId: store.id,
         cronSync,
+        directCronVerification,
         transitionId: transitionId ?? null,
         schedulerJobId,
         monthIndex,

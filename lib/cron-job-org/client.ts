@@ -155,6 +155,30 @@ export type DirectAutomationCronJob = {
   plan: string | null;
 };
 
+const mapCronSummaryToDirectAutomationJob = (job: CronJobSummary): DirectAutomationCronJob | null => {
+  if (!isAutomationManagedTitle(job.title)) {
+    return null;
+  }
+
+  const parsed = parseAutomationTitle(job.title ?? null);
+  return {
+    jobId: job.jobId,
+    enabled: job.enabled !== false,
+    title: job.title ?? "",
+    url: job.url ?? "",
+    requestMethod: job.requestMethod ?? POST_REQUEST_METHOD,
+    lastStatus: job.lastStatus ?? null,
+    lastDuration: job.lastDuration ?? null,
+    lastExecution: job.lastExecution ?? null,
+    nextExecution: job.nextExecution ?? null,
+    schedule: job.schedule ?? null,
+    subscriptionId: parsed.subscriptionId,
+    storeId: parsed.storeId,
+    webhookConfigId: parsed.webhookConfigId,
+    plan: parsed.plan,
+  } satisfies DirectAutomationCronJob;
+};
+
 let directAutomationCronJobsCache:
   | {
       rows: DirectAutomationCronJob[];
@@ -998,26 +1022,8 @@ export const loadDirectAutomationCronJobs = async (options?: { force?: boolean }
       });
 
       const rows = ((listResponse.jobs ?? []) as CronJobSummary[])
-        .filter((job) => isAutomationManagedTitle(job.title))
-        .map((job) => {
-          const parsed = parseAutomationTitle(job.title ?? null);
-          return {
-            jobId: job.jobId,
-            enabled: job.enabled !== false,
-            title: job.title ?? "",
-            url: job.url ?? "",
-            requestMethod: job.requestMethod ?? POST_REQUEST_METHOD,
-            lastStatus: job.lastStatus ?? null,
-            lastDuration: job.lastDuration ?? null,
-            lastExecution: job.lastExecution ?? null,
-            nextExecution: job.nextExecution ?? null,
-            schedule: job.schedule ?? null,
-            subscriptionId: parsed.subscriptionId,
-            storeId: parsed.storeId,
-            webhookConfigId: parsed.webhookConfigId,
-            plan: parsed.plan,
-          } satisfies DirectAutomationCronJob;
-        })
+        .map((job) => mapCronSummaryToDirectAutomationJob(job))
+        .filter((job): job is DirectAutomationCronJob => Boolean(job))
         .sort((a, b) => {
           const aNext = a.nextExecution ?? 0;
           const bNext = b.nextExecution ?? 0;
@@ -1061,6 +1067,35 @@ export const loadDirectAutomationCronJobs = async (options?: { force?: boolean }
       directAutomationCronJobsInFlight = null;
     }
   }
+};
+
+export const findStrictDirectAutomationCronJob = async (args: {
+  storeId: string;
+  webhookConfigId: string;
+}) => {
+  const apiKey = resolveCronApiKey();
+  if (!apiKey) {
+    throw new Error("Cron API key bulunamadı.");
+  }
+
+  const listResponse = await callCronJobOrgApi<CronJobListResponse>({
+    method: "GET",
+    path: "/jobs",
+    apiKey,
+  });
+
+  const jobs = ((listResponse.jobs ?? []) as CronJobSummary[])
+    .map((job) => mapCronSummaryToDirectAutomationJob(job))
+    .filter((job): job is DirectAutomationCronJob => Boolean(job));
+
+  return (
+    jobs.find(
+      (job) =>
+        job.storeId === args.storeId &&
+        job.webhookConfigId === args.webhookConfigId &&
+        job.enabled !== false
+    ) ?? null
+  );
 };
 
 const findExistingSchedulerJobId = async (apiKey: string) => {

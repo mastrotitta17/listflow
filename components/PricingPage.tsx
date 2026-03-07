@@ -249,10 +249,10 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
     plans: {
       standard: {
         title: "Starter",
-        cadence: "8 Saatte Bir Otomatik Ürün Yükleme",
+        cadence: "12 Saatte Bir Otomatik Ürün Yükleme",
         description: "Yeni başlayanlar ve sistemi test etmek isteyenler için ideal başlangıç paketi.",
         features: [
-          { text: "8 saatte bir otomatik ürün listeleme" },
+          { text: "12 saatte bir otomatik ürün listeleme" },
           { text: "Seçtiğin 1 kategori üzerinden otomasyon başlatma" },
           { text: "Etsy’de aranan trend anahtar kelimelerle SEO uyumlu başlık + açıklama" },
           { text: "Sipariş geldiğinde ürünler Türkiye’deki tedarikçiden gönderilir" },
@@ -264,10 +264,10 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
       },
       pro: {
         title: "Pro",
-        cadence: "4 Saatte Bir Otomatik Ürün Yükleme + Birebir Kurulum",
+        cadence: "6 Saatte Bir Otomatik Ürün Yükleme + Birebir Kurulum",
         description: "Büyümek ve işi profesyonel kurmak isteyenler için.",
         features: [
-          { text: "4 saatte bir otomatik ürün listeleme" },
+          { text: "6 saatte bir otomatik ürün listeleme" },
           { text: "İstediğin kategoriden ürün seçebilme" },
           { text: "Birebir Etsy mağaza açılış ve kurulum desteği (ücretsiz)" },
           { text: "Trend kelime analizi + SEO uyumlu başlık & açıklama" },
@@ -279,10 +279,10 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
       },
       turbo: {
         title: "Turbo",
-        cadence: "2 Saatte Bir Yükleme - Hızlı Sonuç Paketi",
+        cadence: "4 Saatte Bir Yükleme - Hızlı Sonuç Paketi",
         description: "Agresif büyüme ve hızlı sonuç almak isteyenler için.",
         features: [
-          { text: "2 saatte bir otomatik ürün listeleme" },
+          { text: "4 saatte bir otomatik ürün listeleme" },
           { text: "Kategori + niş optimizasyonu" },
           { text: "Birebir mağaza kurulum ve stratejik yapılandırma (ücretsiz)" },
           { text: "Gelişmiş trend analizi ve yüksek talep ürün seçimi" },
@@ -384,10 +384,10 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
     plans: {
       standard: {
         title: "Starter",
-        cadence: "Automatic Product Upload Every 8 Hours",
+        cadence: "Automatic Product Upload Every 12 Hours",
         description: "Ideal starter package for beginners and users who want to test the system.",
         features: [
-          { text: "Automatic product listing every 8 hours" },
+          { text: "Automatic product listing every 12 hours" },
           { text: "Start automation from one selected category" },
           { text: "SEO-friendly Etsy title + description built on trend keywords" },
           { text: "When an order arrives, products are shipped from suppliers in Turkey" },
@@ -399,10 +399,10 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
       },
       pro: {
         title: "Pro",
-        cadence: "Automatic Product Upload Every 4 Hours + 1:1 Setup",
+        cadence: "Automatic Product Upload Every 6 Hours + 1:1 Setup",
         description: "For users who want to grow and build their business professionally.",
         features: [
-          { text: "Automatic product listing every 4 hours" },
+          { text: "Automatic product listing every 6 hours" },
           { text: "Choose products from your preferred category" },
           { text: "Free one-on-one Etsy store setup support" },
           { text: "Trend keyword analysis + SEO-friendly title & description" },
@@ -414,10 +414,10 @@ const COPY: Record<SupportedLocale, PricingCopy> = {
       },
       turbo: {
         title: "Turbo",
-        cadence: "Upload Every 2 Hours - Fast Results Package",
+        cadence: "Upload Every 4 Hours - Fast Results Package",
         description: "For users who want aggressive growth and faster outcomes.",
         features: [
-          { text: "Automatic product listing every 2 hours" },
+          { text: "Automatic product listing every 4 hours" },
           { text: "Category + niche optimization" },
           { text: "Free one-on-one setup and strategic store configuration" },
           { text: "Advanced trend analysis and high-demand product selection" },
