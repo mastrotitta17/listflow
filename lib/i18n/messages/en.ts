@@ -153,6 +153,7 @@ export const enMessages = {
     removeSuccess: "Product was removed from queue.",
     removeError: "Product could not be removed.",
     removeConfirm: "Are you sure you want to remove this product from the queue?",
+    removeLabel: "Remove product",
   },
   payment: {
     title: "Payment Successful!",

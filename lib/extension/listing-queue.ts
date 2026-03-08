@@ -268,6 +268,8 @@ const isRowPending = (row: RowRecord, options: { userId?: string } = {}) => {
   return false;
 };
 
+const hasManualRequeueRequest = (row: RowRecord) => Boolean(parseDateMs(row.manual_requeue_requested_at));
+
 const addIfPresent = (row: RowRecord, key: string, value: unknown, target: RowRecord) => {
   if (Object.prototype.hasOwnProperty.call(row, key)) {
     target[key] = value;
@@ -304,6 +306,7 @@ const buildUpdatePayloadForClaim = (row: RowRecord, userId: string) => {
   addIfPresent(row, "claimed_by", userId, payload);
   addIfPresent(row, "last_error", null, payload);
   addIfPresent(row, "error", null, payload);
+  addIfPresent(row, "manual_requeue_requested_at", null, payload);
 
   return payload;
 };
@@ -879,6 +882,13 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
       .filter((row) => {
         if (!storeCategoryProfile) {
           return true;
+        }
+
+        if (preferredAliases) {
+          const rowClientId = readClientId(row);
+          if (rowClientId && preferredAliases.has(rowClientId) && hasManualRequeueRequest(row)) {
+            return true;
+          }
         }
 
         return listingCategoryMatchesStoreProfile(

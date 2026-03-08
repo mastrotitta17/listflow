@@ -153,6 +153,7 @@ export const trMessages = {
     removeSuccess: "Ürün sıradan kaldırıldı.",
     removeError: "Ürün kaldırılamadı.",
     removeConfirm: "Bu ürünü sıradan kaldırmak istediğinize emin misiniz?",
+    removeLabel: "Ürünü kaldır",
   },
   payment: {
     title: "Ödeme Başarılı!",

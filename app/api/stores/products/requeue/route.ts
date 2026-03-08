@@ -33,6 +33,9 @@ const buildRequeuePayload = (row: ListingRow, storeId: string) => {
   if (Object.prototype.hasOwnProperty.call(row, "updated_at")) {
     payload.updated_at = nowIso;
   }
+  if (Object.prototype.hasOwnProperty.call(row, "manual_requeue_requested_at")) {
+    payload.manual_requeue_requested_at = nowIso;
+  }
 
   const clearColumns = [
     "processed_at",
@@ -45,6 +48,7 @@ const buildRequeuePayload = (row: ListingRow, storeId: string) => {
     "etsy_listing_id",
     "etsy_listing_url",
     "etsy_store_link",
+    "publish_proof",
   ];
 
   for (const column of clearColumns) {

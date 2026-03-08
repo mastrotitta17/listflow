@@ -441,7 +441,7 @@ const ProductsPanel: React.FC = () => {
                     ) : null}
 
                     <div className="pt-1">
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div className="flex items-center justify-between w-full gap-x-2">
                         <button
                           type="button"
                           onClick={() =>
@@ -454,7 +454,7 @@ const ProductsPanel: React.FC = () => {
                               : undefined
                           }
                           disabled={requeueMutation.isPending || removeMutation.isPending}
-                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-400/25 bg-indigo-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-indigo-100 transition hover:border-indigo-300/50 hover:bg-indigo-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-400/25 bg-indigo-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-indigo-100 transition hover:border-indigo-300/50 hover:bg-indigo-500/15 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <RefreshCw className={`h-3.5 w-3.5 ${requeueingListingId === row.id ? "animate-spin" : ""}`} />
                           {requeueingListingId === row.id ? t("productsPanel.requeueing") : t("productsPanel.requeue")}
@@ -472,10 +472,11 @@ const ProductsPanel: React.FC = () => {
                             });
                           }}
                           disabled={requeueMutation.isPending || removeMutation.isPending}
-                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-red-100 transition hover:border-red-300/50 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                          title={t("productsPanel.removeLabel")}
+                          aria-label={t("productsPanel.removeLabel")}
+                          className="flex h-10 w-auto items-center justify-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-red-100 transition hover:border-red-300/50 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <Trash2 className={`h-3.5 w-3.5 ${removingListingId === row.id ? "animate-pulse" : ""}`} />
-                          {removingListingId === row.id ? t("productsPanel.removing") : t("productsPanel.remove")}
                         </button>
                       </div>
                     </div>
