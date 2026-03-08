@@ -148,6 +148,11 @@ export const enMessages = {
     requeueing: "Queueing",
     requeueSuccess: "Product was queued again.",
     requeueError: "Product could not be queued again.",
+    remove: "Remove",
+    removing: "Removing",
+    removeSuccess: "Product was removed from queue.",
+    removeError: "Product could not be removed.",
+    removeConfirm: "Are you sure you want to remove this product from the queue?",
   },
   payment: {
     title: "Payment Successful!",

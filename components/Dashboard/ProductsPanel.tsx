@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Search,
   Tag,
+  Trash2,
 } from "lucide-react";
 
 type StoreOption = {
@@ -80,6 +81,7 @@ const ProductsPanel: React.FC = () => {
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [requeueingListingId, setRequeueingListingId] = useState<string | null>(null);
+  const [removingListingId, setRemovingListingId] = useState<string | null>(null);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -182,6 +184,38 @@ const ProductsPanel: React.FC = () => {
     onError: (mutationError) => {
       toast.error(mutationError instanceof Error ? mutationError.message : t("productsPanel.requeueError"));
       setRequeueingListingId(null);
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (args: { listingId: string; listingKey: string | null; storeId: string }) => {
+      setRemovingListingId(args.listingId);
+      const response = await fetch("/api/stores/products/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          listing_id: args.listingId,
+          listing_key: args.listingKey,
+          store_id: args.storeId,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || t("productsPanel.removeError"));
+      }
+
+      return payload;
+    },
+    onSuccess: async (payload) => {
+      toast.success(payload.message || t("productsPanel.removeSuccess"));
+      await refetch();
+      setRemovingListingId(null);
+    },
+    onError: (mutationError) => {
+      toast.error(mutationError instanceof Error ? mutationError.message : t("productsPanel.removeError"));
+      setRemovingListingId(null);
     },
   });
 
@@ -407,23 +441,43 @@ const ProductsPanel: React.FC = () => {
                     ) : null}
 
                     <div className="pt-1">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          selectedStore
-                            ? requeueMutation.mutate({
-                                listingId: row.id,
-                                listingKey: row.key,
-                                storeId: selectedStore.id,
-                              })
-                            : undefined
-                        }
-                        disabled={requeueMutation.isPending}
-                        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-400/25 bg-indigo-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-indigo-100 transition hover:border-indigo-300/50 hover:bg-indigo-500/15 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <RefreshCw className={`h-3.5 w-3.5 ${requeueingListingId === row.id ? "animate-spin" : ""}`} />
-                        {requeueingListingId === row.id ? t("productsPanel.requeueing") : t("productsPanel.requeue")}
-                      </button>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            selectedStore
+                              ? requeueMutation.mutate({
+                                  listingId: row.id,
+                                  listingKey: row.key,
+                                  storeId: selectedStore.id,
+                                })
+                              : undefined
+                          }
+                          disabled={requeueMutation.isPending || removeMutation.isPending}
+                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-400/25 bg-indigo-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-indigo-100 transition hover:border-indigo-300/50 hover:bg-indigo-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${requeueingListingId === row.id ? "animate-spin" : ""}`} />
+                          {requeueingListingId === row.id ? t("productsPanel.requeueing") : t("productsPanel.requeue")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!selectedStore) return;
+                            const confirmed = window.confirm(t("productsPanel.removeConfirm"));
+                            if (!confirmed) return;
+                            removeMutation.mutate({
+                              listingId: row.id,
+                              listingKey: row.key,
+                              storeId: selectedStore.id,
+                            });
+                          }}
+                          disabled={requeueMutation.isPending || removeMutation.isPending}
+                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-red-100 transition hover:border-red-300/50 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Trash2 className={`h-3.5 w-3.5 ${removingListingId === row.id ? "animate-pulse" : ""}`} />
+                          {removingListingId === row.id ? t("productsPanel.removing") : t("productsPanel.remove")}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </article>

@@ -148,6 +148,11 @@ export const trMessages = {
     requeueing: "Sıraya Alınıyor",
     requeueSuccess: "Ürün tekrar sıraya alındı.",
     requeueError: "Ürün tekrar sıraya alınamadı.",
+    remove: "Kaldır",
+    removing: "Kaldırılıyor",
+    removeSuccess: "Ürün sıradan kaldırıldı.",
+    removeError: "Ürün kaldırılamadı.",
+    removeConfirm: "Bu ürünü sıradan kaldırmak istediğinize emin misiniz?",
   },
   payment: {
     title: "Ödeme Başarılı!",
