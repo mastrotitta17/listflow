@@ -488,6 +488,8 @@ const getAutomationMode = () => {
 };
 
 export const isDirectAutomationMode = () => getAutomationMode() === "direct";
+export const isPerStoreDirectCronEnabled = () =>
+  process.env.LISTFLOW_ENABLE_DIRECT_STORE_CRONS?.trim() === "1";
 
 const isMissingColumnError = (error: { message?: string } | null | undefined, columnName: string) => {
   if (!error) {
@@ -1252,6 +1254,10 @@ const buildDesiredDirectCronRows = async (nowMs: number) => {
 };
 
 export const loadDirectAutomationCronJobs = async (options?: { force?: boolean }) => {
+  if (!isPerStoreDirectCronEnabled()) {
+    return [] as DirectAutomationCronJob[];
+  }
+
   const apiKey = resolveCronApiKey();
   if (!apiKey) {
     throw new Error("Cron API key bulunamadı.");
@@ -1349,6 +1355,14 @@ export const findStrictDirectAutomationCronJob = async (args: {
 export const ensureDirectAutomationCronJobForBinding = async (
   args: EnsureDirectAutomationCronJobArgs
 ): Promise<SchedulerCronSyncResult> => {
+  if (!isPerStoreDirectCronEnabled()) {
+    return {
+      ok: true,
+      status: "noop",
+      message: "Per-store direct cron kapalı. Master scheduler tick kullanılacak.",
+    };
+  }
+
   const apiKey = resolveCronApiKey();
   if (!apiKey) {
     return {
@@ -1357,15 +1371,6 @@ export const ensureDirectAutomationCronJobForBinding = async (
       message: "Cron API key bulunamadı. Direct cron oluşturma atlandı.",
     };
   }
-
-  const schedulerResult = await ensureSchedulerCronJob().catch((error) => {
-    return {
-      ok: false,
-      status: "error",
-      message: "Scheduler cron doğrulanamadı.",
-      details: error instanceof Error ? error.message : "Bilinmeyen hata",
-    } satisfies SchedulerCronSyncResult;
-  });
 
   const { title, payload } = buildDirectAutomationPayload(args, Date.now());
 
@@ -1434,7 +1439,7 @@ export const ensureDirectAutomationCronJobForBinding = async (
         ok: true,
         status: needsUpdate ? "updated" : "noop",
         jobId: primaryJob.jobId,
-        message: `${schedulerResult.message} Direct cron doğrulandı (jobId=${primaryJob.jobId}, store=${args.storeId}, webhook=${args.webhookConfigId}).${
+        message: `Direct cron doğrulandı (jobId=${primaryJob.jobId}, store=${args.storeId}, webhook=${args.webhookConfigId}).${
           staleJobs.length ? ` ${staleJobs.length} kopya direct job temizlendi.` : ""
         }`,
       };
@@ -1453,7 +1458,7 @@ export const ensureDirectAutomationCronJobForBinding = async (
       return {
         ok: false,
         status: "error",
-        message: `${schedulerResult.message} Direct cron oluşturuldu ancak jobId alınamadı.`,
+        message: "Direct cron oluşturuldu ancak jobId alınamadı.",
       };
     }
 
@@ -1461,7 +1466,7 @@ export const ensureDirectAutomationCronJobForBinding = async (
       ok: true,
       status: "created",
       jobId: created.jobId,
-      message: `${schedulerResult.message} Direct cron oluşturuldu (jobId=${created.jobId}, store=${args.storeId}, webhook=${args.webhookConfigId}).`,
+      message: `Direct cron oluşturuldu (jobId=${created.jobId}, store=${args.storeId}, webhook=${args.webhookConfigId}).`,
     };
   } catch (error) {
     if (isCronJobOrgRateLimitedError(error)) {
@@ -1717,7 +1722,10 @@ export const syncSchedulerCronJobLifecycle = async (options?: { force?: boolean 
         return schedulerResult;
       }
 
-      const directResult = isDirectAutomationMode() ? await syncDirectAutomationCronJobs(apiKey) : null;
+      const directResult =
+        isDirectAutomationMode() && isPerStoreDirectCronEnabled()
+          ? await syncDirectAutomationCronJobs(apiKey)
+          : null;
       if (directResult && !directResult.ok) {
         if (isCronJobOrgRateLimitedError(new Error(directResult.details ?? directResult.message))) {
           return {

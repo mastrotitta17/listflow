@@ -5,6 +5,7 @@ import {
   ensureDirectAutomationCronJobForBinding,
   findStrictDirectAutomationCronJob,
   isDirectAutomationMode,
+  isPerStoreDirectCronEnabled,
   type SchedulerCronSyncResult,
 } from "@/lib/cron-job-org/client";
 import { dispatchN8nTrigger } from "@/lib/n8n/client";
@@ -612,7 +613,7 @@ const persistCronVerificationLog = async (args: {
   webhookConfigId: string;
   webhookName: string;
   schedulerMessage: string;
-  verifiedJobId: number;
+  verifiedJobId: number | null;
   nextExecutionUnix: number | null;
   lastExecutionUnix: number | null;
   lastStatus: number | null;
@@ -923,8 +924,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           lastStatus: number | null;
         }
       | null = null;
+    let cronWarning: string | null = null;
 
-    if (isDirectAutomationMode()) {
+    const usePerStoreDirectCron = isDirectAutomationMode() && isPerStoreDirectCronEnabled();
+
+    if (usePerStoreDirectCron) {
       cronSync = await ensureDirectAutomationCronJobForBinding({
         subscriptionId: activeSubscription.id,
         storeId: store.id,
@@ -937,67 +941,76 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       });
 
       if (!cronSync.ok) {
-        if (transitionId) {
-          await supabaseAdmin
-            .from("store_automation_transitions")
-            .update({
-              status: "failed",
-              trigger_response_body: cronSync.details ?? cronSync.message,
-            })
-            .eq("id", transitionId);
+        cronWarning = cronSync.message;
+        await persistCronVerificationLog({
+          storeId: store.id,
+          webhookConfigId: targetWebhook.id,
+          webhookName: targetWebhook.name,
+          schedulerMessage: cronSync.message,
+          verifiedJobId: null,
+          nextExecutionUnix: null,
+          lastExecutionUnix: null,
+          lastStatus: null,
+          createdBy: admin.user.id,
+        });
+      } else {
+        try {
+          const verifiedJob = await findStrictDirectAutomationCronJob({
+            storeId: store.id,
+            webhookConfigId: targetWebhook.id,
+          });
+
+          if (!verifiedJob) {
+            cronWarning = `Direct cron doğrulaması tamamlanamadı. ${targetWebhook.name} için cron-job.org kaydı henüz görünmüyor.`;
+            await persistCronVerificationLog({
+              storeId: store.id,
+              webhookConfigId: targetWebhook.id,
+              webhookName: targetWebhook.name,
+              schedulerMessage: cronWarning,
+              verifiedJobId: null,
+              nextExecutionUnix: null,
+              lastExecutionUnix: null,
+              lastStatus: null,
+              createdBy: admin.user.id,
+            });
+          } else {
+            directCronVerification = {
+              jobId: verifiedJob.jobId,
+              nextExecution: verifiedJob.nextExecution ?? null,
+              lastExecution: verifiedJob.lastExecution ?? null,
+              lastStatus: verifiedJob.lastStatus ?? null,
+            };
+
+            await persistCronVerificationLog({
+              storeId: store.id,
+              webhookConfigId: targetWebhook.id,
+              webhookName: targetWebhook.name,
+              schedulerMessage: cronSync.message,
+              verifiedJobId: verifiedJob.jobId,
+              nextExecutionUnix: verifiedJob.nextExecution ?? null,
+              lastExecutionUnix: verifiedJob.lastExecution ?? null,
+              lastStatus: verifiedJob.lastStatus ?? null,
+              createdBy: admin.user.id,
+            });
+          }
+        } catch (error) {
+          cronWarning =
+            error instanceof Error
+              ? `Direct cron doğrulaması tamamlanamadı: ${error.message}`
+              : "Direct cron doğrulaması tamamlanamadı.";
+          await persistCronVerificationLog({
+            storeId: store.id,
+            webhookConfigId: targetWebhook.id,
+            webhookName: targetWebhook.name,
+            schedulerMessage: cronWarning,
+            verifiedJobId: null,
+            nextExecutionUnix: null,
+            lastExecutionUnix: null,
+            lastStatus: null,
+            createdBy: admin.user.id,
+          });
         }
-
-        return NextResponse.json(
-          {
-            error: cronSync.message,
-            details: "details" in cronSync ? cronSync.details ?? null : null,
-          },
-          { status: cronSync.status === "skipped" ? 503 : 500 }
-        );
       }
-
-      const verifiedJob = await findStrictDirectAutomationCronJob({
-        storeId: store.id,
-        webhookConfigId: targetWebhook.id,
-      });
-
-      if (!verifiedJob) {
-        if (transitionId) {
-          await supabaseAdmin
-            .from("store_automation_transitions")
-            .update({
-              status: "failed",
-              trigger_response_body: "Direct cron job dogrulanamadi.",
-            })
-            .eq("id", transitionId);
-        }
-
-        return NextResponse.json(
-          {
-            error: `Direct cron dogrulamasi basarisiz. ${store.store_currency} / ${targetWebhook.name} icin cron-job.org kaydi olusmadi.`,
-          },
-          { status: 503 }
-        );
-      }
-
-      directCronVerification = {
-        jobId: verifiedJob.jobId,
-        nextExecution: verifiedJob.nextExecution ?? null,
-        lastExecution: verifiedJob.lastExecution ?? null,
-        lastStatus: verifiedJob.lastStatus ?? null,
-      };
-
-      await persistCronVerificationLog({
-        storeId: store.id,
-        webhookConfigId: targetWebhook.id,
-        webhookName: targetWebhook.name,
-        schedulerMessage: cronSync.message,
-        verifiedJobId: verifiedJob.jobId,
-        nextExecutionUnix: verifiedJob.nextExecution ?? null,
-        lastExecutionUnix: verifiedJob.lastExecution ?? null,
-        lastStatus: verifiedJob.lastStatus ?? null,
-        createdBy: admin.user.id,
-      });
     }
 
     const schedulerJobInsert = await insertSchedulerJobWithFallback({
@@ -1083,6 +1096,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         storeId: store.id,
         cronSync,
         directCronVerification,
+        warning: cronWarning,
         transitionId: transitionId ?? null,
         schedulerJobId,
         monthIndex,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
+import { isPerStoreDirectCronEnabled, syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
 import { serverEnv } from "@/lib/env/server";
 import { runSchedulerTick } from "@/lib/scheduler/engine";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -226,10 +226,9 @@ const runTick = async (request: NextRequest) => {
   }
 
   try {
-    const lifecycleSummary = isDirectAutomationMode()
-      ? await syncSchedulerCronJobLifecycle({ force: true })
-      : null;
-    const summary = isDirectAutomationMode()
+    const usePerStoreDirectCron = isDirectAutomationMode() && isPerStoreDirectCronEnabled();
+    const lifecycleSummary = await syncSchedulerCronJobLifecycle();
+    const summary = usePerStoreDirectCron
       ? {
           total: 0,
           triggered: 0,

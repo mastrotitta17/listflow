@@ -91,6 +91,7 @@ type SwitchResponse = {
   code?: string;
   message?: string;
   error?: string;
+  warning?: string | null;
 };
 
 type AutomationTableRow = AutomationOverviewRow & {
@@ -353,9 +354,9 @@ function NextTriggerCountdown({
   if (!directCronPresent) {
     return (
       <div className="space-y-1">
-        <p className="text-sm font-black text-amber-300">Remote cron doğrulanmadı</p>
+        <p className="text-sm font-black text-amber-300">Scheduler beklemede</p>
         <p className="text-xs text-slate-500">
-          Sonraki tetik kesinleşmedi {cadenceHours ? `(plan: her ${cadenceHours} saat)` : ""}
+          Sonraki tetik hazırlanıyor {cadenceHours ? `(plan: her ${cadenceHours} saat)` : ""}
         </p>
       </div>
     );
@@ -828,8 +829,8 @@ function StoresAutomationTable({
                     />
                     <p className="text-xs text-slate-500">
                       {item.directCronPresent
-                        ? `direct cron aktif${item.directCronJobId ? ` (#${item.directCronJobId})` : ""}`
-                        : "direct cron eksik"}
+                        ? `cron scheduler aktif${item.directCronJobId ? ` (#${item.directCronJobId})` : ""}`
+                        : "cron scheduler beklemede"}
                     </p>
                   </div>
                 </TableCell>
@@ -1497,7 +1498,11 @@ export default function AdminStoresPage() {
         }
 
         const webhookName = webhookMap.get(targetWebhookConfigId)?.name ?? "hedef webhook";
-        setSuccessMessage(`${store.storeName} için ${webhookName} otomasyonu tetiklendi.`);
+        const warningText =
+          typeof payload.warning === "string" && payload.warning.trim().length > 0
+            ? ` Uyarı: ${payload.warning}`
+            : "";
+        setSuccessMessage(`${store.storeName} için ${webhookName} otomasyonu tetiklendi.${warningText}`);
         await loadOverview({ silent: true });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Geçiş işlemi başarısız.");

@@ -9,6 +9,7 @@ import {
 import {
   describeCronJobOrgExecutionStatus,
   isDirectAutomationMode,
+  isPerStoreDirectCronEnabled,
   loadDirectAutomationCronJobs,
   syncSchedulerCronJobLifecycle,
 } from "@/lib/cron-job-org/client";
@@ -1413,13 +1414,18 @@ export async function GET(request: NextRequest) {
         [lastTriggerFromJob, lastTriggerFromMapping, lastTriggerFromDirectCron]
           .filter((trigger): trigger is NonNullable<typeof lastTriggerFromJob> => Boolean(trigger))
           .sort((left, right) => parseIsoToMs(right.createdAt ?? null) - parseIsoToMs(left.createdAt ?? null))[0] ?? null;
-      const directCronPresent = Boolean(directCronSnapshot?.verifiedJobId);
-      const cadenceHours = directCronPresent
-        ? directCronSnapshot?.cadenceHours ?? scheduleState.cadenceHours
-        : scheduleState.cadenceHours;
-      const nextTriggerAt = directCronPresent
-        ? directCronSnapshot?.nextTriggerAt ?? null
-        : null;
+      const usesPerStoreDirectCron = isDirectAutomationMode() && isPerStoreDirectCronEnabled();
+      const directCronPresent = usesPerStoreDirectCron
+        ? Boolean(directCronSnapshot?.verifiedJobId)
+        : Boolean(activeSubscription?.id && activeWebhookConfigId);
+      const cadenceHours =
+        usesPerStoreDirectCron && directCronPresent
+          ? directCronSnapshot?.cadenceHours ?? scheduleState.cadenceHours
+          : scheduleState.cadenceHours;
+      const nextTriggerAt =
+        usesPerStoreDirectCron && directCronPresent
+          ? directCronSnapshot?.nextTriggerAt ?? scheduleState.nextTriggerAt
+          : scheduleState.nextTriggerAt;
 
       return {
         storeId: store.id,
@@ -1460,7 +1466,7 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    if (isDirectAutomationMode()) {
+    if (isDirectAutomationMode() && isPerStoreDirectCronEnabled()) {
       const missingDirectCronRows = rows.filter((row) => {
         return Boolean(row.subscriptionId && row.activeWebhookConfigId && row.directCronPresent !== true);
       });
