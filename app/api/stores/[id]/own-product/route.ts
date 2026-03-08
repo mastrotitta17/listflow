@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 const OWN_PRODUCT_WEBHOOK_URL =
   process.env.OWN_PRODUCT_N8N_WEBHOOK_URL?.trim() ||
-  "https://n8n.srv1162127.hstgr.cloud/webhook/ec50ca6c-0e9d-4fa5-aac6-d2fe69b11ce4";
+  "https://n8n.srv1162127.hstgr.cloud/webhook/ec50ca6c-0e9d-4fa5-aac6-d2fe69b11c33";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
@@ -174,9 +174,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const responseText = await upstreamResponse.text();
 
     if (!upstreamResponse.ok) {
+      const normalizedResponseText = responseText.toLowerCase();
+      const webhookNotRegistered =
+        upstreamResponse.status === 404 &&
+        normalizedResponseText.includes("webhook") &&
+        normalizedResponseText.includes("not registered");
+
       return NextResponse.json(
         {
-          error: responseText || "Ürün işleme isteği gönderilemedi.",
+          error: webhookNotRegistered
+            ? "N8N own-product webhook'u aktif değil veya yanlış URL kullanılıyor. Workflow'u publish edip OWN_PRODUCT_N8N_WEBHOOK_URL değerini kontrol edin."
+            : responseText || "Ürün işleme isteği gönderilemedi.",
         },
         { status: 502 }
       );
