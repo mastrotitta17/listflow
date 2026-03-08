@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { cookies, headers } from "next/headers";
 import { detectLocale } from "@/lib/i18n/detect-locale";
 import { I18nProvider } from "@/lib/i18n/provider";
+import QueryProvider from "@/components/providers/QueryProvider";
 import { Toaster } from "@/components/ui/sonner";
 import RuntimeErrorNoiseFilter from "@/components/RuntimeErrorNoiseFilter";
 import "./globals.css";
@@ -37,11 +38,13 @@ export default async function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <I18nProvider locale={locale}>
-          <RuntimeErrorNoiseFilter />
-          {children}
-          <SpeedInsights />
-          <Analytics />
-          <Toaster richColors closeButton position="top-right" />
+          <QueryProvider>
+            <RuntimeErrorNoiseFilter />
+            {children}
+            <SpeedInsights />
+            <Analytics />
+            <Toaster richColors closeButton position="top-right" />
+          </QueryProvider>
         </I18nProvider>
       </body>
     </html>

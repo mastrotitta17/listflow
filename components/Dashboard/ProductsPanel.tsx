@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { supabase } from "../../lib/supabaseClient";
 import { useI18n } from "@/lib/i18n/provider";
 import { Select } from "@/components/ui/select";
@@ -49,36 +50,36 @@ type ProductsResponse = {
   error?: string;
 };
 
+const DRAFT_STATUSES = ["draft", "pending", "queued"];
+
 const statusTone = (value: string) => {
   const normalized = value.trim().toLowerCase();
   if (["completed", "complete", "done", "published", "uploaded", "success"].includes(normalized)) {
-    return "border-emerald-500/25 bg-emerald-500/10 text-emerald-300";
+    return "border-emerald-400/40 bg-emerald-950/90 text-emerald-100 shadow-[0_8px_24px_rgba(16,185,129,0.18)]";
   }
 
   if (["failed", "error", "cancelled", "canceled"].includes(normalized)) {
-    return "border-red-500/25 bg-red-500/10 text-red-300";
+    return "border-red-400/40 bg-red-950/90 text-red-100 shadow-[0_8px_24px_rgba(239,68,68,0.18)]";
+  }
+
+  if (DRAFT_STATUSES.includes(normalized)) {
+    return "border-sky-300/40 bg-slate-950/95 text-sky-100 shadow-[0_8px_24px_rgba(56,189,248,0.18)]";
   }
 
   if (["processing", "in_progress", "running", "creating"].includes(normalized)) {
-    return "border-amber-500/25 bg-amber-500/10 text-amber-300";
+    return "border-amber-400/40 bg-amber-950/90 text-amber-100 shadow-[0_8px_24px_rgba(245,158,11,0.18)]";
   }
 
-  return "border-white/10 bg-white/5 text-slate-300";
+  return "border-slate-300/30 bg-slate-950/90 text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)]";
 };
 
 const ProductsPanel: React.FC = () => {
   const { t, locale } = useI18n();
-  const [stores, setStores] = useState<StoreOption[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState("");
-  const [rows, setRows] = useState<ProductRow[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [requeueingListingId, setRequeueingListingId] = useState<string | null>(null);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -112,80 +113,97 @@ const ProductsPanel: React.FC = () => {
     return response.ok;
   }, []);
 
-  const loadProducts = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false;
-      if (silent) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
+  const fetchProducts = useCallback(async (): Promise<ProductsResponse> => {
+    const params = new URLSearchParams();
+    if (selectedStoreId) {
+      params.set("storeId", selectedStoreId);
+    }
+    if (searchQuery) {
+      params.set("q", searchQuery);
+    }
+    params.set("page", String(page));
+
+    const requestProducts = async () =>
+      fetch(`/api/stores/products?${params.toString()}`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+    let response = await requestProducts();
+    let payload = (await response.json().catch(() => ({}))) as ProductsResponse;
+
+    if (response.status === 401) {
+      const synced = await syncServerSession();
+      if (synced) {
+        response = await requestProducts();
+        payload = (await response.json().catch(() => ({}))) as ProductsResponse;
       }
-      setError(null);
+    }
 
-      const params = new URLSearchParams();
-      if (selectedStoreId) {
-        params.set("storeId", selectedStoreId);
+    if (!response.ok) {
+      throw new Error(payload.error || t("productsPanel.loadError"));
+    }
+
+    return payload;
+  }, [page, searchQuery, selectedStoreId, syncServerSession, t]);
+
+  const { data, error, isLoading, isFetching, refetch } = useQuery<ProductsResponse>({
+    queryKey: ["dashboard-products", selectedStoreId, searchQuery, page],
+    queryFn: fetchProducts,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const requeueMutation = useMutation({
+    mutationFn: async (args: { listingId: string; listingKey: string | null; storeId: string }) => {
+      setRequeueingListingId(args.listingId);
+      const response = await fetch("/api/stores/products/requeue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          listing_id: args.listingId,
+          listing_key: args.listingKey,
+          store_id: args.storeId,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || t("productsPanel.requeueError"));
       }
-      if (searchQuery) {
-        params.set("q", searchQuery);
-      }
-      params.set("page", String(page));
 
-      const requestProducts = async () =>
-        fetch(`/api/stores/products?${params.toString()}`, {
-          cache: "no-store",
-          credentials: "include",
-        });
-
-      try {
-        let response = await requestProducts();
-        let payload = (await response.json().catch(() => ({}))) as ProductsResponse;
-
-        if (response.status === 401) {
-          const synced = await syncServerSession();
-          if (synced) {
-            response = await requestProducts();
-            payload = (await response.json().catch(() => ({}))) as ProductsResponse;
-          }
-        }
-
-        if (!response.ok) {
-          throw new Error(payload.error || t("productsPanel.loadError"));
-        }
-
-        const nextStores = payload.stores ?? [];
-        const nextSelectedStoreId = payload.selectedStoreId ?? nextStores[0]?.id ?? "";
-        setStores(nextStores);
-        setSelectedStoreId((current) => (current === nextSelectedStoreId ? current : nextSelectedStoreId));
-        setRows(payload.rows ?? []);
-        setTotal(payload.total ?? 0);
-        setPage(payload.page ?? 1);
-        setTotalPages(payload.totalPages ?? 1);
-      } catch (loadError) {
-        const message = loadError instanceof Error ? loadError.message : t("productsPanel.loadError");
-        setError(message);
-        setRows([]);
-        setTotal(0);
-        setTotalPages(1);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
+      return payload;
     },
-    [page, searchQuery, selectedStoreId, syncServerSession, t]
-  );
-
-  useEffect(() => {
-    void loadProducts();
-  }, [loadProducts]);
+    onSuccess: async (payload) => {
+      toast.success(payload.message || t("productsPanel.requeueSuccess"));
+      await refetch();
+      setRequeueingListingId(null);
+    },
+    onError: (mutationError) => {
+      toast.error(mutationError instanceof Error ? mutationError.message : t("productsPanel.requeueError"));
+      setRequeueingListingId(null);
+    },
+  });
 
   useEffect(() => {
     if (!error) {
       return;
     }
 
-    toast.error(error);
-  }, [error]);
+    toast.error(error instanceof Error ? error.message : t("productsPanel.loadError"));
+  }, [error, t]);
+
+  const stores = data?.stores ?? [];
+  const rows = data?.rows ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = data?.totalPages ?? 1;
+
+  useEffect(() => {
+    const serverSelectedStoreId = data?.selectedStoreId ?? stores[0]?.id ?? "";
+    if (serverSelectedStoreId && serverSelectedStoreId !== selectedStoreId) {
+      setSelectedStoreId(serverSelectedStoreId);
+    }
+  }, [data?.selectedStoreId, selectedStoreId, stores]);
 
   const selectedStore = useMemo(
     () => stores.find((store) => store.id === selectedStoreId) ?? null,
@@ -219,10 +237,10 @@ const ProductsPanel: React.FC = () => {
   const handlePrevPage = () => setPage((current) => Math.max(current - 1, 1));
   const handleNextPage = () => setPage((current) => Math.min(current + 1, totalPages));
 
-  if (!loading && stores.length === 0) {
+  if (!isLoading && stores.length === 0) {
     return (
-      <section className="p-6 sm:p-8 lg:p-10">
-        <div className="mx-auto max-w-7xl rounded-[28px] border border-white/10 bg-white/5 p-8 sm:p-10">
+      <section className="h-full overflow-y-auto overflow-x-hidden p-4 sm:p-6 xl:p-8 [@media(max-height:820px)]:p-4">
+        <div className="mx-auto w-full rounded-[28px] border border-white/10 bg-white/5 p-8 sm:p-10">
           <div className="flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-300">
               <Boxes className="h-6 w-6" />
@@ -238,37 +256,15 @@ const ProductsPanel: React.FC = () => {
   }
 
   return (
-    <section className="p-6 sm:p-8 lg:p-10">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.32em] text-indigo-300/80">
-              {t("productsPanel.title")}
-            </p>
-            <h1 className="mt-2 text-3xl font-black tracking-tight text-white">{t("productsPanel.title")}</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-400">{t("productsPanel.subtitle")}</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void loadProducts({ silent: true })}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm font-bold text-slate-200 transition hover:border-indigo-400/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={refreshing || loading}
-          >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            {t("productsPanel.refresh")}
-          </button>
-        </div>
-
-        <div className="rounded-[28px] border border-white/10 bg-white/5 p-5 sm:p-6">
+    <section className="h-full overflow-y-auto overflow-x-hidden p-4 sm:p-6 xl:p-8 [@media(max-height:820px)]:p-4">
+      <div className="w-full space-y-6">
+        <div className="rounded-[24px] border border-white/10 bg-white/5 p-4 sm:p-5 [@media(max-height:820px)]:p-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
             <div className="w-full lg:max-w-sm">
               <label className="mb-2 block text-[11px] font-black uppercase tracking-[0.28em] text-slate-500">
                 {t("productsPanel.storeLabel")}
               </label>
-              <Select
-                value={selectedStoreId}
-                onChange={(event) => handleStoreChange(event.target.value)}
-              >
+              <Select value={selectedStoreId} onChange={(event) => handleStoreChange(event.target.value)}>
                 {stores.map((store) => (
                   <option key={store.id} value={store.id}>
                     {store.name} {store.category ? `· ${store.category}` : ""}
@@ -292,7 +288,7 @@ const ProductsPanel: React.FC = () => {
               </div>
             </div>
 
-            <div className="lg:ml-auto">
+            <div className="lg:ml-auto flex items-end gap-3">
               <div className="rounded-2xl border border-white/10 bg-[#0a0a0c] px-4 py-3">
                 <p className="text-[11px] font-black uppercase tracking-[0.28em] text-slate-500">
                   {selectedStore?.name ?? t("productsPanel.storeLabel")}
@@ -301,16 +297,25 @@ const ProductsPanel: React.FC = () => {
                   {total} {t("productsPanel.countLabel")}
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => void refetch()}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm font-bold text-slate-200 transition hover:border-indigo-400/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isFetching}
+              >
+                <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+                {t("productsPanel.refresh")}
+              </button>
             </div>
           </div>
         </div>
 
-        {loading ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {Array.from({ length: 6 }).map((_, index) => (
-              <div key={index} className="overflow-hidden rounded-[26px] border border-white/10 bg-white/5">
-                <div className="aspect-[4/3] animate-pulse bg-white/5" />
-                <div className="space-y-3 p-5">
+        {isLoading ? (
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 [@media(min-width:1850px)]:grid-cols-5">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <div key={index} className="overflow-hidden rounded-[22px] border border-white/10 bg-white/5">
+                <div className="aspect-[16/10] animate-pulse bg-white/5" />
+                <div className="space-y-3 p-4">
                   <div className="h-5 w-2/3 animate-pulse rounded-full bg-white/5" />
                   <div className="h-4 w-full animate-pulse rounded-full bg-white/5" />
                   <div className="h-4 w-3/4 animate-pulse rounded-full bg-white/5" />
@@ -319,43 +324,42 @@ const ProductsPanel: React.FC = () => {
             ))}
           </div>
         ) : rows.length === 0 ? (
-          <div className="rounded-[28px] border border-dashed border-white/10 bg-white/5 px-6 py-12 text-center">
+          <div className="rounded-[24px] border border-dashed border-white/10 bg-white/5 px-6 py-12 text-center">
             <Package className="mx-auto h-10 w-10 text-slate-600" />
             <h3 className="mt-4 text-xl font-black tracking-tight text-white">{t("productsPanel.emptyTitle")}</h3>
             <p className="mx-auto mt-2 max-w-xl text-sm text-slate-400">{t("productsPanel.emptyDescription")}</p>
           </div>
         ) : (
           <>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 [@media(min-width:1850px)]:grid-cols-5">
               {rows.map((row) => (
                 <article
                   key={row.id}
-                  className="overflow-hidden rounded-[26px] border border-white/10 bg-white/5 backdrop-blur-xl transition hover:border-indigo-400/30 hover:bg-white/[0.07]"
+                  className="overflow-hidden rounded-[22px] border border-white/10 bg-white/5 backdrop-blur-xl transition hover:border-indigo-400/30 hover:bg-white/[0.07]"
                 >
-                  <div className="relative aspect-[4/3] overflow-hidden bg-[#0b1020]">
+                  <div className="relative aspect-[16/10] overflow-hidden bg-[#0b1020]">
                     {row.imageUrl ? (
-                      <img
-                        src={row.imageUrl}
-                        alt={row.title}
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
+                      <img src={row.imageUrl} alt={row.title} className="h-full w-full object-cover" loading="lazy" />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,#312e81_0%,#0b1020_55%,#06070c_100%)]">
                         <Boxes className="h-10 w-10 text-indigo-300/60" />
                       </div>
                     )}
                     <div className="absolute left-4 top-4">
-                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.2em] ${statusTone(row.status)}`}>
+                      <span
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.2em] backdrop-blur-md ${statusTone(row.status)}`}
+                      >
                         {row.status}
                       </span>
                     </div>
                   </div>
 
-                  <div className="space-y-4 p-5">
+                  <div className="space-y-3 p-4 [@media(max-height:820px)]:space-y-2.5">
                     <div className="space-y-2">
                       <div className="flex items-start justify-between gap-3">
-                        <h3 className="line-clamp-2 text-lg font-black tracking-tight text-white">{row.title}</h3>
+                        <h3 className="line-clamp-2 text-base font-black tracking-tight text-white [@media(min-width:1700px)]:text-lg">
+                          {row.title}
+                        </h3>
                         <span className="shrink-0 text-sm font-black text-indigo-300">
                           {currencyFormatter.format(row.price)}
                         </span>
@@ -401,6 +405,26 @@ const ProductsPanel: React.FC = () => {
                         </div>
                       </div>
                     ) : null}
+
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          selectedStore
+                            ? requeueMutation.mutate({
+                                listingId: row.id,
+                                listingKey: row.key,
+                                storeId: selectedStore.id,
+                              })
+                            : undefined
+                        }
+                        disabled={requeueMutation.isPending}
+                        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-400/25 bg-indigo-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-indigo-100 transition hover:border-indigo-300/50 hover:bg-indigo-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${requeueingListingId === row.id ? "animate-spin" : ""}`} />
+                        {requeueingListingId === row.id ? t("productsPanel.requeueing") : t("productsPanel.requeue")}
+                      </button>
+                    </div>
                   </div>
                 </article>
               ))}

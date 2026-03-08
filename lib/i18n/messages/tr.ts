@@ -144,6 +144,10 @@ export const trMessages = {
     tagsLabel: "Etiketler",
     refresh: "Yenile",
     loadError: "Ürünler yüklenemedi.",
+    requeue: "Sıraya Al",
+    requeueing: "Sıraya Alınıyor",
+    requeueSuccess: "Ürün tekrar sıraya alındı.",
+    requeueError: "Ürün tekrar sıraya alınamadı.",
   },
   payment: {
     title: "Ödeme Başarılı!",

@@ -144,6 +144,10 @@ export const enMessages = {
     tagsLabel: "Tags",
     refresh: "Refresh",
     loadError: "Products could not be loaded.",
+    requeue: "Queue Again",
+    requeueing: "Queueing",
+    requeueSuccess: "Product was queued again.",
+    requeueError: "Product could not be queued again.",
   },
   payment: {
     title: "Payment Successful!",
