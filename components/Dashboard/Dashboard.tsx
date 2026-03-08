@@ -7,6 +7,7 @@ import Link from "next/link";
 import Sidebar from './Sidebar';
 import CategoriesPanel from './CategoriesPanel';
 import EtsyPanel from './EtsyPanel';
+import ProductsPanel from './ProductsPanel';
 import OrdersPanel from './OrdersPanel';
 import SettingsPanel from './SettingsPanel';
 import ComingSoonAutomationPanel from './ComingSoonAutomationPanel';
@@ -572,6 +573,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     switch (activeSection) {
       case DashboardSection.CATEGORIES: return <CategoriesPanel routeCategorySlug={routeCategorySlug} />;
       case DashboardSection.ETSY_AUTOMATION: return <EtsyPanel />;
+      case DashboardSection.PRODUCTS: return <ProductsPanel />;
       case DashboardSection.PINTEREST_AUTOMATION:
       case DashboardSection.META_AUTOMATION:
       case DashboardSection.EBAY_AUTOMATION:

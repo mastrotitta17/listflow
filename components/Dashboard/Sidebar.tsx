@@ -9,6 +9,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { useI18n } from '@/lib/i18n/provider';
 import { useRouter } from 'next/navigation';
 import {
+  Boxes,
   Gift,
   Globe2,
   Layers,
@@ -157,6 +158,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         return "/categories";
       case DashboardSection.ETSY_AUTOMATION:
         return "/etsy-automation";
+      case DashboardSection.PRODUCTS:
+        return "/products";
       case DashboardSection.PINTEREST_AUTOMATION:
         return "/pinterest-automation";
       case DashboardSection.META_AUTOMATION:
@@ -180,6 +183,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     const staticPaths = [
       "/categories",
       "/etsy-automation",
+      "/products",
       "/pinterest-automation",
       "/meta-automation",
       "/ebay-automation",
@@ -213,6 +217,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const menuItems = [
     { id: DashboardSection.CATEGORIES, label: t("sidebar.categories"), icon: Layers },
     { id: DashboardSection.ETSY_AUTOMATION, label: t("sidebar.etsyAutomation"), icon: Store },
+    { id: DashboardSection.PRODUCTS, label: t("sidebar.products"), icon: Boxes },
     { id: DashboardSection.PINTEREST_AUTOMATION, label: t("sidebar.pinterestAutomation"), icon: Sparkles, comingSoon: true },
     { id: DashboardSection.META_AUTOMATION, label: t("sidebar.metaAutomation"), icon: Globe2, comingSoon: true },
     { id: DashboardSection.EBAY_AUTOMATION, label: t("sidebar.ebayAutomation"), icon: Workflow, comingSoon: true },
