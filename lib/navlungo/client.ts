@@ -1,21 +1,27 @@
-const DEFAULT_BASE_URL = "https://api.navlungo.com";
+import { getNavlungoConnection, upsertNavlungoConnection } from "@/lib/navlungo/connection";
+import {
+  hasNavlungoBaseCredentials,
+  readNavlungoRuntimeConfig,
+  type NavlungoEnvironment,
+  type NavlungoRuntimeConfig,
+} from "@/lib/navlungo/config";
+
 const TOKEN_PATH = "/v1/oauth/token";
-const DEFAULT_TIMEOUT_MS = 15_000;
 const TOKEN_EXPIRY_SAFETY_WINDOW_SECONDS = 30;
 
 type HttpMethod = "GET" | "POST";
 
-type NavlungoRuntimeConfig = {
-  baseUrl: string;
-  clientId: string;
-  clientSecret: string;
-  scope: string | null;
-  timeoutMs: number;
-};
-
 type TokenCache = {
   token: string;
   expiresAt: number;
+};
+
+export type NavlungoTokenGrantResponse = {
+  accessToken: string;
+  refreshToken: string | null;
+  idToken: string | null;
+  tokenType: string | null;
+  expiresInSeconds: number;
 };
 
 export type NavlungoAdditionalService = {
@@ -90,6 +96,25 @@ export type NavlungoShipStoreOrderResponse = {
   chargeableWeight?: number;
 };
 
+export type NavlungoShipmentLabelResponse = {
+  labelUrl: string;
+};
+
+export type NavlungoCreateShipmentLabelResponse = {
+  lastMileTrackingNumber?: string;
+};
+
+export type NavlungoStoreOrderTrackingResponse = Record<string, unknown> & {
+  trackingNumber?: string;
+  trackingUrl?: string;
+  shipmentReference?: string;
+  shipmentId?: string;
+};
+
+export type NavlungoShipmentTrackingResponse = Record<string, unknown> & {
+  trackingNumber?: string;
+};
+
 export type NavlungoStoreAddress = {
   type: "Individual" | "Corporate";
   companyName?: string;
@@ -144,37 +169,8 @@ export class NavlungoApiError extends Error {
   }
 }
 
-let tokenCache: TokenCache | null = null;
-let tokenInFlight: Promise<string> | null = null;
-
-const asPositiveInt = (raw: string | null | undefined, fallback: number) => {
-  if (!raw) {
-    return fallback;
-  }
-
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return Math.round(parsed);
-};
-
-const readConfig = (): NavlungoRuntimeConfig => {
-  const baseUrl = (process.env.NAVLUNGO_BASE_URL ?? DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
-  const clientId = (process.env.NAVLUNGO_CLIENT_ID ?? "").trim();
-  const clientSecret = (process.env.NAVLUNGO_CLIENT_SECRET ?? "").trim();
-  const scopeRaw = (process.env.NAVLUNGO_SCOPE ?? "").trim();
-  const timeoutMs = asPositiveInt(process.env.NAVLUNGO_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
-
-  return {
-    baseUrl,
-    clientId,
-    clientSecret,
-    scope: scopeRaw || null,
-    timeoutMs,
-  };
-};
+const tokenCache = new Map<NavlungoEnvironment, TokenCache>();
+const tokenInFlight = new Map<NavlungoEnvironment, Promise<string>>();
 
 const parseApiError = async (response: Response): Promise<NavlungoApiError> => {
   const text = await response.text();
@@ -199,35 +195,6 @@ const parseApiError = async (response: Response): Promise<NavlungoApiError> => {
   });
 };
 
-const parseAccessTokenResponse = async (response: Response) => {
-  if (!response.ok) {
-    throw await parseApiError(response);
-  }
-
-  const payload = (await response.json()) as {
-    access_token?: string;
-    expires_in?: string | number;
-  };
-
-  const accessToken = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
-  const expiresInRaw = payload.expires_in;
-  const expiresInSeconds =
-    typeof expiresInRaw === "number"
-      ? expiresInRaw
-      : typeof expiresInRaw === "string"
-        ? Number(expiresInRaw)
-        : 0;
-
-  if (!accessToken) {
-    throw new Error("Navlungo access token response does not include access_token");
-  }
-
-  return {
-    accessToken,
-    expiresInSeconds: Number.isFinite(expiresInSeconds) && expiresInSeconds > 0 ? expiresInSeconds : 300,
-  };
-};
-
 const withTimeout = async <T>(promiseFactory: (signal: AbortSignal) => Promise<T>, timeoutMs: number) => {
   const controller = new AbortController();
   const timer = setTimeout(() => {
@@ -247,115 +214,305 @@ const withTimeout = async <T>(promiseFactory: (signal: AbortSignal) => Promise<T
   }
 };
 
-const getAccessToken = async (config: NavlungoRuntimeConfig) => {
-  const now = Date.now();
-  if (tokenCache && tokenCache.expiresAt > now) {
-    return tokenCache.token;
+const parseTokenResponse = async (response: Response): Promise<NavlungoTokenGrantResponse> => {
+  if (!response.ok) {
+    throw await parseApiError(response);
   }
 
-  if (tokenInFlight) {
-    return tokenInFlight;
+  const payload = (await response.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    id_token?: string;
+    token_type?: string;
+    expires_in?: string | number;
+  };
+
+  const accessToken = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
+  const refreshToken = typeof payload.refresh_token === "string" ? payload.refresh_token.trim() : "";
+  const idToken = typeof payload.id_token === "string" ? payload.id_token.trim() : "";
+  const tokenType = typeof payload.token_type === "string" ? payload.token_type.trim() : null;
+  const expiresInRaw = payload.expires_in;
+  const expiresInSeconds =
+    typeof expiresInRaw === "number"
+      ? expiresInRaw
+      : typeof expiresInRaw === "string"
+        ? Number(expiresInRaw)
+        : 0;
+
+  if (!accessToken) {
+    throw new Error("Navlungo access token response does not include access_token");
   }
 
-  tokenInFlight = withTimeout(async (signal) => {
-    const form = new URLSearchParams();
-    form.set("client_id", config.clientId);
-    form.set("client_secret", config.clientSecret);
-    form.set("grant_type", "client_credentials");
-    if (config.scope) {
-      form.set("scope", config.scope);
-    }
+  return {
+    accessToken,
+    refreshToken: refreshToken || null,
+    idToken: idToken || null,
+    tokenType,
+    expiresInSeconds: Number.isFinite(expiresInSeconds) && expiresInSeconds > 0 ? expiresInSeconds : 300,
+  };
+};
 
-    const response = await fetch(`${config.baseUrl}${TOKEN_PATH}`, {
+const computeExpiryMs = (expiresInSeconds: number) => {
+  return Date.now() + Math.max(expiresInSeconds - TOKEN_EXPIRY_SAFETY_WINDOW_SECONDS, 10) * 1000;
+};
+
+const ensureNavlungoBaseCredentials = (config: NavlungoRuntimeConfig) => {
+  if (!config.clientId || !config.clientSecret) {
+    throw new Error("Navlungo credentials are missing. Set NAVLUNGO_CLIENT_ID and NAVLUNGO_CLIENT_SECRET.");
+  }
+};
+
+const requestTokenGrant = async (args: {
+  config: NavlungoRuntimeConfig;
+  form: URLSearchParams;
+}): Promise<NavlungoTokenGrantResponse> => {
+  return withTimeout(async (signal) => {
+    const response = await fetch(`${args.config.apiBaseUrl}${TOKEN_PATH}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: form.toString(),
+      body: args.form.toString(),
       signal,
     });
 
-    const parsed = await parseAccessTokenResponse(response);
-    const expiresAt = Date.now() + Math.max(parsed.expiresInSeconds - TOKEN_EXPIRY_SAFETY_WINDOW_SECONDS, 10) * 1000;
+    return parseTokenResponse(response);
+  }, args.config.timeoutMs);
+};
 
-    tokenCache = {
-      token: parsed.accessToken,
-      expiresAt,
-    };
+const buildScopeValue = (scopes: string[]) => scopes.join(" ").trim();
 
-    return parsed.accessToken;
-  }, config.timeoutMs).finally(() => {
-    tokenInFlight = null;
+export const exchangeNavlungoAuthorizationCode = async (args: {
+  code: string;
+  codeVerifier: string;
+  environment?: NavlungoEnvironment;
+}): Promise<NavlungoTokenGrantResponse> => {
+  const config = readNavlungoRuntimeConfig(args.environment);
+  ensureNavlungoBaseCredentials(config);
+
+  const form = new URLSearchParams();
+  form.set("client_id", config.clientId);
+  form.set("client_secret", config.clientSecret);
+  form.set("grant_type", "authorization_code");
+  form.set("code", args.code.trim());
+  form.set("code_verifier", args.codeVerifier.trim());
+  const scopeValue = buildScopeValue(config.scopes);
+  if (scopeValue) {
+    form.set("scope", scopeValue);
+  }
+
+  return requestTokenGrant({ config, form });
+};
+
+export const refreshNavlungoAccessToken = async (args: {
+  refreshToken: string;
+  environment?: NavlungoEnvironment;
+}): Promise<NavlungoTokenGrantResponse> => {
+  const config = readNavlungoRuntimeConfig(args.environment);
+  ensureNavlungoBaseCredentials(config);
+
+  const form = new URLSearchParams();
+  form.set("client_id", config.clientId);
+  form.set("client_secret", config.clientSecret);
+  form.set("grant_type", "refresh_token");
+  form.set("refresh_token", args.refreshToken.trim());
+  const scopeValue = buildScopeValue(config.scopes);
+  if (scopeValue) {
+    form.set("scope", scopeValue);
+  }
+
+  return requestTokenGrant({ config, form });
+};
+
+export const clearNavlungoAccessTokenCache = (environment?: NavlungoEnvironment) => {
+  if (environment) {
+    tokenCache.delete(environment);
+    tokenInFlight.delete(environment);
+    return;
+  }
+
+  tokenCache.clear();
+  tokenInFlight.clear();
+};
+
+const primeNavlungoAccessTokenCache = (args: {
+  environment: NavlungoEnvironment;
+  accessToken: string;
+  expiresInSeconds?: number;
+  expiresAt?: string | null;
+}) => {
+  const expiresAt = args.expiresAt
+    ? new Date(args.expiresAt).getTime()
+    : computeExpiryMs(args.expiresInSeconds ?? 300);
+
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    tokenCache.delete(args.environment);
+    return;
+  }
+
+  tokenCache.set(args.environment, {
+    token: args.accessToken,
+    expiresAt,
+  });
+};
+
+const getCachedToken = (environment: NavlungoEnvironment) => {
+  const cached = tokenCache.get(environment);
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAt <= Date.now()) {
+    tokenCache.delete(environment);
+    return null;
+  }
+
+  return cached.token;
+};
+
+const refreshSharedAccessToken = async (environment: NavlungoEnvironment, force = false) => {
+  if (!force) {
+    const cached = getCachedToken(environment);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  const existingInFlight = tokenInFlight.get(environment);
+  if (existingInFlight) {
+    return existingInFlight;
+  }
+
+  const refreshPromise = (async () => {
+    const config = readNavlungoRuntimeConfig(environment);
+    ensureNavlungoBaseCredentials(config);
+
+    const connection = await getNavlungoConnection(environment);
+    if (!connection?.refresh_token) {
+      throw new Error("Navlungo shared account is not connected yet. Complete admin authorization first.");
+    }
+
+    if (!force && connection.access_token && connection.access_token_expires_at) {
+      const expiresAtMs = new Date(connection.access_token_expires_at).getTime();
+      if (Number.isFinite(expiresAtMs) && expiresAtMs > Date.now()) {
+        primeNavlungoAccessTokenCache({
+          environment,
+          accessToken: connection.access_token,
+          expiresAt: connection.access_token_expires_at,
+        });
+        return connection.access_token;
+      }
+    }
+
+    const refreshed = await refreshNavlungoAccessToken({
+      refreshToken: connection.refresh_token,
+      environment,
+    });
+
+    const accessTokenExpiresAt = new Date(Date.now() + refreshed.expiresInSeconds * 1000).toISOString();
+
+    await upsertNavlungoConnection({
+      environment,
+      clientId: config.clientId,
+      refreshToken: refreshed.refreshToken ?? connection.refresh_token,
+      accessToken: refreshed.accessToken,
+      accessTokenExpiresAt,
+      connectedEmail: connection.connected_email,
+      connectedAt: connection.connected_at,
+      createdBy: connection.created_by,
+      updatedBy: connection.updated_by,
+    });
+
+    primeNavlungoAccessTokenCache({
+      environment,
+      accessToken: refreshed.accessToken,
+      expiresInSeconds: refreshed.expiresInSeconds,
+    });
+
+    return refreshed.accessToken;
+  })().finally(() => {
+    tokenInFlight.delete(environment);
   });
 
-  return tokenInFlight;
+  tokenInFlight.set(environment, refreshPromise);
+  return refreshPromise;
 };
 
 const requestJson = async <T>(args: {
   method: HttpMethod;
   path: string;
-  config: NavlungoRuntimeConfig;
   body?: unknown;
-}): Promise<T> => {
-  const accessToken = await getAccessToken(args.config);
+  returnNullOn404?: boolean;
+}): Promise<T | null> => {
+  const config = readNavlungoRuntimeConfig();
+  ensureNavlungoBaseCredentials(config);
 
-  return withTimeout(async (signal) => {
-    const response = await fetch(`${args.config.baseUrl}${args.path}`, {
-      method: args.method,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: args.body === undefined ? undefined : JSON.stringify(args.body),
-      signal,
-    });
+  const execute = async (accessToken: string) => {
+    return withTimeout(async (signal) => {
+      const response = await fetch(`${config.apiBaseUrl}${args.path}`, {
+        method: args.method,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: args.body === undefined ? undefined : JSON.stringify(args.body),
+        signal,
+      });
 
-    if (!response.ok) {
-      throw await parseApiError(response);
+      if (args.returnNullOn404 && response.status === 404) {
+        return null;
+      }
+
+      if (!response.ok) {
+        throw await parseApiError(response);
+      }
+
+      if (response.status === 204) {
+        return null as T | null;
+      }
+
+      return (await response.json()) as T;
+    }, config.timeoutMs);
+  };
+
+  const environment = config.environment;
+  let accessToken = await refreshSharedAccessToken(environment, false);
+
+  try {
+    return await execute(accessToken);
+  } catch (error) {
+    if (error instanceof NavlungoApiError && error.status === 401) {
+      clearNavlungoAccessTokenCache(environment);
+      accessToken = await refreshSharedAccessToken(environment, true);
+      return execute(accessToken);
     }
 
-    return (await response.json()) as T;
-  }, args.config.timeoutMs);
+    throw error;
+  }
 };
 
-export const isNavlungoConfigured = () => {
-  const { clientId, clientSecret } = readConfig();
-  return Boolean(clientId && clientSecret);
-};
+export const isNavlungoConfigured = () => hasNavlungoBaseCredentials();
 
 export const createNavlungoOrderQuote = async (args: {
   storeId: string;
   payload: NavlungoOrderQuoteRequest;
 }) => {
-  const config = readConfig();
-
-  if (!config.clientId || !config.clientSecret) {
-    throw new Error("Navlungo credentials are missing. Set NAVLUNGO_CLIENT_ID and NAVLUNGO_CLIENT_SECRET.");
-  }
-
   return requestJson<NavlungoOrderQuoteResponse>({
     method: "POST",
-    config,
     path: `/stores/v2/${encodeURIComponent(args.storeId)}/orders`,
     body: args.payload,
-  });
+  }) as Promise<NavlungoOrderQuoteResponse>;
 };
 
 export const createNavlungoStore = async (args: {
   payload: NavlungoCreateStoreRequest;
 }) => {
-  const config = readConfig();
-
-  if (!config.clientId || !config.clientSecret) {
-    throw new Error("Navlungo credentials are missing. Set NAVLUNGO_CLIENT_ID and NAVLUNGO_CLIENT_SECRET.");
-  }
-
   return requestJson<NavlungoCreateStoreResponse>({
     method: "POST",
-    config,
     path: "/stores/v1",
     body: args.payload,
-  });
+  }) as Promise<NavlungoCreateStoreResponse>;
 };
 
 export const shipNavlungoStoreOrder = async (args: {
@@ -363,16 +520,49 @@ export const shipNavlungoStoreOrder = async (args: {
   orderReference: string;
   payload: NavlungoShipStoreOrderRequest;
 }) => {
-  const config = readConfig();
-
-  if (!config.clientId || !config.clientSecret) {
-    throw new Error("Navlungo credentials are missing. Set NAVLUNGO_CLIENT_ID and NAVLUNGO_CLIENT_SECRET.");
-  }
-
   return requestJson<NavlungoShipStoreOrderResponse>({
     method: "POST",
-    config,
     path: `/stores/v2/${encodeURIComponent(args.storeId)}/orders/${encodeURIComponent(args.orderReference)}/ship`,
     body: args.payload,
+  }) as Promise<NavlungoShipStoreOrderResponse>;
+};
+
+export const createNavlungoShipmentLabel = async (args: {
+  shipmentId: string;
+}) => {
+  return requestJson<NavlungoCreateShipmentLabelResponse>({
+    method: "POST",
+    path: `/api/shipments/v1/${encodeURIComponent(args.shipmentId)}/label`,
+  }) as Promise<NavlungoCreateShipmentLabelResponse>;
+};
+
+export const getNavlungoShipmentLabel = async (args: {
+  shipmentId: string;
+}) => {
+  return requestJson<NavlungoShipmentLabelResponse>({
+    method: "GET",
+    path: `/api/shipments/v1/${encodeURIComponent(args.shipmentId)}/label`,
+    returnNullOn404: true,
+  });
+};
+
+export const getNavlungoStoreOrderTracking = async (args: {
+  storeId: string;
+  orderReference: string;
+}) => {
+  return requestJson<NavlungoStoreOrderTrackingResponse>({
+    method: "GET",
+    path: `/stores/v1/${encodeURIComponent(args.storeId)}/ordertracking?orderReference=${encodeURIComponent(args.orderReference)}`,
+    returnNullOn404: true,
+  });
+};
+
+export const getNavlungoShipmentTracking = async (args: {
+  reference: string;
+}) => {
+  return requestJson<NavlungoShipmentTrackingResponse>({
+    method: "GET",
+    path: `/api/shipments/v1/${encodeURIComponent(args.reference)}/tracking`,
+    returnNullOn404: true,
   });
 };

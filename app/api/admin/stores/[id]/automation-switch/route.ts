@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdminRequest, notFoundResponse } from "@/lib/auth/admin-request";
 import { getSubscriptionMonthIndex } from "@/lib/admin/automation";
 import {
+  ensureDirectAutomationCronJobForBinding,
   findStrictDirectAutomationCronJob,
   isDirectAutomationMode,
-  syncSchedulerCronJobLifecycle,
+  type SchedulerCronSyncResult,
 } from "@/lib/cron-job-org/client";
 import { dispatchN8nTrigger } from "@/lib/n8n/client";
 import { createManualSwitchIdempotencyKey } from "@/lib/scheduler/idempotency";
+import {
+  resolveProductCandidateForCategory,
+  type ProductMatchCandidate,
+} from "@/lib/stores/product-resolution";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { loadWebhookConfigProductMap } from "@/lib/webhooks/config-product-map";
 
@@ -16,6 +21,7 @@ type StoreRow = {
   user_id: string;
   product_id?: string | null;
   active_webhook_config_id?: string | null;
+  category?: string | null;
   store_currency: "USD" | "TRY";
   store_currency_known?: boolean;
 };
@@ -396,65 +402,74 @@ const loadWebhookConfig = async (id: string) => {
 const loadStoreById = async (storeId: string) => {
   const candidates = [
     {
-      select: "id, user_id, product_id, active_webhook_config_id, store_currency, currency",
+      select: "id, user_id, product_id, active_webhook_config_id, category, store_currency, currency",
       hasProductColumn: true,
       hasActiveWebhookColumn: true,
+      hasCategoryColumn: true,
       hasStoreCurrencyColumn: true,
       hasCurrencyColumn: true,
     },
     {
-      select: "id, user_id, product_id, active_webhook_config_id, store_currency",
+      select: "id, user_id, product_id, active_webhook_config_id, category, store_currency",
       hasProductColumn: true,
       hasActiveWebhookColumn: true,
-      hasStoreCurrencyColumn: true,
-      hasCurrencyColumn: false,
-    },
-    {
-      select: "id, user_id, product_id, active_webhook_config_id, currency",
-      hasProductColumn: true,
-      hasActiveWebhookColumn: true,
-      hasStoreCurrencyColumn: false,
-      hasCurrencyColumn: true,
-    },
-    {
-      select: "id, user_id, product_id, active_webhook_config_id",
-      hasProductColumn: true,
-      hasActiveWebhookColumn: true,
-      hasStoreCurrencyColumn: false,
-      hasCurrencyColumn: false,
-    },
-    {
-      select: "id, user_id, active_webhook_config_id, store_currency, currency",
-      hasProductColumn: false,
-      hasActiveWebhookColumn: true,
-      hasStoreCurrencyColumn: true,
-      hasCurrencyColumn: true,
-    },
-    {
-      select: "id, user_id, active_webhook_config_id, store_currency",
-      hasProductColumn: false,
-      hasActiveWebhookColumn: true,
+      hasCategoryColumn: true,
       hasStoreCurrencyColumn: true,
       hasCurrencyColumn: false,
     },
     {
-      select: "id, user_id, active_webhook_config_id, currency",
-      hasProductColumn: false,
+      select: "id, user_id, product_id, active_webhook_config_id, category, currency",
+      hasProductColumn: true,
       hasActiveWebhookColumn: true,
+      hasCategoryColumn: true,
       hasStoreCurrencyColumn: false,
       hasCurrencyColumn: true,
     },
     {
-      select: "id, user_id, product_id",
+      select: "id, user_id, product_id, active_webhook_config_id, category",
+      hasProductColumn: true,
+      hasActiveWebhookColumn: true,
+      hasCategoryColumn: true,
+      hasStoreCurrencyColumn: false,
+      hasCurrencyColumn: false,
+    },
+    {
+      select: "id, user_id, active_webhook_config_id, category, store_currency, currency",
+      hasProductColumn: false,
+      hasActiveWebhookColumn: true,
+      hasCategoryColumn: true,
+      hasStoreCurrencyColumn: true,
+      hasCurrencyColumn: true,
+    },
+    {
+      select: "id, user_id, active_webhook_config_id, category, store_currency",
+      hasProductColumn: false,
+      hasActiveWebhookColumn: true,
+      hasCategoryColumn: true,
+      hasStoreCurrencyColumn: true,
+      hasCurrencyColumn: false,
+    },
+    {
+      select: "id, user_id, active_webhook_config_id, category, currency",
+      hasProductColumn: false,
+      hasActiveWebhookColumn: true,
+      hasCategoryColumn: true,
+      hasStoreCurrencyColumn: false,
+      hasCurrencyColumn: true,
+    },
+    {
+      select: "id, user_id, product_id, category",
       hasProductColumn: true,
       hasActiveWebhookColumn: false,
+      hasCategoryColumn: true,
       hasStoreCurrencyColumn: false,
       hasCurrencyColumn: false,
     },
     {
-      select: "id, user_id",
+      select: "id, user_id, category",
       hasProductColumn: false,
       hasActiveWebhookColumn: false,
+      hasCategoryColumn: true,
       hasStoreCurrencyColumn: false,
       hasCurrencyColumn: false,
     },
@@ -472,6 +487,7 @@ const loadStoreById = async (storeId: string) => {
         user_id: string;
         product_id?: string | null;
         active_webhook_config_id?: string | null;
+        category?: string | null;
         store_currency?: string | null;
         currency?: string | null;
       }>();
@@ -493,6 +509,7 @@ const loadStoreById = async (storeId: string) => {
           user_id: query.data.user_id,
           product_id: candidate.hasProductColumn ? query.data.product_id ?? null : null,
           active_webhook_config_id: candidate.hasActiveWebhookColumn ? query.data.active_webhook_config_id ?? null : null,
+          category: candidate.hasCategoryColumn ? query.data.category ?? null : null,
           store_currency: normalizeStoreCurrency(rawStoreCurrency),
           store_currency_known: storeCurrencyKnown,
         } as StoreRow,
@@ -505,6 +522,7 @@ const loadStoreById = async (storeId: string) => {
     const recoverable = isMissingAnyColumnError(query.error, [
       "product_id",
       "active_webhook_config_id",
+      "category",
       "store_currency",
       "currency",
     ]);
@@ -514,6 +532,57 @@ const loadStoreById = async (storeId: string) => {
   }
 
   return { data: null, error: lastErrorMessage ?? "stores row could not be loaded" };
+};
+
+const loadProductMatchCandidates = async (): Promise<ProductMatchCandidate[]> => {
+  const categoryRows = await supabaseAdmin
+    .from("categories")
+    .select("id,title_tr,title_en")
+    .limit(5000);
+
+  if (categoryRows.error) {
+    throw new Error(categoryRows.error.message);
+  }
+
+  const categoriesById = new Map(
+    ((categoryRows.data ?? []) as Array<{ id: string; title_tr?: string | null; title_en?: string | null }>).map((row) => [
+      row.id,
+      {
+        tr: row.title_tr ?? null,
+        en: row.title_en ?? null,
+      },
+    ])
+  );
+
+  const productRows = await supabaseAdmin
+    .from("products")
+    .select("id,category_id,title_tr,title_en")
+    .limit(5000);
+
+  if (productRows.error) {
+    throw new Error(productRows.error.message);
+  }
+
+  return ((productRows.data ?? []) as Array<{
+    id: string;
+    category_id?: string | null;
+    title_tr?: string | null;
+    title_en?: string | null;
+  }>).map((row) => {
+    const category = row.category_id ? categoriesById.get(row.category_id) : null;
+    const labelTr = [category?.tr, row.title_tr ?? null].filter(Boolean).join(" / ");
+    const labelEn = [category?.en, row.title_en ?? null].filter(Boolean).join(" / ");
+
+    return {
+      id: row.id,
+      titleTr: row.title_tr ?? null,
+      titleEn: row.title_en ?? null,
+      categoryTitleTr: category?.tr ?? null,
+      categoryTitleEn: category?.en ?? null,
+      labelTr: labelTr || null,
+      labelEn: labelEn || null,
+    } satisfies ProductMatchCandidate;
+  });
 };
 
 const persistFallbackStoreWebhookMapping = async (args: {
@@ -536,27 +605,6 @@ const persistFallbackStoreWebhookMapping = async (args: {
     duration_ms: 0,
     created_by: args.createdBy,
   });
-};
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const ensureCronLifecycleSynced = async () => {
-  const retryDelaysMs = [0, 750, 1500] as const;
-  let lastResult: Awaited<ReturnType<typeof syncSchedulerCronJobLifecycle>> | null = null;
-
-  for (let index = 0; index < retryDelaysMs.length; index += 1) {
-    if (retryDelaysMs[index] > 0) {
-      await sleep(retryDelaysMs[index]);
-    }
-
-    const result = await syncSchedulerCronJobLifecycle({ force: true });
-    lastResult = result;
-    if (result.ok) {
-      return result;
-    }
-  }
-
-  throw new Error(lastResult?.message || "Cron lifecycle sync failed");
 };
 
 const persistCronVerificationLog = async (args: {
@@ -650,17 +698,20 @@ const updateStoreAutomationBindingWithFallback = async (args: {
   storeId: string;
   webhookConfigId: string;
   productId: string | null;
+  category: string | null;
   nowIso: string;
   updatedBy: string;
 }) => {
   const payloads: Array<Record<string, unknown>> = [
     {
       product_id: args.productId,
+      category: args.category,
       active_webhook_config_id: args.webhookConfigId,
       automation_updated_at: args.nowIso,
       automation_updated_by: args.updatedBy,
     },
     {
+      category: args.category,
       active_webhook_config_id: args.webhookConfigId,
       automation_updated_at: args.nowIso,
       automation_updated_by: args.updatedBy,
@@ -685,6 +736,7 @@ const updateStoreAutomationBindingWithFallback = async (args: {
 
     const recoverable = isMissingAnyColumnError(update.error, [
       "product_id",
+      "category",
       "active_webhook_config_id",
       "automation_updated_at",
       "automation_updated_by",
@@ -770,18 +822,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       );
     }
 
-    if (store.store_currency_known && targetWebhook.currency && targetWebhook.currency !== store.store_currency) {
-      return NextResponse.json(
-        {
-          code: "WEBHOOK_CURRENCY_MISMATCH",
-          message: `Mağaza para birimi ${store.store_currency}. Seçilen webhook para birimi ${targetWebhook.currency}.`,
-          error: "Seçilen webhook mağaza para birimiyle eşleşmiyor.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const effectiveProductId = targetWebhook.product_id ?? store.product_id ?? null;
+    const productMatchCandidates = await loadProductMatchCandidates();
+    const resolvedStoreProductCandidate =
+      (store.product_id
+        ? productMatchCandidates.find((candidate) => candidate.id === store.product_id) ?? null
+        : null) ?? resolveProductCandidateForCategory(store.category ?? null, productMatchCandidates);
+    const effectiveStoreProductId = resolvedStoreProductCandidate?.id ?? store.product_id ?? null;
+    const effectiveProductId = targetWebhook.product_id ?? effectiveStoreProductId ?? null;
+    const targetProductCandidate = effectiveProductId
+      ? productMatchCandidates.find((candidate) => candidate.id === effectiveProductId) ?? null
+      : null;
+    const effectiveCategory =
+      targetProductCandidate?.labelTr ??
+      targetProductCandidate?.labelEn ??
+      store.category ??
+      null;
 
     const idempotencyKey = createManualSwitchIdempotencyKey(store.id, targetWebhook.id);
     const existingJob = await supabaseAdmin
@@ -829,6 +884,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       storeId: store.id,
       webhookConfigId: targetWebhook.id,
       productId: effectiveProductId,
+      category: effectiveCategory,
       nowIso,
       updatedBy: admin.user.id,
     });
@@ -854,7 +910,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       createdBy: admin.user.id,
       idempotencyKey,
     });
-    const cronSync = await ensureCronLifecycleSynced();
+    let cronSync: SchedulerCronSyncResult = {
+      ok: true,
+      status: "noop",
+      message: "Direct cron kullanılmıyor.",
+    };
     let directCronVerification:
       | {
           jobId: number;
@@ -865,6 +925,37 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       | null = null;
 
     if (isDirectAutomationMode()) {
+      cronSync = await ensureDirectAutomationCronJobForBinding({
+        subscriptionId: activeSubscription.id,
+        storeId: store.id,
+        webhookConfigId: targetWebhook.id,
+        plan: activeSubscription.plan,
+        anchorIso: nowIso,
+        targetUrl: targetWebhook.target_url,
+        method: targetWebhook.method,
+        headers: targetWebhook.headers ?? null,
+      });
+
+      if (!cronSync.ok) {
+        if (transitionId) {
+          await supabaseAdmin
+            .from("store_automation_transitions")
+            .update({
+              status: "failed",
+              trigger_response_body: cronSync.details ?? cronSync.message,
+            })
+            .eq("id", transitionId);
+        }
+
+        return NextResponse.json(
+          {
+            error: cronSync.message,
+            details: "details" in cronSync ? cronSync.details ?? null : null,
+          },
+          { status: cronSync.status === "skipped" ? 503 : 500 }
+        );
+      }
+
       const verifiedJob = await findStrictDirectAutomationCronJob({
         storeId: store.id,
         webhookConfigId: targetWebhook.id,

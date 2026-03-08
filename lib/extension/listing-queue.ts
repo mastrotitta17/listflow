@@ -1,4 +1,10 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import {
+  buildStrictListingCategoryNeedles,
+  listingCategoryMatchesStoreProfile,
+  resolveProductCandidateForCategory,
+  type ProductMatchCandidate,
+} from "@/lib/stores/product-resolution";
 
 type RowRecord = Record<string, unknown>;
 
@@ -486,6 +492,19 @@ type StoreAliasRow = {
   store_id?: string | null;
 };
 
+type StoreClaimRow = StoreAliasRow & {
+  user_id?: string | null;
+  product_id?: string | null;
+  category?: string | null;
+};
+
+type StoreClaimContext = {
+  storeId: string;
+  category: string | null;
+  productId: string | null;
+  product: ProductMatchCandidate | null;
+};
+
 const isMissingColumnError = (error: QueryError | null | undefined, column: string) => {
   if (!error) {
     return false;
@@ -602,6 +621,132 @@ const loadStoreAliasesByUser = async (userId: string) => {
   return aliases;
 };
 
+const loadProductMatchCandidates = async (): Promise<ProductMatchCandidate[]> => {
+  const categoryQuery = await supabaseAdmin
+    .from("categories")
+    .select("id,title_tr,title_en")
+    .limit(5000);
+
+  if (categoryQuery.error) {
+    if (isMissingTableError(categoryQuery.error)) {
+      return [];
+    }
+    throw new Error(categoryQuery.error.message || "categories query failed");
+  }
+
+  const categoriesById = new Map(
+    ((categoryQuery.data ?? []) as Array<{ id: string; title_tr?: string | null; title_en?: string | null }>).map((row) => [
+      row.id,
+      {
+        tr: row.title_tr ?? null,
+        en: row.title_en ?? null,
+      },
+    ])
+  );
+
+  const productQuery = await supabaseAdmin
+    .from("products")
+    .select("id,category_id,title_tr,title_en")
+    .limit(5000);
+
+  if (productQuery.error) {
+    if (isMissingTableError(productQuery.error)) {
+      return [];
+    }
+    throw new Error(productQuery.error.message || "products query failed");
+  }
+
+  return ((productQuery.data ?? []) as Array<{
+    id: string;
+    category_id?: string | null;
+    title_tr?: string | null;
+    title_en?: string | null;
+  }>).map((row) => {
+    const category = row.category_id ? categoriesById.get(row.category_id) : null;
+    const labelTr = [category?.tr, row.title_tr ?? null].filter(Boolean).join(" / ");
+    const labelEn = [category?.en, row.title_en ?? null].filter(Boolean).join(" / ");
+
+    return {
+      id: row.id,
+      titleTr: row.title_tr ?? null,
+      titleEn: row.title_en ?? null,
+      categoryTitleTr: category?.tr ?? null,
+      categoryTitleEn: category?.en ?? null,
+      labelTr: labelTr || null,
+      labelEn: labelEn || null,
+    } satisfies ProductMatchCandidate;
+  });
+};
+
+const loadStoreClaimContext = async (userId: string, preferredClientId: string): Promise<StoreClaimContext | null> => {
+  const candidates = [
+    {
+      select: "id,user_id,product_id,category",
+      hasProduct: true,
+      hasCategory: true,
+    },
+    {
+      select: "id,user_id,product_id",
+      hasProduct: true,
+      hasCategory: false,
+    },
+    {
+      select: "id,user_id,category",
+      hasProduct: false,
+      hasCategory: true,
+    },
+    {
+      select: "id,user_id",
+      hasProduct: false,
+      hasCategory: false,
+    },
+  ] as const;
+
+  let row: StoreClaimRow | null = null;
+
+  for (const candidate of candidates) {
+    const query = await supabaseAdmin
+      .from("stores")
+      .select(candidate.select)
+      .eq("id", preferredClientId)
+      .eq("user_id", userId)
+      .maybeSingle<StoreClaimRow>();
+
+    if (!query.error) {
+      if (!query.data?.id) {
+        return null;
+      }
+      row = {
+        id: query.data.id,
+        user_id: query.data.user_id ?? null,
+        product_id: candidate.hasProduct ? query.data.product_id ?? null : null,
+        category: candidate.hasCategory ? query.data.category ?? null : null,
+      };
+      break;
+    }
+
+    if (!isRecoverableStoreError(query.error) && !isMissingColumnError(query.error, "product_id") && !isMissingColumnError(query.error, "category")) {
+      throw new Error(query.error.message || "stores claim context query failed");
+    }
+  }
+
+  if (!row) {
+    return null;
+  }
+
+  const productCandidates = await loadProductMatchCandidates();
+  const resolvedProduct =
+    (row.product_id ? productCandidates.find((candidate) => candidate.id === row.product_id) ?? null : null) ??
+    resolveProductCandidateForCategory(row.category ?? null, productCandidates);
+
+  return {
+    storeId: row.id ?? preferredClientId,
+    category: row.category ?? null,
+    productId: resolvedProduct?.id ?? row.product_id ?? null,
+    product: resolvedProduct ?? null,
+  };
+};
+
 const rowBelongsToUser = (
   row: RowRecord,
   args: {
@@ -637,6 +782,7 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
   const preferredClientId = normalizeString(args.preferredClientId);
   const allStoreAliases = await loadStoreAliasesByUser(args.userId);
   let preferredAliases: Set<string> | null = null;
+  let storeClaimContext: StoreClaimContext | null = null;
 
   if (preferredClientId) {
     if (!allStoreAliases.has(preferredClientId)) {
@@ -645,11 +791,18 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
 
     // Mağaza seçildiyse claim yalnızca seçili mağazanın exact client_id değeriyle yapılır.
     preferredAliases = new Set([preferredClientId]);
+    storeClaimContext = await loadStoreClaimContext(args.userId, preferredClientId);
   }
 
   const allowedClientIds = preferredAliases
     ? new Set<string>([...allStoreAliases])
     : allStoreAliases;
+  const storeCategoryProfile = storeClaimContext
+    ? buildStrictListingCategoryNeedles({
+        storeCategory: storeClaimContext.category,
+        product: storeClaimContext.product,
+      })
+    : null;
   const targetedRows = preferredClientId ? await loadRowsForPreferredClientId(preferredClientId) : [];
   const rows = targetedRows.length > 0 ? targetedRows : await loadAllListingRows();
 
@@ -668,6 +821,16 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
         }
 
         return rowBelongsToUser(row, { userId: args.userId, allowedClientIds });
+      })
+      .filter((row) => {
+        if (!storeCategoryProfile) {
+          return true;
+        }
+
+        return listingCategoryMatchesStoreProfile(
+          readFirstString(row, ["category", "category_name"]),
+          storeCategoryProfile
+        );
       })
       .filter((row) => isRowPending(row, { userId: args.userId }))
       .sort(sortByOldestFirst);
@@ -1326,6 +1489,39 @@ export const resetFailedListingForUser = async (args: {
   const status = normalizeStatus(listing.status ?? listing.listing_status);
   // "failed" ya da "processing" kabul et: reportJobToApi network hatası alırsa listing
   // "processing" kalabilir; extension job hatası aldığına göre reset güvenlidir.
+  if (status !== "failed" && status !== "processing") return false;
+
+  const nowIso = new Date().toISOString();
+  const payload: RowRecord = {};
+  const statusField = inferStatusFieldName(listing);
+  if (statusField) payload[statusField] = "pending";
+  addIfPresent(listing, "updated_at", nowIso, payload);
+  addIfPresent(listing, "claimed_at", null, payload);
+  addIfPresent(listing, "claimed_by_user_id", null, payload);
+  addIfPresent(listing, "claimed_by", null, payload);
+  addIfPresent(listing, "error", null, payload);
+  addIfPresent(listing, "last_error", null, payload);
+
+  await updateRowByIdentifier(identifier, payload);
+  return true;
+};
+
+export const resetFailedListingForClient = async (args: {
+  clientId: string;
+  listingId: string;
+}): Promise<boolean> => {
+  const listingId = normalizeString(args.listingId);
+  const clientId = normalizeString(args.clientId);
+  if (!listingId || !clientId) return false;
+
+  const identifier: ListingIdentifier = { column: "id", value: listingId };
+  const listing = await loadListingByIdentifier(identifier);
+  if (!listing) return false;
+
+  const rowClientId = readClientId(listing);
+  if (rowClientId && rowClientId !== clientId) return false;
+
+  const status = normalizeStatus(listing.status ?? listing.listing_status);
   if (status !== "failed" && status !== "processing") return false;
 
   const nowIso = new Date().toISOString();

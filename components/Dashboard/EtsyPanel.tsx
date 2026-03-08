@@ -42,9 +42,14 @@ type StoreOverviewRow = {
   priceCents: number;
   orderCount: number;
   hasActiveSubscription: boolean;
+  renewalRequired?: boolean;
+  renewalState?: "active" | "renewal_required" | "activation_required";
   hasActiveAutomationWebhook?: boolean;
   plan: string | null;
   subscriptionStatus: string | null;
+  currentPeriodEnd?: string | null;
+  lastSubscriptionPlan?: "standard" | "pro" | "turbo" | null;
+  lastSubscriptionInterval?: "month" | "year" | null;
   automationIntervalHours: number | null;
   automationLastRunAt: string | null;
   lastSuccessfulAutomationAt?: string | null;
@@ -348,12 +353,17 @@ const EtsyPanel: React.FC = () => {
       name: row.storeName,
       category: row.category || (locale === "en" ? "General" : "Genel"),
       subscription: moneyLabel(row.priceCents),
-      isPaid: row.hasActiveSubscription || ["active", "trialing"].includes((row.status ?? "").toLowerCase()),
+      isPaid: row.renewalState === "active",
       hasActiveAutomationWebhook: row.hasActiveAutomationWebhook ?? false,
       orderCount: row.orderCount ?? 0,
       url: "",
       plan: row.plan,
       subscriptionStatus: row.subscriptionStatus,
+      renewalRequired: row.renewalRequired ?? false,
+      renewalState: row.renewalState ?? (row.hasActiveSubscription ? "active" : "activation_required"),
+      currentPeriodEnd: row.currentPeriodEnd ?? null,
+      lastSubscriptionPlan: row.lastSubscriptionPlan ?? null,
+      lastSubscriptionInterval: row.lastSubscriptionInterval ?? null,
       automationIntervalHours: row.automationIntervalHours,
       automationLastRunAt: row.automationLastRunAt,
       lastSuccessfulAutomationAt: row.lastSuccessfulAutomationAt ?? row.automationLastRunAt ?? null,
@@ -553,6 +563,63 @@ const EtsyPanel: React.FC = () => {
       plan: FEATURED_PLAN,
       interval: "month",
     });
+  };
+
+  const handleRenewStore = async (shop: Shop) => {
+    setStoreActionMessage(null);
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error(locale === "en" ? "Session expired. Please sign in again." : "Oturum süresi doldu. Lütfen tekrar giriş yapın.");
+      }
+
+      const sessionSync = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          accessToken: session.access_token,
+          refreshToken: session.refresh_token,
+        }),
+      });
+
+      if (!sessionSync.ok) {
+        throw new Error(locale === "en" ? "Session sync failed." : "Oturum senkronize edilemedi.");
+      }
+
+      const response = await fetch("/api/billing/store-renewal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ storeId: shop.id }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (!response.ok || !payload.url) {
+        throw new Error(
+          payload.error ||
+            (locale === "en"
+              ? "Store renewal checkout could not be started."
+              : "Mağaza yenileme ödeme ekranı açılamadı.")
+        );
+      }
+
+      window.location.href = payload.url;
+    } catch (error) {
+      setStoreActionMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : locale === "en"
+              ? "Store renewal checkout could not be started."
+              : "Mağaza yenileme ödeme ekranı açılamadı.",
+      });
+    }
   };
 
   const handleStartActivationCheckout = async () => {
@@ -858,7 +925,8 @@ const EtsyPanel: React.FC = () => {
             {shops.map((shop, index) => {
               const showTimer = hoveredTimerStoreId === shop.id || pinnedTimerStoreId === shop.id;
               const automationText = getAutomationText(shop);
-              const isStoreActiveByPlan = shop.isPaid;
+              const isStoreActiveByPlan = shop.renewalState === "active";
+              const isRenewalRequired = shop.renewalState === "renewal_required";
               const showAutomationIndicator = isStoreActiveByPlan && Boolean(shop.hasActiveAutomationWebhook);
 
               return (
@@ -869,6 +937,33 @@ const EtsyPanel: React.FC = () => {
                   transition={{ delay: index * 0.05 }}
                   className="relative overflow-visible rounded-[28px] glass-card-pro border border-white/5 p-5 group hover:border-indigo-500/30 transition-all duration-500 flex flex-col gap-4 min-h-67.5"
                 >
+                  {isRenewalRequired ? (
+                    <div className="absolute inset-0 z-20 flex flex-col justify-between rounded-[28px] border border-red-400/30 bg-[linear-gradient(180deg,rgba(42,12,18,0.85),rgba(12,7,11,0.94))] p-5 backdrop-blur-sm">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-300">
+                          {locale === "en" ? "Renewal Required" : "Yenileme Gerekli"}
+                        </p>
+                        <h4 className="mt-2 text-lg font-black text-white">
+                          {locale === "en"
+                            ? "This store is no longer active."
+                            : "Bu mağaza artık aktif değil."}
+                        </h4>
+                        <p className="mt-3 text-sm text-red-100/90">
+                          {locale === "en"
+                            ? "Renew the subscription to reactivate automation and continue product uploads for this store."
+                            : "Bu mağazada otomasyonu yeniden başlatmak ve ürün yüklemeye devam etmek için aboneliği yenileyin."}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleRenewStore(shop)}
+                        className="inline-flex items-center justify-center rounded-xl bg-red-500 px-4 py-3 text-[11px] font-black uppercase tracking-widest text-white transition-all hover:bg-red-400 cursor-pointer"
+                      >
+                        {locale === "en" ? "Renew Subscription" : "Aboneliği Yenile"}
+                      </button>
+                    </div>
+                  ) : null}
+
                   {showAutomationIndicator && (
                     <button
                       type="button"
@@ -933,7 +1028,11 @@ const EtsyPanel: React.FC = () => {
                   </div>
 
                   <div className="pt-1">
-                    {shop.isPaid ? (
+                    {isRenewalRequired ? (
+                      <span className="inline-flex items-center rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-red-200">
+                        {locale === "en" ? "Subscription Expired" : "Abonelik Süresi Doldu"}
+                      </span>
+                    ) : shop.isPaid ? (
                       <span className="inline-flex items-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-emerald-300">
                         {t("etsy.paymentDone")}
                       </span>

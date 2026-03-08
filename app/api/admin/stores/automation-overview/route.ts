@@ -6,7 +6,17 @@ import {
   extractScheduledSlotDueIso,
   getPlanWindowHours,
 } from "@/lib/scheduler/idempotency";
-import { describeCronJobOrgExecutionStatus, loadDirectAutomationCronJobs } from "@/lib/cron-job-org/client";
+import {
+  describeCronJobOrgExecutionStatus,
+  isDirectAutomationMode,
+  loadDirectAutomationCronJobs,
+  syncSchedulerCronJobLifecycle,
+} from "@/lib/cron-job-org/client";
+import {
+  isWebhookCompatibleWithStore,
+  resolveProductCandidateForCategory,
+  type ProductMatchCandidate,
+} from "@/lib/stores/product-resolution";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 import { loadWebhookConfigProductMap } from "@/lib/webhooks/config-product-map";
@@ -801,6 +811,12 @@ type DirectCronSnapshot = {
   verifiedJobId: number | null;
 };
 
+type CronLifecycleSnapshot = {
+  lastCronSyncAt: string | null;
+  lastCronSyncStatus: "success" | "skipped" | "error" | null;
+  lastCronSyncMessage: string | null;
+};
+
 const loadDirectCronByStoreId = async (storeIds: string[]) => {
   const map = new Map<string, DirectCronSnapshot>();
   if (!storeIds.length) {
@@ -900,6 +916,98 @@ const loadDirectCronByStoreId = async (storeIds: string[]) => {
   }
 
   return map;
+};
+
+const parseCronLifecycleResponse = (value: string | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as {
+      ok?: boolean;
+      status?: string | null;
+      message?: string | null;
+    };
+    return {
+      ok: parsed.ok === true,
+      status: typeof parsed.status === "string" ? parsed.status : null,
+      message: typeof parsed.message === "string" ? parsed.message : null,
+    };
+  } catch {
+    return {
+      ok: false,
+      status: null,
+      message: value,
+    };
+  }
+};
+
+const loadLatestCronLifecycleSnapshot = async (): Promise<CronLifecycleSnapshot> => {
+  const { data, error } = await supabaseAdmin
+    .from("webhook_logs")
+    .select("created_at,response_body")
+    .eq("request_method", "CRON_LIFECYCLE_SYNC")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ created_at: string | null; response_body?: string | null }>();
+
+  if (error || !data) {
+    return {
+      lastCronSyncAt: null,
+      lastCronSyncStatus: null,
+      lastCronSyncMessage: null,
+    };
+  }
+
+  const parsed = parseCronLifecycleResponse(data.response_body ?? null);
+  return {
+    lastCronSyncAt: data.created_at ?? null,
+    lastCronSyncStatus:
+      parsed?.status === "error" ? "error" : parsed?.status === "skipped" ? "skipped" : parsed?.ok ? "success" : "success",
+    lastCronSyncMessage: parsed?.message ?? null,
+  };
+};
+
+const insertCronDirectJobVerifyLog = async (payload: {
+  storeId: string;
+  webhookConfigId: string | null;
+  message: string;
+}) => {
+  const basePayload = {
+    request_url: "admin-stores-automation-overview",
+    request_method: "CRON_DIRECT_JOB_VERIFY",
+    request_body: {
+      store_id: payload.storeId,
+      webhook_config_id: payload.webhookConfigId,
+      checked_at: new Date().toISOString(),
+    },
+    response_status: 409,
+    response_body: payload.message,
+  };
+
+  const attempts: Array<Record<string, unknown>> = [
+    { ...basePayload, created_by: null },
+    basePayload,
+    {
+      request_method: "CRON_DIRECT_JOB_VERIFY",
+      response_status: 409,
+      response_body: payload.message,
+    },
+  ];
+
+  for (const attemptPayload of attempts) {
+    const attempt = await supabaseAdmin.from("webhook_logs").insert(attemptPayload);
+    if (!attempt.error) {
+      return;
+    }
+
+    if (
+      !isMissingAnyColumnError(attempt.error, ["request_body", "response_status", "response_body", "created_by"])
+    ) {
+      return;
+    }
+  }
 };
 
 const getMostRecentCadenceSuccessAt = (jobs: SchedulerJobRow[]) => {
@@ -1121,12 +1229,14 @@ export async function GET(request: NextRequest) {
 
     const storeIds = stores.map((store) => store.id);
 
+    const cronLifecycleSnapshotPromise = loadLatestCronLifecycleSnapshot();
     const [storeCurrencyById, storeWebhookMappingFallback, listingCountByStoreId] = await Promise.all([
       loadStoreCurrencyMap(storeIds),
       loadStoreWebhookMappingsFromLogs(storeIds),
       loadListingCounts(storeIds),
     ]);
     const directCronByStoreId = await loadDirectCronByStoreId(storeIds);
+    const cronLifecycleSnapshot = await cronLifecycleSnapshotPromise;
 
     const userIds = Array.from(new Set(stores.map((store) => store.user_id)));
     const profiles = await loadProfiles(userIds);
@@ -1150,6 +1260,18 @@ export async function GET(request: NextRequest) {
         ];
       })
     );
+    const productCandidates: ProductMatchCandidate[] = Array.from(productsById.values()).map((product) => {
+      const category = product.category_id ? categoriesById.get(product.category_id) : null;
+      return {
+        id: product.id,
+        titleTr: product.title_tr,
+        titleEn: product.title_en,
+        categoryTitleTr: category?.tr ?? null,
+        categoryTitleEn: category?.en ?? null,
+        labelTr: product.labelTr,
+        labelEn: product.labelEn,
+      };
+    });
     const subscriptionByStoreId = new Map<string, SubscriptionRow>();
     const storeIdBySubscriptionId = new Map<string, string>();
     const latestJobByStoreId = new Map<string, SchedulerJobRow>();
@@ -1194,22 +1316,6 @@ export async function GET(request: NextRequest) {
       jobs.sort((a, b) => getJobTimestamp(b) - getJobTimestamp(a));
     }
 
-    const resolveStoreWebhookId = (store: StoreRow) => {
-      const explicitId = store.active_webhook_config_id;
-      if (explicitId && activeWebhookIds.has(explicitId)) {
-        return explicitId;
-      }
-
-      const fallbackCandidates = storeWebhookMappingFallback.get(store.id)?.webhookConfigIds ?? [];
-      for (const candidateId of fallbackCandidates) {
-        if (activeWebhookIds.has(candidateId)) {
-          return candidateId;
-        }
-      }
-
-      return null;
-    };
-
     const rows = stores.map((store) => {
       const profile = profileByUserId.get(store.user_id);
       const activeSubscription = subscriptionByStoreId.get(store.id) ?? null;
@@ -1219,20 +1325,50 @@ export async function GET(request: NextRequest) {
       const storeJobs = jobsByStoreId.get(store.id) ?? [];
       const directCronSnapshot = directCronByStoreId.get(store.id) ?? null;
       const mappingSnapshot = storeWebhookMappingFallback.get(store.id) ?? null;
-      const activeWebhookConfigId = resolveStoreWebhookId(store);
-      const activeWebhook = activeWebhookConfigId ? webhookById.get(activeWebhookConfigId) ?? null : null;
       const storeCurrency = storeCurrencyById.get(store.id) ?? "USD";
       const hasStoreCurrency = storeCurrencyById.has(store.id);
-      const storeProduct = store.product_id ? productsById.get(store.product_id) : null;
-      const eligibleWebhooks = webhooks.filter((webhook) => {
-        if (!hasStoreCurrency) {
-          return true;
+      const resolvedStoreProductCandidate =
+        (store.product_id ? productsById.get(store.product_id) ?? null : null) ??
+        resolveProductCandidateForCategory(store.category, productCandidates);
+      const effectiveStoreProductId = resolvedStoreProductCandidate?.id ?? store.product_id ?? null;
+      const storeProduct = effectiveStoreProductId ? productsById.get(effectiveStoreProductId) ?? resolvedStoreProductCandidate : null;
+      const resolveCompatibleWebhookId = (candidateIds: Array<string | null | undefined>) => {
+        for (const candidateId of candidateIds) {
+          if (!candidateId || !activeWebhookIds.has(candidateId)) {
+            continue;
+          }
+
+          const webhook = webhookById.get(candidateId);
+          if (!webhook) {
+            continue;
+          }
+
+          if (
+            !isWebhookCompatibleWithStore({
+              storeProductId: effectiveStoreProductId,
+              storeCurrency,
+              storeCurrencyKnown: hasStoreCurrency,
+              webhookProductId: webhook.product_id,
+              webhookCurrency: webhook.currency,
+            })
+          ) {
+            continue;
+          }
+
+          return candidateId;
         }
-        if (!webhook.currency) {
-          return true;
-        }
-        return webhook.currency === storeCurrency;
-      });
+
+        return null;
+      };
+      const explicitActiveWebhookId =
+        store.active_webhook_config_id && activeWebhookIds.has(store.active_webhook_config_id)
+          ? store.active_webhook_config_id
+          : null;
+      const activeWebhookConfigId =
+        explicitActiveWebhookId ??
+        resolveCompatibleWebhookId(mappingSnapshot?.webhookConfigIds ?? []);
+      const activeWebhook = activeWebhookConfigId ? webhookById.get(activeWebhookConfigId) ?? null : null;
+      const eligibleWebhooks = webhooks;
       const eligibleWebhookConfigIds = eligibleWebhooks.map((webhook) => webhook.id);
       const scheduleState = computeNextTriggerAt({
         subscriptionId: activeSubscription?.id,
@@ -1277,8 +1413,13 @@ export async function GET(request: NextRequest) {
         [lastTriggerFromJob, lastTriggerFromMapping, lastTriggerFromDirectCron]
           .filter((trigger): trigger is NonNullable<typeof lastTriggerFromJob> => Boolean(trigger))
           .sort((left, right) => parseIsoToMs(right.createdAt ?? null) - parseIsoToMs(left.createdAt ?? null))[0] ?? null;
-      const cadenceHours = directCronSnapshot?.cadenceHours ?? scheduleState.cadenceHours;
-      const nextTriggerAt = directCronSnapshot?.nextTriggerAt ?? scheduleState.nextTriggerAt;
+      const directCronPresent = Boolean(directCronSnapshot?.verifiedJobId);
+      const cadenceHours = directCronPresent
+        ? directCronSnapshot?.cadenceHours ?? scheduleState.cadenceHours
+        : scheduleState.cadenceHours;
+      const nextTriggerAt = directCronPresent
+        ? directCronSnapshot?.nextTriggerAt ?? null
+        : null;
 
       return {
         storeId: store.id,
@@ -1292,7 +1433,7 @@ export async function GET(request: NextRequest) {
           profile?.full_name?.trim() ||
           profile?.email?.trim() ||
           `${store.user_id.slice(0, 8)}...`,
-        productId: store.product_id,
+        productId: effectiveStoreProductId,
         productLabel: storeProduct?.labelTr ?? null,
         eligibleWebhookConfigIds,
         subscriptionId: activeSubscription?.id ?? null,
@@ -1308,11 +1449,34 @@ export async function GET(request: NextRequest) {
         automationUpdatedAt: store.automation_updated_at ?? mappingSnapshot?.lastMappedAt ?? null,
         cadenceHours,
         nextTriggerAt,
+        directCronPresent,
+        directCronJobId: directCronSnapshot?.verifiedJobId ?? null,
+        lastCronSyncAt: cronLifecycleSnapshot.lastCronSyncAt,
+        lastCronSyncStatus: cronLifecycleSnapshot.lastCronSyncStatus,
+        lastCronSyncMessage: cronLifecycleSnapshot.lastCronSyncMessage,
         lastCadenceSuccessAt: scheduleState.lastCadenceSuccessAt,
         lastTrigger,
         listingCount: listingCountByStoreId.get(store.id) ?? 0,
       };
     });
+
+    if (isDirectAutomationMode()) {
+      const missingDirectCronRows = rows.filter((row) => {
+        return Boolean(row.subscriptionId && row.activeWebhookConfigId && row.directCronPresent !== true);
+      });
+
+      if (missingDirectCronRows.length > 0) {
+        for (const row of missingDirectCronRows.slice(0, 10)) {
+          await insertCronDirectJobVerifyLog({
+            storeId: row.storeId,
+            webhookConfigId: row.activeWebhookConfigId,
+            message: "Eligible direct automation cron job bulunamadi. Lifecycle reconcile tetiklendi.",
+          });
+        }
+
+        await syncSchedulerCronJobLifecycle().catch(() => null);
+      }
+    }
 
     return NextResponse.json({
       rows,

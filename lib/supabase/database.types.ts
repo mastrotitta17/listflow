@@ -121,6 +121,51 @@ export type Database = {
         }
         Relationships: []
       }
+      navlungo_connections: {
+        Row: {
+          access_token: string | null
+          access_token_expires_at: string | null
+          client_id: string
+          connected_at: string
+          connected_email: string | null
+          created_at: string
+          created_by: string | null
+          environment: string
+          id: string
+          refresh_token: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          access_token?: string | null
+          access_token_expires_at?: string | null
+          client_id: string
+          connected_at?: string
+          connected_email?: string | null
+          created_at?: string
+          created_by?: string | null
+          environment: string
+          id?: string
+          refresh_token: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          access_token?: string | null
+          access_token_expires_at?: string | null
+          client_id?: string
+          connected_at?: string
+          connected_email?: string | null
+          created_at?: string
+          created_by?: string | null
+          environment?: string
+          id?: string
+          refresh_token?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       orders: {
         Row: {
           amount_usd: number
@@ -129,6 +174,15 @@ export type Database = {
           id: string
           ioss: string | null
           label_number: string
+          shipment_error: string | null
+          shipment_external_order_id: string | null
+          shipment_invoice_url: string | null
+          shipment_label_url: string | null
+          shipment_last_synced_at: string | null
+          shipment_provider: string | null
+          shipment_response: Json | null
+          shipment_status: string | null
+          shipment_tracking_number: string | null
           navlungo_error: string | null
           navlungo_last_synced_at: string | null
           navlungo_quote_reference: string | null
@@ -164,6 +218,15 @@ export type Database = {
           id?: string
           ioss?: string | null
           label_number: string
+          shipment_error?: string | null
+          shipment_external_order_id?: string | null
+          shipment_invoice_url?: string | null
+          shipment_label_url?: string | null
+          shipment_last_synced_at?: string | null
+          shipment_provider?: string | null
+          shipment_response?: Json | null
+          shipment_status?: string | null
+          shipment_tracking_number?: string | null
           navlungo_error?: string | null
           navlungo_last_synced_at?: string | null
           navlungo_quote_reference?: string | null
@@ -199,6 +262,15 @@ export type Database = {
           id?: string
           ioss?: string | null
           label_number?: string
+          shipment_error?: string | null
+          shipment_external_order_id?: string | null
+          shipment_invoice_url?: string | null
+          shipment_label_url?: string | null
+          shipment_last_synced_at?: string | null
+          shipment_provider?: string | null
+          shipment_response?: Json | null
+          shipment_status?: string | null
+          shipment_tracking_number?: string | null
           navlungo_error?: string | null
           navlungo_last_synced_at?: string | null
           navlungo_quote_reference?: string | null

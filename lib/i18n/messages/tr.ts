@@ -116,6 +116,7 @@ export const trMessages = {
     orders: "Siparişlerim",
     settings: "Ayarlar",
     logout: "Çıkış Yap",
+    subscriptionRenewalRequired: "Aboneliğinizi yenileyin",
     referralCardTitle: "Referral",
     referralCardUnlocked: "🎉 Ödül Kazandın!",
     referralCardFriendsSuffix: "arkadaş",

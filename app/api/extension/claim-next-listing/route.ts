@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveExtensionUser } from "@/lib/extension/api-auth";
 import { claimNextListingForUser } from "@/lib/extension/listing-queue";
-import { isSubscriptionActive, loadUserSubscriptions } from "@/lib/settings/subscriptions";
+import {
+  filterSubscriptionsForStore,
+  loadUserSubscriptions,
+  summarizeStoreSubscriptions,
+} from "@/lib/settings/subscriptions";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,8 +26,47 @@ export async function POST(request: NextRequest) {
     }
 
     const subscriptions = await loadUserSubscriptions(auth.user.id);
-    const hasActiveSubscription = subscriptions.some((row) => isSubscriptionActive(row));
+    const { data: storesData, error: storesError } = await supabaseAdmin
+      .from("stores")
+      .select("id, store_name")
+      .eq("user_id", auth.user.id)
+      .order("created_at", { ascending: true });
+
+    if (storesError) {
+      throw new Error(storesError.message);
+    }
+
+    const stores = (storesData ?? []) as Array<{ id: string; store_name: string | null }>;
+    const summaries = stores.map((store) => {
+      const summary = summarizeStoreSubscriptions(filterSubscriptionsForStore(subscriptions, store.id));
+      return {
+        storeId: store.id,
+        storeName: store.store_name ?? store.id,
+        ...summary,
+      };
+    });
+    const hasActiveSubscription = summaries.some((row) => row.renewalState === "active");
     if (!hasActiveSubscription) {
+      const body = (await request.json().catch(() => ({}))) as ClaimBody;
+      const preferredClientId = toTrimmed(body.client_id);
+      const preferredSummary =
+        summaries.find((row) => row.storeId === preferredClientId) ??
+        summaries.find((row) => row.renewalState === "renewal_required") ??
+        null;
+
+      if (preferredSummary?.renewalState === "renewal_required") {
+        return NextResponse.json(
+          {
+            error: "Store subscription renewal required",
+            code: "SUBSCRIPTION_RENEWAL_REQUIRED",
+            storeId: preferredSummary.storeId,
+            storeName: preferredSummary.storeName,
+            renewalState: preferredSummary.renewalState,
+          },
+          { status: 403 }
+        );
+      }
+
       return NextResponse.json(
         { error: "Subscription inactive", code: "SUBSCRIPTION_INACTIVE" },
         { status: 403 }
@@ -32,6 +76,22 @@ export async function POST(request: NextRequest) {
     const body = (await request.json().catch(() => ({}))) as ClaimBody;
     const preferredClientId = toTrimmed(body.client_id);
     const forceRecover = Boolean(body.force_recover);
+
+    if (preferredClientId) {
+      const preferredSummary = summaries.find((row) => row.storeId === preferredClientId) ?? null;
+      if (preferredSummary && preferredSummary.renewalState === "renewal_required") {
+        return NextResponse.json(
+          {
+            error: "Store subscription renewal required",
+            code: "SUBSCRIPTION_RENEWAL_REQUIRED",
+            storeId: preferredSummary.storeId,
+            storeName: preferredSummary.storeName,
+            renewalState: preferredSummary.renewalState,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     const nextListing = await claimNextListingForUser({
       userId: auth.user.id,
@@ -46,7 +106,7 @@ export async function POST(request: NextRequest) {
           job: null,
           code: "NO_MATCHING_LISTING_FOR_USER",
           message:
-            "Yüklenecek ürün bulunamadı. listing.client_id değeri mağaza id/shop_id/store_id ile eşleşmiyor veya ürün durumu uygun değil.",
+            "Yüklenecek ürün bulunamadı. listing.client_id seçili mağazayla eşleşmiyor, ürün durumu uygun değil veya listing.category mağazanın bağlı ürün/kategori filtresiyle eşleşmiyor.",
           preferred_client_id: preferredClientId || null,
         },
         {

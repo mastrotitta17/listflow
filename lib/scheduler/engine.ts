@@ -5,7 +5,14 @@ import {
   extractScheduledSlotDueIso,
   getPlanWindowHours,
 } from "@/lib/scheduler/idempotency";
+import {
+  isWebhookCompatibleWithStore,
+  resolveProductCandidateForCategory,
+  type ProductMatchCandidate,
+} from "@/lib/stores/product-resolution";
 import { isUuid } from "@/lib/utils/uuid";
+
+type StoreCurrency = "USD" | "TRY";
 
 type SubscriptionRow = {
   id: string;
@@ -20,7 +27,11 @@ type SubscriptionRow = {
 
 type StoreRow = {
   id: string;
+  product_id: string | null;
+  category: string | null;
   active_webhook_config_id: string | null;
+  store_currency: StoreCurrency;
+  store_currency_known: boolean;
 };
 
 type WebhookConfigRow = {
@@ -29,6 +40,8 @@ type WebhookConfigRow = {
   method: "GET" | "POST" | string | null;
   headers: Record<string, unknown> | null;
   enabled: boolean | null;
+  product_id?: string | null;
+  currency?: StoreCurrency | null;
   scope?: string | null;
 };
 
@@ -85,6 +98,49 @@ const isMissingAnyColumnError = (error: { message?: string } | null | undefined,
   }
 
   return columns.some((column) => isMissingColumnError(error, column));
+};
+
+const normalizeStoreCurrency = (value: string | null | undefined): StoreCurrency => {
+  const normalized = (value ?? "").trim().toUpperCase();
+  if (
+    normalized === "TRY" ||
+    normalized === "TL" ||
+    normalized === "₺" ||
+    normalized === "TURKISHLIRA" ||
+    normalized === "TURKISH_LIRA"
+  ) {
+    return "TRY";
+  }
+  return "USD";
+};
+
+const normalizeWebhookCurrency = (value: string | null | undefined): StoreCurrency | null => {
+  const normalized = (value ?? "").trim().toUpperCase();
+  if (!normalized) {
+    return null;
+  }
+  if (
+    normalized === "TRY" ||
+    normalized === "TL" ||
+    normalized === "₺" ||
+    normalized === "TURKISHLIRA" ||
+    normalized === "TURKISH_LIRA"
+  ) {
+    return "TRY";
+  }
+  if (normalized === "USD") {
+    return "USD";
+  }
+  return null;
+};
+
+const pickNonEmptyCurrency = (primary: string | null | undefined, fallback: string | null | undefined) => {
+  const first = (primary ?? "").trim();
+  if (first) {
+    return first;
+  }
+  const second = (fallback ?? "").trim();
+  return second || null;
 };
 
 const normalizeIso = (value: string | null | undefined) => {
@@ -265,34 +321,127 @@ const loadStores = async (storeIds: string[]) => {
     return { rows: [] as StoreRow[], hasActiveWebhookColumn: true };
   }
 
-  const withWebhook = await supabaseAdmin
-    .from("stores")
-    .select("id, active_webhook_config_id")
-    .in("id", storeIds);
+  const candidates = [
+    {
+      select: "id,product_id,category,active_webhook_config_id,store_currency,currency",
+      hasProduct: true,
+      hasCategory: true,
+      hasActiveWebhook: true,
+      hasStoreCurrency: true,
+      hasCurrency: true,
+    },
+    {
+      select: "id,product_id,category,active_webhook_config_id,store_currency",
+      hasProduct: true,
+      hasCategory: true,
+      hasActiveWebhook: true,
+      hasStoreCurrency: true,
+      hasCurrency: false,
+    },
+    {
+      select: "id,product_id,category,active_webhook_config_id,currency",
+      hasProduct: true,
+      hasCategory: true,
+      hasActiveWebhook: true,
+      hasStoreCurrency: false,
+      hasCurrency: true,
+    },
+    {
+      select: "id,product_id,category,active_webhook_config_id",
+      hasProduct: true,
+      hasCategory: true,
+      hasActiveWebhook: true,
+      hasStoreCurrency: false,
+      hasCurrency: false,
+    },
+    {
+      select: "id,category,active_webhook_config_id,store_currency,currency",
+      hasProduct: false,
+      hasCategory: true,
+      hasActiveWebhook: true,
+      hasStoreCurrency: true,
+      hasCurrency: true,
+    },
+    {
+      select: "id,category,active_webhook_config_id",
+      hasProduct: false,
+      hasCategory: true,
+      hasActiveWebhook: true,
+      hasStoreCurrency: false,
+      hasCurrency: false,
+    },
+    {
+      select: "id,product_id,category",
+      hasProduct: true,
+      hasCategory: true,
+      hasActiveWebhook: false,
+      hasStoreCurrency: false,
+      hasCurrency: false,
+    },
+    {
+      select: "id,category",
+      hasProduct: false,
+      hasCategory: true,
+      hasActiveWebhook: false,
+      hasStoreCurrency: false,
+      hasCurrency: false,
+    },
+    {
+      select: "id",
+      hasProduct: false,
+      hasCategory: false,
+      hasActiveWebhook: false,
+      hasStoreCurrency: false,
+      hasCurrency: false,
+    },
+  ] as const;
 
-  if (!withWebhook.error) {
-    return {
-      rows: (withWebhook.data ?? []) as StoreRow[],
-      hasActiveWebhookColumn: true,
-    };
+  for (const candidate of candidates) {
+    const query = await supabaseAdmin.from("stores").select(candidate.select).in("id", storeIds);
+    if (!query.error) {
+      const rawRows = (query.data ?? []) as unknown as Array<{
+        id: string;
+        product_id?: string | null;
+        category?: string | null;
+        active_webhook_config_id?: string | null;
+        store_currency?: string | null;
+        currency?: string | null;
+      }>;
+      const rows = rawRows.map((row) => {
+        const rawCurrency = pickNonEmptyCurrency(
+          candidate.hasStoreCurrency ? row.store_currency ?? null : null,
+          candidate.hasCurrency ? row.currency ?? null : null
+        );
+        return {
+          id: row.id,
+          product_id: candidate.hasProduct ? row.product_id ?? null : null,
+          category: candidate.hasCategory ? row.category ?? null : null,
+          active_webhook_config_id: candidate.hasActiveWebhook ? row.active_webhook_config_id ?? null : null,
+          store_currency: normalizeStoreCurrency(rawCurrency),
+          store_currency_known: Boolean(rawCurrency),
+        } satisfies StoreRow;
+      });
+
+      return {
+        rows,
+        hasActiveWebhookColumn: candidate.hasActiveWebhook,
+      };
+    }
+
+    if (
+      !isMissingAnyColumnError(query.error, [
+        "product_id",
+        "category",
+        "active_webhook_config_id",
+        "store_currency",
+        "currency",
+      ])
+    ) {
+      throw query.error;
+    }
   }
 
-  if (!isMissingColumnError(withWebhook.error, "active_webhook_config_id")) {
-    throw withWebhook.error;
-  }
-
-  const fallback = await supabaseAdmin.from("stores").select("id").in("id", storeIds);
-  if (fallback.error) {
-    throw fallback.error;
-  }
-
-  return {
-    rows: ((fallback.data ?? []) as Array<{ id: string }>).map((row) => ({
-      id: row.id,
-      active_webhook_config_id: null,
-    })),
-    hasActiveWebhookColumn: false,
-  };
+  return { rows: [] as StoreRow[], hasActiveWebhookColumn: false };
 };
 
 const loadStoreWebhookMappingsFromLogs = async (storeIds: string[]) => {
@@ -347,34 +496,93 @@ const loadStoreWebhookMappingsFromLogs = async (storeIds: string[]) => {
 };
 
 const loadWebhookConfigs = async () => {
-  const withScope = await supabaseAdmin
-    .from("webhook_configs")
-    .select("id, target_url, method, headers, enabled, scope")
-    .order("created_at", { ascending: false })
-    .limit(1000);
+  const candidates = [
+    { select: "id,target_url,method,headers,enabled,scope,product_id,currency", hasScope: true, hasProduct: true, hasCurrency: true },
+    { select: "id,target_url,method,headers,enabled,scope,product_id", hasScope: true, hasProduct: true, hasCurrency: false },
+    { select: "id,target_url,method,headers,enabled,scope,currency", hasScope: true, hasProduct: false, hasCurrency: true },
+    { select: "id,target_url,method,headers,enabled,scope", hasScope: true, hasProduct: false, hasCurrency: false },
+    { select: "id,target_url,method,headers,enabled,product_id,currency", hasScope: false, hasProduct: true, hasCurrency: true },
+    { select: "id,target_url,method,headers,enabled,product_id", hasScope: false, hasProduct: true, hasCurrency: false },
+    { select: "id,target_url,method,headers,enabled,currency", hasScope: false, hasProduct: false, hasCurrency: true },
+    { select: "id,target_url,method,headers,enabled", hasScope: false, hasProduct: false, hasCurrency: false },
+  ] as const;
 
-  if (!withScope.error) {
-    return (withScope.data ?? []) as WebhookConfigRow[];
+  for (const candidate of candidates) {
+    const query = await supabaseAdmin
+      .from("webhook_configs")
+      .select(candidate.select)
+      .order("created_at", { ascending: false })
+      .limit(1000);
+
+    if (!query.error) {
+      const rawRows = (query.data ?? []) as unknown as Array<{
+        id: string;
+        target_url: string;
+        method?: string | null;
+        headers?: Record<string, unknown> | null;
+        enabled?: boolean | null;
+        scope?: string | null;
+        product_id?: string | null;
+        currency?: string | null;
+      }>;
+      return rawRows.map((row) => ({
+        id: row.id,
+        target_url: row.target_url,
+        method: row.method ?? null,
+        headers: row.headers ?? null,
+        enabled: row.enabled ?? null,
+        scope: candidate.hasScope ? row.scope ?? "automation" : "automation",
+        product_id: candidate.hasProduct ? row.product_id ?? null : null,
+        currency: candidate.hasCurrency ? normalizeWebhookCurrency(row.currency ?? null) : null,
+      })) as WebhookConfigRow[];
+    }
+
+    if (!isMissingAnyColumnError(query.error, ["scope", "product_id", "currency"])) {
+      throw query.error;
+    }
   }
 
-  if (!isMissingColumnError(withScope.error, "scope")) {
-    throw withScope.error;
+  return [] as WebhookConfigRow[];
+};
+
+const loadProductMatchCandidates = async (): Promise<ProductMatchCandidate[]> => {
+  const categoryQuery = await supabaseAdmin.from("categories").select("id,title_tr,title_en").limit(5000);
+  if (categoryQuery.error) {
+    return [];
   }
 
-  const fallback = await supabaseAdmin
-    .from("webhook_configs")
-    .select("id, target_url, method, headers, enabled")
-    .order("created_at", { ascending: false })
-    .limit(1000);
+  const categoriesById = new Map(
+    ((categoryQuery.data ?? []) as Array<{ id: string; title_tr?: string | null; title_en?: string | null }>).map((row) => [
+      row.id,
+      {
+        tr: row.title_tr ?? null,
+        en: row.title_en ?? null,
+      },
+    ])
+  );
 
-  if (fallback.error) {
-    throw fallback.error;
+  const productQuery = await supabaseAdmin.from("products").select("id,category_id,title_tr,title_en").limit(5000);
+  if (productQuery.error) {
+    return [];
   }
 
-  return ((fallback.data ?? []) as WebhookConfigRow[]).map((row) => ({
-    ...row,
-    scope: "automation",
-  }));
+  return ((productQuery.data ?? []) as Array<{
+    id: string;
+    category_id?: string | null;
+    title_tr?: string | null;
+    title_en?: string | null;
+  }>).map((row) => {
+    const category = row.category_id ? categoriesById.get(row.category_id) : null;
+    return {
+      id: row.id,
+      titleTr: row.title_tr ?? null,
+      titleEn: row.title_en ?? null,
+      categoryTitleTr: category?.tr ?? null,
+      categoryTitleEn: category?.en ?? null,
+      labelTr: [category?.tr, row.title_tr ?? null].filter(Boolean).join(" / ") || null,
+      labelEn: [category?.en, row.title_en ?? null].filter(Boolean).join(" / ") || null,
+    } satisfies ProductMatchCandidate;
+  });
 };
 
 const loadSchedulerJobs = async (subscriptionIds: string[]) => {
@@ -858,6 +1066,7 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
   const fallbackStoreWebhookMap = await loadStoreWebhookMappingsFromLogs(storeIds);
   const storesById = new Map<string, StoreRow>(storeRows.map((store) => [store.id, store]));
   const webhookConfigs = await loadWebhookConfigs();
+  const productMatchCandidates = await loadProductMatchCandidates();
   const webhooksById = new Map<string, WebhookConfigRow>(
     webhookConfigs.map((config) => [config.id, config])
   );
@@ -868,7 +1077,13 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
   const activeWebhookByStoreId = new Map<string, string | null>();
 
   for (const storeId of storeIds) {
-    const explicitWebhookId = storesById.get(storeId)?.active_webhook_config_id ?? null;
+    const store = storesById.get(storeId) ?? null;
+    const resolvedStoreProductCandidate =
+      (store?.product_id
+        ? productMatchCandidates.find((candidate) => candidate.id === store.product_id) ?? null
+        : null) ?? resolveProductCandidateForCategory(store?.category ?? null, productMatchCandidates);
+    const effectiveStoreProductId = resolvedStoreProductCandidate?.id ?? store?.product_id ?? null;
+    const explicitWebhookId = store?.active_webhook_config_id ?? null;
     const fallbackWebhookCandidates = fallbackStoreWebhookMap.get(storeId) ?? [];
 
     let resolvedWebhookId: string | null = null;
@@ -879,14 +1094,33 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
 
     if (!resolvedWebhookId) {
       for (const candidateId of fallbackWebhookCandidates) {
-        if (isActiveAutomationWebhook(webhooksById.get(candidateId))) {
+        if (
+          isActiveAutomationWebhook(webhooksById.get(candidateId)) &&
+          isWebhookCompatibleWithStore({
+            storeProductId: effectiveStoreProductId,
+            storeCurrency: store?.store_currency ?? null,
+            storeCurrencyKnown: store?.store_currency_known ?? false,
+            webhookProductId: webhooksById.get(candidateId)?.product_id ?? null,
+            webhookCurrency: webhooksById.get(candidateId)?.currency ?? null,
+          })
+        ) {
           resolvedWebhookId = candidateId;
           break;
         }
       }
     }
 
-    if (!resolvedWebhookId && singletonActiveWebhookId) {
+    if (
+      !resolvedWebhookId &&
+      singletonActiveWebhookId &&
+      isWebhookCompatibleWithStore({
+        storeProductId: effectiveStoreProductId,
+        storeCurrency: store?.store_currency ?? null,
+        storeCurrencyKnown: store?.store_currency_known ?? false,
+        webhookProductId: webhooksById.get(singletonActiveWebhookId)?.product_id ?? null,
+        webhookCurrency: webhooksById.get(singletonActiveWebhookId)?.currency ?? null,
+      })
+    ) {
       resolvedWebhookId = singletonActiveWebhookId;
     }
 

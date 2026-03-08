@@ -175,12 +175,12 @@ export const learnGuides: LearnGuide[] = [
       en: "Order and Shipment Operations",
     },
     summary: {
-      tr: "Sipariş panelinde müşteri bilgisi, ShipEntegra sevkiyat başlatma ve takip adımlarını standardize eder.",
-      en: "Standardizes customer data, ShipEntegra shipment initiation, and tracking steps in the orders panel.",
+      tr: "Sipariş panelinde müşteri bilgisi, Navlungo sevkiyat başlatma ve takip adımlarını standardize eder.",
+      en: "Standardizes customer data, Navlungo shipment initiation, and tracking steps in the orders panel.",
     },
     tags: [
       { tr: "Order", en: "Order" },
-      { tr: "ShipEntegra", en: "ShipEntegra" },
+      { tr: "Navlungo", en: "Navlungo" },
       { tr: "Shipment", en: "Shipment" },
     ],
     youtubeId: "aqz-KE-bpKQ",

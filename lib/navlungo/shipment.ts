@@ -1,7 +1,11 @@
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import {
   NavlungoApiError,
-  createNavlungoStore,
   createNavlungoOrderQuote,
+  createNavlungoShipmentLabel,
+  createNavlungoStore,
+  getNavlungoShipmentLabel,
+  getNavlungoStoreOrderTracking,
   isNavlungoConfigured,
   shipNavlungoStoreOrder,
   type NavlungoOrderQuoteRequest,
@@ -42,6 +46,8 @@ export type NavlungoShipmentDispatchResult =
       shipmentId: string;
       shipmentReference: string;
       trackingUrl: string;
+      trackingNumber: string | null;
+      labelUrl: string | null;
       response: Record<string, unknown>;
       message: string;
     }
@@ -62,18 +68,6 @@ export type NavlungoShipmentDispatchResult =
       response?: Record<string, unknown>;
     };
 
-const FIXED_NAVLUNGO_SENDER = {
-  contactName: "Teoman Demirbaş",
-  contactPhone: "+905449420223",
-  identificationNumber: "23083558206",
-  contactMail: "demirteo2@gmail.com",
-  firstLine: "Fulya Mah. Özlüce Sok. No 20 D13 Şişli/İstanbul",
-  countryCode: "TR",
-  city: "İstanbul",
-  town: "Şişli",
-  postalCode: "34394",
-} as const;
-
 const readEnv = (key: string) => {
   const value = process.env[key];
   if (!value) {
@@ -82,6 +76,15 @@ const readEnv = (key: string) => {
 
   const trimmed = value.trim();
   return trimmed || null;
+};
+
+const readRequiredEnv = (key: string) => {
+  const value = readEnv(key);
+  if (!value) {
+    throw new Error(`Missing required Navlungo sender env: ${key}`);
+  }
+
+  return value;
 };
 
 const readNumberEnv = (key: string, fallback: number) => {
@@ -254,18 +257,42 @@ const parseAdditionalServices = (quote: { additionalServices?: Array<{ serviceCo
 };
 
 const buildFixedSenderAddress = (): NavlungoStoreAddress => {
+  const addressTypeRaw = (readEnv("NAVLUNGO_SENDER_ADDRESS_TYPE") ?? "Individual").trim();
+  const addressType = addressTypeRaw === "Corporate" ? "Corporate" : "Individual";
+
   return {
-    type: "Individual",
-    identificationNumber: FIXED_NAVLUNGO_SENDER.identificationNumber,
-    contactName: FIXED_NAVLUNGO_SENDER.contactName,
-    contactPhone: FIXED_NAVLUNGO_SENDER.contactPhone,
-    contactMail: FIXED_NAVLUNGO_SENDER.contactMail,
-    countryCode: FIXED_NAVLUNGO_SENDER.countryCode,
-    city: FIXED_NAVLUNGO_SENDER.city,
-    town: FIXED_NAVLUNGO_SENDER.town,
-    postalCode: FIXED_NAVLUNGO_SENDER.postalCode,
-    firstLine: FIXED_NAVLUNGO_SENDER.firstLine,
+    type: addressType,
+    companyName: readEnv("NAVLUNGO_SENDER_COMPANY_NAME") ?? undefined,
+    identificationNumber: readRequiredEnv("NAVLUNGO_SENDER_IDENTIFICATION_NUMBER"),
+    taxOffice: readEnv("NAVLUNGO_SENDER_TAX_OFFICE") ?? undefined,
+    contactName: readRequiredEnv("NAVLUNGO_SENDER_NAME"),
+    contactPhone: readRequiredEnv("NAVLUNGO_SENDER_PHONE"),
+    contactMail: readRequiredEnv("NAVLUNGO_SENDER_EMAIL"),
+    countryCode: normalizeCountryCode(readRequiredEnv("NAVLUNGO_SENDER_COUNTRY"), "TR"),
+    state: readEnv("NAVLUNGO_SENDER_STATE") ?? undefined,
+    city: readRequiredEnv("NAVLUNGO_SENDER_CITY"),
+    town: readEnv("NAVLUNGO_SENDER_TOWN") ?? readRequiredEnv("NAVLUNGO_SENDER_CITY"),
+    postalCode: readRequiredEnv("NAVLUNGO_SENDER_ZIP"),
+    firstLine: readRequiredEnv("NAVLUNGO_SENDER_ADDRESS1"),
+    secondLine: readEnv("NAVLUNGO_SENDER_ADDRESS2") ?? undefined,
+    thirdLine: readEnv("NAVLUNGO_SENDER_ADDRESS3") ?? undefined,
   };
+};
+
+const persistNavlungoStoreId = async (localStoreId: string, navlungoStoreId: string) => {
+  const localId = localStoreId.trim();
+  const remoteId = navlungoStoreId.trim();
+  if (!localId || !remoteId) {
+    return;
+  }
+
+  await supabaseAdmin
+    .from("stores")
+    .update({
+      navlungo_store_id: remoteId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", localId);
 };
 
 const isAlreadyExistsStoreError = (error: NavlungoApiError) => {
@@ -281,6 +308,7 @@ const isAlreadyExistsStoreError = (error: NavlungoApiError) => {
 const ensureNavlungoStoreId = async (input: StartNavlungoShipmentInput) => {
   const explicitStoreId = (input.navlungoStoreId ?? "").trim();
   if (explicitStoreId) {
+    await persistNavlungoStoreId(input.localStoreId, explicitStoreId);
     return {
       storeId: explicitStoreId,
       storeProvisioned: false,
@@ -296,8 +324,7 @@ const ensureNavlungoStoreId = async (input: StartNavlungoShipmentInput) => {
   }
 
   const senderAddress = buildFixedSenderAddress();
-  const resolvedStoreName =
-    (input.storeName ?? "").trim() || `Listflow Store ${localStoreId.slice(0, 8)}`;
+  const resolvedStoreName = (input.storeName ?? "").trim() || `Listflow Store ${localStoreId.slice(0, 8)}`;
 
   try {
     const createdStore = await createNavlungoStore({
@@ -309,12 +336,16 @@ const ensureNavlungoStoreId = async (input: StartNavlungoShipmentInput) => {
       },
     });
 
+    const resolvedStoreId = (createdStore.storeId ?? localStoreId).trim() || localStoreId;
+    await persistNavlungoStoreId(localStoreId, resolvedStoreId);
+
     return {
-      storeId: (createdStore.storeId ?? localStoreId).trim() || localStoreId,
+      storeId: resolvedStoreId,
       storeProvisioned: true,
     };
   } catch (error) {
     if (error instanceof NavlungoApiError && isAlreadyExistsStoreError(error)) {
+      await persistNavlungoStoreId(localStoreId, localStoreId);
       return {
         storeId: localStoreId,
         storeProvisioned: false,
@@ -383,6 +414,43 @@ const buildQuotePayload = (args: {
   };
 
   return payload;
+};
+
+const resolveLabelArtifacts = async (args: { shipmentId: string; storeId: string; orderReference: string }) => {
+  let labelUrl: string | null = null;
+  let trackingNumber: string | null = null;
+  const attempts: Record<string, unknown> = {};
+
+  const existingLabel = await getNavlungoShipmentLabel({ shipmentId: args.shipmentId });
+  if (existingLabel?.labelUrl) {
+    labelUrl = existingLabel.labelUrl;
+    attempts.initialLabelLookup = "hit";
+  } else {
+    attempts.initialLabelLookup = "miss";
+    const createdLabel = await createNavlungoShipmentLabel({ shipmentId: args.shipmentId });
+    trackingNumber = createdLabel?.lastMileTrackingNumber?.trim() || null;
+    attempts.createdLabel = createdLabel ?? null;
+
+    const refreshedLabel = await getNavlungoShipmentLabel({ shipmentId: args.shipmentId });
+    labelUrl = refreshedLabel?.labelUrl ?? null;
+    attempts.finalLabelLookup = refreshedLabel ?? null;
+  }
+
+  if (!trackingNumber) {
+    const tracking = await getNavlungoStoreOrderTracking({
+      storeId: args.storeId,
+      orderReference: args.orderReference,
+    });
+
+    trackingNumber = (tracking?.trackingNumber as string | undefined)?.trim() || null;
+    attempts.storeOrderTracking = tracking ?? null;
+  }
+
+  return {
+    labelUrl,
+    trackingNumber,
+    attempts,
+  };
 };
 
 export const startNavlungoShipmentForOrder = async (
@@ -483,6 +551,12 @@ export const startNavlungoShipmentForOrder = async (
       },
     });
 
+    const labelArtifacts = await resolveLabelArtifacts({
+      shipmentId: shipResponse.shipmentId,
+      storeId: resolvedStoreId,
+      orderReference,
+    });
+
     return {
       status: "started",
       storeId: resolvedStoreId,
@@ -491,12 +565,15 @@ export const startNavlungoShipmentForOrder = async (
       shipmentId: shipResponse.shipmentId,
       shipmentReference: shipResponse.shipmentReference,
       trackingUrl: shipResponse.trackingUrl,
+      trackingNumber: labelArtifacts.trackingNumber,
+      labelUrl: labelArtifacts.labelUrl,
       response: {
         selectedAdditionalServices,
         cargoLabels: shipResponse.cargoLabels ?? [],
         chargeableWeight: shipResponse.chargeableWeight ?? null,
         senderProfileFixed: true,
         storeProvisioned,
+        labelAttempts: labelArtifacts.attempts,
       },
       message: "Navlungo shipment started successfully.",
     };

@@ -32,6 +32,20 @@ type MfaFactor = {
   status: string;
 };
 
+type ExpiredStoreSummary = {
+  id: string;
+  name: string;
+  plan: string | null;
+  currentPeriodEnd: string | null;
+  renewalState: "renewal_required";
+};
+
+type StoreSubscriptionSummaryResponse = {
+  expiredStoreCount?: number;
+  expiredStores?: ExpiredStoreSummary[];
+  error?: string;
+};
+
 const PLAN_PRIORITY = ["turbo", "pro", "standard"] as const;
 const TOUR_STORAGE_KEY_PREFIX = "listflow:dashboard-tour:v1:";
 const TOUR_SESSION_KEY_PREFIX = "listflow:dashboard-tour-session:v1:";
@@ -90,6 +104,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [mfaCode, setMfaCode] = useState("");
   const [mfaVerifying, setMfaVerifying] = useState(false);
   const [mfaError, setMfaError] = useState<string | null>(null);
+  const [expiredStores, setExpiredStores] = useState<ExpiredStoreSummary[]>([]);
+  const [renewalModalOpen, setRenewalModalOpen] = useState(false);
+  const [renewingStoreId, setRenewingStoreId] = useState<string | null>(null);
   const activeSection = routeSection ?? dashboardSection;
 
   const tourSteps = useMemo(
@@ -201,6 +218,82 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     }, []);
 
+  const loadStoreSubscriptionSummary = useCallback(async () => {
+    try {
+      const response = await fetch("/api/stores/subscription-summary", {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = (await response.json().catch(() => ({}))) as StoreSubscriptionSummaryResponse;
+      const nextExpiredStores = payload.expiredStores ?? [];
+      setExpiredStores(nextExpiredStores);
+      setRenewalModalOpen(nextExpiredStores.length > 0);
+    } catch {
+      // Keep dashboard usable if summary fails.
+    }
+  }, []);
+
+  const handleRenewStore = useCallback(async (storeId: string) => {
+    setRenewingStoreId(storeId);
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error(locale === "en" ? "Session expired. Please sign in again." : "Oturum süresi doldu. Lütfen tekrar giriş yapın.");
+      }
+
+      const sessionSync = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          accessToken: session.access_token,
+          refreshToken: session.refresh_token,
+        }),
+      });
+
+      if (!sessionSync.ok) {
+        throw new Error(locale === "en" ? "Session sync failed." : "Oturum senkronize edilemedi.");
+      }
+
+      const response = await fetch("/api/billing/store-renewal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ storeId }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (!response.ok || !payload.url) {
+        throw new Error(
+          payload.error ||
+            (locale === "en"
+              ? "Store renewal checkout could not be started."
+              : "Mağaza yenileme ödeme ekranı açılamadı.")
+        );
+      }
+
+      window.location.href = payload.url;
+    } catch (error) {
+      setRenewingStoreId(null);
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : locale === "en"
+            ? "Store renewal checkout could not be started."
+            : "Mağaza yenileme ödeme ekranı açılamadı."
+      );
+    }
+  }, [locale]);
+
   const fetchUser = useCallback(async (mountedRef: { value: boolean }) => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
@@ -277,6 +370,10 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
           }
 
+          if (mountedRef.value) {
+            void loadStoreSubscriptionSummary();
+          }
+
           return;
         }
 
@@ -298,7 +395,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setMfaError(null);
         }
       }
-    }, [disableTour, evaluateMfaRequirement, resolvePlanLabel, routeSection, setDashboardSection, shouldShowTourForUser, t, tourDismissedInSession]);
+    }, [disableTour, evaluateMfaRequirement, loadStoreSubscriptionSummary, resolvePlanLabel, routeSection, setDashboardSection, shouldShowTourForUser, t, tourDismissedInSession]);
 
   useEffect(() => {
     const mountedRef = { value: true };
@@ -351,8 +448,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       crispWindow.$crisp = [];
     }
 
-    crispWindow.$crisp.push(["do", tourVisible || mfaRequired ? "chat:hide" : "chat:show"]);
-  }, [mfaRequired, tourVisible]);
+    crispWindow.$crisp.push(["do", tourVisible || mfaRequired || renewalModalOpen ? "chat:hide" : "chat:show"]);
+  }, [mfaRequired, renewalModalOpen, tourVisible]);
 
   useEffect(() => {
     if (!mfaRequired) {
@@ -369,6 +466,10 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     setTourVisible(false);
   }, [disableTour, routeSection]);
+
+  useEffect(() => {
+    void loadStoreSubscriptionSummary();
+  }, [loadStoreSubscriptionSummary]);
 
   const handleMfaVerify = async () => {
     if (!mfaFactorId) {
@@ -477,7 +578,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       case DashboardSection.AMAZON_AUTOMATION:
         return <ComingSoonAutomationPanel section={activeSection} />;
       case DashboardSection.ORDERS: return <OrdersPanel />;
-      case DashboardSection.SETTINGS: return <SettingsPanel />;
+      case DashboardSection.SETTINGS:
+        return (
+          <SettingsPanel
+            expiredStores={expiredStores}
+            onRenewStore={handleRenewStore}
+            renewingStoreId={renewingStoreId}
+          />
+        );
       case DashboardSection.REFERRAL: return <ReferralPanel />;
       default: return null;
     }
@@ -498,6 +606,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       <Sidebar
         activeSection={activeSection}
         mobileOpen={mobileSidebarOpen}
+        expiredStoreCount={expiredStores.length}
         onClose={() => setMobileSidebarOpen(false)}
       />
       <div className="flex-1 flex flex-col min-w-0">
@@ -607,6 +716,76 @@ const Dashboard: React.FC<DashboardProps> = ({
                 className="rounded-xl border border-white/15 px-4 py-3 text-xs font-black uppercase tracking-widest text-slate-300 transition-all hover:text-white cursor-pointer"
               >
                 {locale === "en" ? "Sign Out" : "Çıkış Yap"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      ) : null}
+
+      {!mfaRequired && renewalModalOpen && expiredStores.length > 0 ? (
+        <div className="fixed inset-0 z-[2147483646] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.94, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="relative w-full max-w-2xl rounded-3xl border border-red-400/25 bg-[#101727] p-6 shadow-[0_30px_90px_rgba(5,10,28,0.85)]"
+          >
+            <div className="mb-4">
+              <p className="text-sm font-black uppercase tracking-widest text-red-300">
+                {locale === "en" ? "Subscription Renewal Required" : "Abonelik Yenileme Gerekli"}
+              </p>
+              <h3 className="mt-2 text-2xl font-black text-white">
+                {locale === "en"
+                  ? "Some of your stores can no longer publish products."
+                  : "Bazı mağazalarınız artık ürün yükleyemiyor."}
+              </h3>
+              <p className="mt-2 text-sm text-slate-300">
+                {locale === "en"
+                  ? "Renew the expired store subscriptions below to reactivate automation and continue product uploads."
+                  : "Aşağıdaki süresi dolan mağaza aboneliklerini yenileyerek otomasyonu tekrar aktif edebilir ve ürün yüklemeye devam edebilirsiniz."}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {expiredStores.map((store) => (
+                <div key={store.id} className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-4">
+                  <p className="text-base font-black text-white">{store.name}</p>
+                  <p className="mt-1 text-sm text-slate-300">
+                    {locale === "en"
+                      ? `${store.name} has an expired subscription. Renew it to reactivate the store and continue product uploads.`
+                      : `${store.name} mağazanızın aboneliği bitmiştir. Mağazanızı tekrar aktif etmek ve ürün yüklemeye devam etmek için aboneliğinizi yenileyin.`}
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs font-bold uppercase tracking-widest text-red-200/80">
+                      {store.plan
+                        ? locale === "en"
+                          ? `Previous plan: ${store.plan}`
+                          : `Önceki plan: ${store.plan}`
+                        : locale === "en"
+                          ? "Previous subscription found"
+                          : "Önceki abonelik bulundu"}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void handleRenewStore(store.id)}
+                      disabled={renewingStoreId === store.id}
+                      className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-4 py-2 text-xs font-black uppercase tracking-widest text-white transition-all hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {renewingStoreId === store.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      {locale === "en" ? "Renew Subscription" : "Aboneliği Yenile"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setRenewalModalOpen(false)}
+                className="rounded-xl border border-white/15 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-300 transition-all hover:text-white"
+              >
+                {locale === "en" ? "Later" : "Daha Sonra"}
               </button>
             </div>
           </motion.div>

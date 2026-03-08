@@ -1,5 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getNavlungoConnection } from "@/lib/navlungo/connection";
+import { buildNavlungoCallbackUrl, readNavlungoRuntimeConfig } from "@/lib/navlungo/config";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { PLAN_TO_MONTHLY_CENTS, type BillingPlan } from "@/lib/stripe/client";
 
@@ -156,11 +158,13 @@ const loadWinner = async (rows: SubscriptionRow[]) => {
 };
 
 export default async function AdminHomePage() {
-  const [totalStores, totalUsers, subscriptions, payments] = await Promise.all([
+  const navlungoConfig = readNavlungoRuntimeConfig();
+  const [totalStores, totalUsers, subscriptions, payments, navlungoConnection] = await Promise.all([
     countRows("stores"),
     countRows("profiles", ["user_id", "id", "*"]),
     loadSubscriptions(),
     loadPayments(),
+    getNavlungoConnection(navlungoConfig.environment),
   ]);
 
   const activeSubscriptions = subscriptions
@@ -292,6 +296,44 @@ export default async function AdminHomePage() {
         <CardDescription>Bu alan yalnızca admin rolüne açıktır ve tüm işlemler loglanır.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <Card className="rounded-2xl border-indigo-500/20 bg-slate-950/70">
+          <CardHeader className="gap-3 p-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-sm uppercase tracking-[0.24em] text-indigo-300">Navlungo Bağlantısı</CardTitle>
+              <Badge variant="secondary">{navlungoConfig.environment.toUpperCase()}</Badge>
+              <Badge variant={navlungoConnection ? "default" : "secondary"}>
+                {navlungoConnection ? "Bağlı" : "Bağlı Değil"}
+              </Badge>
+            </div>
+            <CardDescription className="text-slate-300">
+              {navlungoConnection
+                ? `Ortak Navlungo hesabı bağlı. ${navlungoConnection.connected_email ?? "E-posta bilgisi yok"}`
+                : "Tek ortak Navlungo hesabını bir kez bağla; ödeme sonrası sevkiyatlar bu bağlantı üzerinden başlasın."}
+            </CardDescription>
+            <div className="grid gap-2 text-sm text-slate-300 md:grid-cols-2">
+              <p>Callback URL: {buildNavlungoCallbackUrl(process.env.NEXT_PUBLIC_SITE_URL ?? process.env.APP_URL ?? "http://localhost:3000")}</p>
+              <p>Bağlantı zamanı: {navlungoConnection?.connected_at ?? "-"}</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <a
+                href="/api/admin/navlungo/connect/start?returnTo=/admin"
+                className="inline-flex items-center rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400"
+              >
+                {navlungoConnection ? "Yeniden Bağlan" : "Navlungo'yu Bağla"}
+              </a>
+              {navlungoConnection ? (
+                <form action="/api/admin/navlungo/disconnect" method="post">
+                  <button
+                    type="submit"
+                    className="inline-flex items-center rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/30 hover:text-white"
+                  >
+                    Bağlantıyı Kaldır
+                  </button>
+                </form>
+              ) : null}
+            </div>
+          </CardHeader>
+        </Card>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           {cards.map((card) => (
             <Card key={card.title} className="rounded-2xl">

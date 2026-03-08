@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
-import type { ShipentegraShipmentDispatchResult } from "@/lib/shipentegra/shipment";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
@@ -98,6 +97,12 @@ type ProfileContextRow = {
   phone?: string | null;
 };
 
+type CreateOrderShipmentState = {
+  status: "skipped";
+  reason: "AWAITING_PAYMENT" | "MISSING_STORE_ID";
+  message: string;
+};
+
 const ORDER_SELECT_CANDIDATES = [
   "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, shipment_status, shipment_error, shipment_provider, shipment_external_order_id, shipment_tracking_number, shipment_label_url, shipment_invoice_url, shipment_response, shipment_last_synced_at, navlungo_status, navlungo_error, navlungo_store_id, navlungo_search_id, navlungo_quote_reference, navlungo_shipment_id, navlungo_shipment_reference, navlungo_tracking_url, navlungo_response, navlungo_last_synced_at, created_at, updated_at",
   "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, shipment_status, shipment_error, shipment_provider, shipment_external_order_id, shipment_tracking_number, shipment_label_url, shipment_invoice_url, shipment_response, shipment_last_synced_at, created_at, updated_at",
@@ -139,6 +144,20 @@ const toNumber = (value: number | string | null | undefined) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const pickRecordString = (record: Record<string, unknown> | null | undefined, key: string) => {
+  if (!record) {
+    return null;
+  }
+
+  const value = record[key];
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
+};
+
 const isMissingTableError = (error: QueryError | null | undefined) => {
   if (!error) {
     return false;
@@ -175,13 +194,29 @@ const mapOrderRow = (row: OrderRow) => {
   const amount = toNumber(row.amount_usd);
   const date = row.order_date || row.created_at?.split("T")[0] || new Date().toISOString().split("T")[0];
   const paymentStatus = (row.payment_status || "pending").toLowerCase();
+  const navlungoResponse =
+    row.navlungo_response && typeof row.navlungo_response === "object"
+      ? row.navlungo_response
+      : row.shipment_response && typeof row.shipment_response === "object"
+        ? row.shipment_response
+        : null;
 
   const shipmentStatus = row.shipment_status || row.navlungo_status || null;
   const shipmentError = row.shipment_error || row.navlungo_error || null;
   const shipmentExternalOrderId = row.shipment_external_order_id || row.navlungo_search_id || row.navlungo_shipment_id || null;
-  const shipmentTrackingNumber = row.shipment_tracking_number || row.navlungo_shipment_reference || null;
-  const shipmentLabelUrl = row.shipment_label_url || row.navlungo_tracking_url || null;
-  const shipmentInvoiceUrl = row.shipment_invoice_url || null;
+  const shipmentTrackingNumber =
+    row.shipment_tracking_number ||
+    pickRecordString(navlungoResponse, "trackingNumber") ||
+    row.navlungo_shipment_reference ||
+    null;
+  const shipmentLabelUrl =
+    row.shipment_label_url ||
+    pickRecordString(navlungoResponse, "labelUrl") ||
+    null;
+  const shipmentInvoiceUrl =
+    row.shipment_invoice_url ||
+    pickRecordString(navlungoResponse, "invoiceUrl") ||
+    null;
   const shipmentLastSyncedAt = row.shipment_last_synced_at || row.navlungo_last_synced_at || null;
 
   return {
@@ -209,7 +244,7 @@ const mapOrderRow = (row: OrderRow) => {
     paymentStatus,
     shipmentStatus,
     shipmentError,
-    shipmentProvider: row.shipment_provider || "shipentegra",
+    shipmentProvider: row.shipment_provider || "navlungo",
     shipmentExternalOrderId,
     shipmentTrackingNumber,
     shipmentLabelUrl,
@@ -343,106 +378,6 @@ const loadProfileContext = async (userId: string) => {
   return null;
 };
 
-const buildShippingOrderUpdatePayload = (result: ShipentegraShipmentDispatchResult) => {
-  const nowIso = new Date().toISOString();
-
-  if (result.status === "started") {
-    return {
-      shipment_status: "shipment_started",
-      shipment_error: null,
-      shipment_provider: "shipentegra",
-      shipment_external_order_id: String(result.orderId),
-      shipment_tracking_number: result.trackingNumber,
-      shipment_label_url: result.labelUrl ?? null,
-      shipment_invoice_url: result.invoiceUrl ?? null,
-      shipment_response: result.response,
-      shipment_last_synced_at: nowIso,
-      navlungo_status: "shipment_started",
-      navlungo_error: null,
-      navlungo_store_id: null,
-      navlungo_search_id: String(result.orderId),
-      navlungo_quote_reference: null,
-      navlungo_shipment_id: String(result.orderId),
-      navlungo_shipment_reference: result.trackingNumber,
-      navlungo_tracking_url: result.labelUrl ?? result.invoiceUrl ?? null,
-      navlungo_response: result.response,
-      navlungo_last_synced_at: nowIso,
-      updated_at: nowIso,
-    } as Record<string, unknown>;
-  }
-
-  if (result.status === "failed") {
-    const shipmentStatus = result.reason === "ORDER_CREATE_FAILED" ? "order_create_failed" : "shipment_failed";
-    return {
-      shipment_status: shipmentStatus,
-      shipment_error: result.message,
-      shipment_provider: "shipentegra",
-      shipment_response: result.response ?? null,
-      shipment_last_synced_at: nowIso,
-      navlungo_status: shipmentStatus,
-      navlungo_error: result.message,
-      navlungo_response: result.response ?? null,
-      navlungo_last_synced_at: nowIso,
-      updated_at: nowIso,
-    } as Record<string, unknown>;
-  }
-
-  return {
-    shipment_status: "skipped",
-    shipment_error: result.message,
-    shipment_provider: "shipentegra",
-    shipment_response: result.response ?? null,
-    shipment_last_synced_at: nowIso,
-    navlungo_status: "skipped",
-    navlungo_error: result.message,
-    navlungo_response: result.response ?? null,
-    navlungo_last_synced_at: nowIso,
-    updated_at: nowIso,
-  } as Record<string, unknown>;
-};
-
-const updateOrderWithColumnFallback = async (args: {
-  orderId: string;
-  userId: string;
-  payload: Record<string, unknown>;
-}) => {
-  const mutablePayload = { ...args.payload };
-  let lastError: QueryError | null = null;
-
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (Object.keys(mutablePayload).length === 0) {
-      return null;
-    }
-
-    const update = await supabaseAdmin
-      .from("orders")
-      .update(mutablePayload)
-      .eq("id", args.orderId)
-      .eq("user_id", args.userId)
-      .select("*")
-      .maybeSingle<OrderRow>();
-
-    if (!update.error) {
-      return update.data ?? null;
-    }
-
-    lastError = update.error;
-
-    const missingColumn = Object.keys(mutablePayload).find((column) => isMissingColumnError(update.error, column));
-    if (!missingColumn) {
-      throw new Error(update.error.message || "Order shipment status could not be updated");
-    }
-
-    delete mutablePayload[missingColumn];
-  }
-
-  if (lastError) {
-    throw new Error(lastError.message || "Order shipment status could not be updated");
-  }
-
-  return null;
-};
-
 export async function GET(request: NextRequest) {
   try {
     const accessToken = getAccessToken(request);
@@ -541,7 +476,7 @@ export async function POST(request: NextRequest) {
 
     if (!receiverName || !receiverPhone || !receiverCountryCode || !receiverCity || !receiverTown || !receiverPostalCode) {
       return NextResponse.json(
-        { error: "Missing required receiver fields for ShipEntegra shipment." },
+        { error: "Missing required receiver fields for Navlungo shipment." },
         { status: 400 }
       );
     }
@@ -621,7 +556,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (created) {
-      const shipment: ShipentegraShipmentDispatchResult = storeId
+      const shipment: CreateOrderShipmentState = storeId
         ? {
             status: "skipped",
             reason: "AWAITING_PAYMENT",

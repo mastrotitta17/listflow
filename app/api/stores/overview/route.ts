@@ -6,8 +6,14 @@ import {
   extractScheduledSlotDueIso,
   getPlanWindowHours,
 } from "@/lib/scheduler/idempotency";
+import {
+  isSubscriptionActive,
+  summarizeStoreSubscriptions,
+  type SettingsSubscriptionRow,
+} from "@/lib/settings/subscriptions";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
+import { loadDirectAutomationCronJobs, syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,17 +35,7 @@ type StoreWebhookMappingSnapshot = {
   lastMappedAt: string | null;
 };
 
-type SubscriptionRow = {
-  id: string;
-  user_id: string | null;
-  store_id?: string | null;
-  shop_id?: string | null;
-  plan: string | null;
-  status: string | null;
-  current_period_end: string | null;
-  updated_at: string | null;
-  created_at: string | null;
-};
+type SubscriptionRow = SettingsSubscriptionRow;
 
 type SchedulerJobRow = {
   id: string;
@@ -66,6 +62,17 @@ type OrderBackfillSummary = {
   scanned: number;
   updated: number;
   unresolved: number;
+};
+
+type CronLifecycleSnapshot = {
+  lastCronSyncAt: string | null;
+  lastCronSyncStatus: "success" | "skipped" | "error" | null;
+  lastCronSyncMessage: string | null;
+};
+
+type DirectCronHealth = {
+  directCronPresent: boolean;
+  directCronJobId: number | null;
 };
 
 const isMissingColumnError = (error: { message?: string } | null | undefined, column: string) => {
@@ -125,20 +132,6 @@ const toTimestamp = (value: string | null | undefined) => {
 
   const parsed = new Date(value).getTime();
   return Number.isNaN(parsed) ? null : parsed;
-};
-
-const isActiveSubscription = (row: SubscriptionRow) => {
-  const status = (row.status ?? "").toLowerCase();
-  if (!["active", "trialing"].includes(status)) {
-    return false;
-  }
-
-  const periodEnd = toValidDate(row.current_period_end);
-  if (!periodEnd) {
-    return true;
-  }
-
-  return periodEnd.getTime() > Date.now();
 };
 
 const parseScheduledStoreIdFromKey = (idempotencyKey: string | null | undefined) => {
@@ -832,6 +825,93 @@ const loadLatestCronTickMs = async () => {
   return Number.isNaN(parsed) ? null : parsed;
 };
 
+const parseCronLifecycleResponse = (value: string | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as {
+      ok?: boolean;
+      status?: string | null;
+      message?: string | null;
+    };
+    return {
+      status: typeof parsed.status === "string" ? parsed.status : null,
+      message: typeof parsed.message === "string" ? parsed.message : null,
+      ok: parsed.ok === true,
+    };
+  } catch {
+    return {
+      status: null,
+      message: value,
+      ok: false,
+    };
+  }
+};
+
+const loadLatestCronLifecycleSnapshot = async (): Promise<CronLifecycleSnapshot> => {
+  const { data, error } = await supabaseAdmin
+    .from("webhook_logs")
+    .select("created_at,response_body")
+    .eq("request_method", "CRON_LIFECYCLE_SYNC")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ created_at: string | null; response_body?: string | null }>();
+
+  if (error || !data) {
+    return {
+      lastCronSyncAt: null,
+      lastCronSyncStatus: null,
+      lastCronSyncMessage: null,
+    };
+  }
+
+  const parsed = parseCronLifecycleResponse(data.response_body ?? null);
+  const status = parsed?.status;
+
+  return {
+    lastCronSyncAt: data.created_at ?? null,
+    lastCronSyncStatus:
+      status === "error" ? "error" : status === "skipped" ? "skipped" : parsed?.ok ? "success" : "success",
+    lastCronSyncMessage: parsed?.message ?? null,
+  };
+};
+
+const loadDirectCronHealthByStoreId = async (storeIds: string[]) => {
+  const map = new Map<string, DirectCronHealth>();
+  if (!storeIds.length) {
+    return map;
+  }
+
+  try {
+    const rows = await loadDirectAutomationCronJobs();
+    const allowed = new Set(storeIds);
+
+    for (const row of rows) {
+      const storeId = typeof row.storeId === "string" ? row.storeId : null;
+      if (!storeId || !allowed.has(storeId)) {
+        continue;
+      }
+
+      if (row.enabled === false) {
+        continue;
+      }
+
+      if (!map.has(storeId)) {
+        map.set(storeId, {
+          directCronPresent: true,
+          directCronJobId: row.jobId ?? null,
+        });
+      }
+    }
+  } catch {
+    return map;
+  }
+
+  return map;
+};
+
 const triggerTickWithCronSecret = async (request: NextRequest) => {
   const cronSecret = process.env.CRON_SECRET?.trim();
   if (!cronSecret) {
@@ -872,9 +952,10 @@ export async function GET(request: NextRequest) {
     const subscriptions = await loadSubscriptions(user.id);
     const subscriptionIds = subscriptions.map((row) => row.id);
     const storeIds = stores.map((store) => store.id);
+    const cronLifecycleSnapshotPromise = loadLatestCronLifecycleSnapshot();
     const activeSubscriptionStoreIds = new Set(
       subscriptions
-        .filter((row) => isActiveSubscription(row))
+        .filter((row) => isSubscriptionActive(row))
         .map((row) => row.store_id ?? (row.shop_id && isUuid(row.shop_id) ? row.shop_id : null))
         .filter((value): value is string => Boolean(value))
     );
@@ -906,6 +987,8 @@ export async function GET(request: NextRequest) {
 
     const fallbackStoreWebhookMap = await loadStoreWebhookMappingsFromLogs(storeIds);
     const directMode = isDirectAutomationMode();
+    const directCronHealthByStoreId = directMode ? await loadDirectCronHealthByStoreId(storeIds) : new Map<string, DirectCronHealth>();
+    const cronLifecycleSnapshot = await cronLifecycleSnapshotPromise;
     const candidateWebhookIds = new Set<string>();
     for (const store of stores) {
       if (store.active_webhook_config_id) {
@@ -948,15 +1031,20 @@ export async function GET(request: NextRequest) {
           return bTs - aTs;
         });
 
-      const activeSubscription = matchedSubscriptions.find((row) => isActiveSubscription(row)) ?? null;
-      const primarySubscription = activeSubscription ?? matchedSubscriptions[0] ?? null;
+      const renewalSnapshot = summarizeStoreSubscriptions(matchedSubscriptions);
+      const activeSubscription = renewalSnapshot.activeSubscription;
+      const primarySubscription = renewalSnapshot.latestSubscription;
 
-      const plan = (primarySubscription?.plan ?? null)?.toLowerCase() || null;
+      const plan = (renewalSnapshot.lastSubscriptionPlan ?? null)?.toLowerCase() || null;
       const intervalHours = plan ? getPlanWindowHours(plan) : null;
       const intervalMs = intervalHours ? intervalHours * 60 * 60 * 1000 : null;
       const nowMs = Date.now();
       const configuredWebhookId = resolveStoreWebhookId(store);
       const hasActiveAutomationWebhook = Boolean(configuredWebhookId);
+      const directCronHealth = directCronHealthByStoreId.get(store.id) ?? {
+        directCronPresent: false,
+        directCronJobId: null,
+      };
 
       const subscriptionJobs = primarySubscription
         ? schedulerJobs.filter((job) => job.subscription_id === primarySubscription.id)
@@ -1076,7 +1164,7 @@ export async function GET(request: NextRequest) {
         return resolvedStoreId ? resolvedStoreId === store.id : true;
       });
 
-      const hasActiveSubscription = Boolean(activeSubscription);
+      const hasActiveSubscription = renewalSnapshot.renewalState === "active";
       const canDelete = !hasActiveSubscription && !hasProcessingAutomation;
       const deleteBlockedReason = hasActiveSubscription
         ? "active_subscription"
@@ -1116,20 +1204,46 @@ export async function GET(request: NextRequest) {
         priceCents: store.price_cents ?? 0,
         orderCount: countsByStoreId.get(store.id) ?? 0,
         hasActiveSubscription,
+        renewalRequired: renewalSnapshot.renewalRequired,
+        renewalState: renewalSnapshot.renewalState,
         hasActiveAutomationWebhook,
         plan,
         subscriptionStatus: activeSubscription?.status ?? primarySubscription?.status ?? null,
+        currentPeriodEnd: renewalSnapshot.currentPeriodEnd,
+        lastSubscriptionPlan: renewalSnapshot.lastSubscriptionPlan,
+        lastSubscriptionInterval: renewalSnapshot.lastSubscriptionInterval,
         automationIntervalHours: intervalHours,
         automationLastRunAt: lastSuccessfulAutomationAt,
         lastSuccessfulAutomationAt,
         nextAutomationAt,
         automationState,
+        directCronPresent: directCronHealth.directCronPresent,
+        directCronJobId: directCronHealth.directCronJobId,
+        lastCronSyncAt: cronLifecycleSnapshot.lastCronSyncAt,
+        lastCronSyncStatus: cronLifecycleSnapshot.lastCronSyncStatus,
+        lastCronSyncMessage: cronLifecycleSnapshot.lastCronSyncMessage,
         canDelete,
         deleteBlockedReason,
       };
     });
 
-    if (!directMode) {
+    if (directMode) {
+      const missingDirectCronForEligibleStore = rows.some((row) => {
+        if (!row.hasActiveSubscription || row.renewalState !== "active") {
+          return false;
+        }
+
+        if (!row.hasActiveAutomationWebhook) {
+          return false;
+        }
+
+        return row.directCronPresent !== true;
+      });
+
+      if (missingDirectCronForEligibleStore) {
+        await syncSchedulerCronJobLifecycle().catch(() => null);
+      }
+    } else {
       const nowMs = Date.now();
       const hasDueAutomation = rows.some((row) => {
         if (!row.hasActiveSubscription || !row.hasActiveAutomationWebhook || row.automationState === "processing") {

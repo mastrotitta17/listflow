@@ -138,6 +138,17 @@ type DesiredDirectJob = {
   anchorIso: string;
 };
 
+type EnsureDirectAutomationCronJobArgs = {
+  subscriptionId: string;
+  storeId: string;
+  webhookConfigId: string;
+  plan: string | null | undefined;
+  anchorIso: string | null | undefined;
+  targetUrl: string;
+  method?: string | null;
+  headers?: Record<string, unknown> | null;
+};
+
 export type DirectAutomationCronJob = {
   jobId: number;
   enabled: boolean;
@@ -221,6 +232,10 @@ let directAutomationCronJobsInFlight: Promise<DirectAutomationCronJob[]> | null 
 let lifecycleSyncInFlight: Promise<SchedulerCronSyncResult> | null = null;
 let lifecycleSyncLastAt = 0;
 
+const invalidateDirectAutomationCronJobsCache = () => {
+  directAutomationCronJobsCache = null;
+};
+
 const stripTrailingSlashes = (value: string) => value.replace(/\/+$/, "");
 
 const resolveSchedulerBaseUrl = () => {
@@ -267,16 +282,81 @@ const buildSchedulerTickUrlCandidates = () => {
   return Array.from(candidates);
 };
 
+const safeSerialize = (value: unknown) => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const insertCronLifecycleLogWithFallback = async (args: {
+  force: boolean;
+  result: SchedulerCronSyncResult;
+}) => {
+  const responseBody = safeSerialize(args.result);
+  const requestBody = {
+    force: args.force,
+    mode: isDirectAutomationMode() ? "direct" : "queue",
+    requested_at: new Date().toISOString(),
+  };
+
+  const payloads: Array<Record<string, unknown>> = [
+    {
+      request_url: "cron-job.org-lifecycle",
+      request_method: "CRON_LIFECYCLE_SYNC",
+      request_body: requestBody,
+      response_status: args.result.ok ? 200 : args.result.status === "skipped" ? 202 : 500,
+      response_body: responseBody,
+      duration_ms: null,
+      created_by: null,
+    },
+    {
+      request_url: "cron-job.org-lifecycle",
+      request_method: "CRON_LIFECYCLE_SYNC",
+      request_body: requestBody,
+      response_status: args.result.ok ? 200 : args.result.status === "skipped" ? 202 : 500,
+      response_body: responseBody,
+      duration_ms: null,
+    },
+    {
+      request_url: "cron-job.org-lifecycle",
+      request_method: "CRON_LIFECYCLE_SYNC",
+      response_status: args.result.ok ? 200 : args.result.status === "skipped" ? 202 : 500,
+      response_body: responseBody,
+    },
+  ];
+
+  for (const payload of payloads) {
+    const attempt = await supabaseAdmin.from("webhook_logs").insert(payload);
+    if (!attempt.error) {
+      return;
+    }
+
+    if (
+      !isMissingAnyColumnError(attempt.error, [
+        "request_body",
+        "response_status",
+        "response_body",
+        "duration_ms",
+        "created_by",
+      ])
+    ) {
+      return;
+    }
+  }
+};
+
 const createSchedule = (): CronJobSchedule => {
   // Direct mode uses per-webhook cron jobs for production dispatch.
-  // Keep scheduler tick lightweight (daily) unless queue mode is enabled.
+  // Keep a lightweight periodic reconcile running so missing direct jobs self-heal.
   if (isDirectAutomationMode()) {
     return {
       timezone: "UTC",
       expiresAt: 0,
-      hours: [0],
+      hours: [-1],
       mdays: [-1],
-      minutes: [0],
+      minutes: [0, 15, 30, 45],
       months: [-1],
       wdays: [-1],
     };
@@ -418,6 +498,14 @@ const isMissingColumnError = (error: { message?: string } | null | undefined, co
   return message.includes("column") && message.includes(columnName.toLowerCase());
 };
 
+const isMissingAnyColumnError = (error: { message?: string } | null | undefined, columnNames: string[]) => {
+  if (!error) {
+    return false;
+  }
+
+  return columnNames.some((columnName) => isMissingColumnError(error, columnName));
+};
+
 const parseCronJobApiError = async (response: Response) => {
   const text = await response.text();
   if (!text) {
@@ -551,6 +639,40 @@ const computeNextExecutionUnix = (args: { plan: string; nowMs: number; anchorIso
   })();
 
   return Math.floor(nextMs / 1000);
+};
+
+const buildDirectAutomationPayload = (args: EnsureDirectAutomationCronJobArgs, nowMs = Date.now()) => {
+  const plan = (args.plan ?? "standard").toLowerCase();
+  const method = (args.method ?? "POST").toUpperCase() === "GET" ? "GET" : "POST";
+  const normalizedHeaders = normalizeHeaders(args.headers);
+  const title = buildAutomationTitle({
+    subscriptionId: args.subscriptionId,
+    storeId: args.storeId,
+    webhookConfigId: args.webhookConfigId,
+    plan,
+  });
+
+  const payload: CronJobPayload = {
+    enabled: true,
+    title,
+    saveResponses: true,
+    url: args.targetUrl,
+    redirectSuccess: true,
+    requestMethod: method === "GET" ? GET_REQUEST_METHOD : POST_REQUEST_METHOD,
+    schedule: createAutomationSchedule(plan, args.anchorIso, nowMs),
+    extendedData: {
+      headers: {
+        ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+        ...normalizedHeaders,
+      },
+      ...(method === "POST" ? { body: JSON.stringify({ client_id: args.storeId }) } : {}),
+    },
+  };
+
+  return {
+    title,
+    payload,
+  };
 };
 
 const buildAutomationTitle = (args: {
@@ -967,8 +1089,15 @@ const syncDirectAutomationCronJobs = async (apiKey: string): Promise<DirectAutom
     let deleted = 0;
     let skippedDueToBudget = 0;
     let remainingMutations = CRON_JOB_ORG_MAX_MUTATIONS_PER_SYNC;
+    let rateLimitReached = false;
+    let rateLimitDetails: string | null = null;
 
     for (const [title, payload] of desiredByTitle.entries()) {
+      if (rateLimitReached) {
+        skippedDueToBudget += 1;
+        continue;
+      }
+
       const existing = managedByTitle.get(title);
       if (existing) {
         if (shouldUpdateManagedJob(existing, payload)) {
@@ -976,12 +1105,22 @@ const syncDirectAutomationCronJobs = async (apiKey: string): Promise<DirectAutom
             skippedDueToBudget += 1;
             continue;
           }
-          await callCronJobOrgApi<Record<string, never>>({
-            method: "PATCH",
-            path: `/jobs/${existing.jobId}`,
-            body: { job: payload },
-            apiKey,
-          });
+          try {
+            await callCronJobOrgApi<Record<string, never>>({
+              method: "PATCH",
+              path: `/jobs/${existing.jobId}`,
+              body: { job: payload },
+              apiKey,
+            });
+          } catch (error) {
+            if (isCronJobOrgRateLimitedError(error)) {
+              rateLimitReached = true;
+              rateLimitDetails = error instanceof Error ? error.message : "Rate limit";
+              skippedDueToBudget += 1;
+              continue;
+            }
+            throw error;
+          }
           updated += 1;
           remainingMutations -= 1;
         } else {
@@ -994,17 +1133,32 @@ const syncDirectAutomationCronJobs = async (apiKey: string): Promise<DirectAutom
         skippedDueToBudget += 1;
         continue;
       }
-      await callCronJobOrgApi<CronJobCreateResponse>({
-        method: "PUT",
-        path: "/jobs",
-        body: { job: payload },
-        apiKey,
-      });
+      try {
+        await callCronJobOrgApi<CronJobCreateResponse>({
+          method: "PUT",
+          path: "/jobs",
+          body: { job: payload },
+          apiKey,
+        });
+      } catch (error) {
+        if (isCronJobOrgRateLimitedError(error)) {
+          rateLimitReached = true;
+          rateLimitDetails = error instanceof Error ? error.message : "Rate limit";
+          skippedDueToBudget += 1;
+          continue;
+        }
+        throw error;
+      }
       created += 1;
       remainingMutations -= 1;
     }
 
     for (const managed of managedJobs) {
+      if (rateLimitReached) {
+        skippedDueToBudget += 1;
+        continue;
+      }
+
       const title = managed.title ?? "";
       if (desiredByTitle.has(title)) {
         continue;
@@ -1014,11 +1168,21 @@ const syncDirectAutomationCronJobs = async (apiKey: string): Promise<DirectAutom
         skippedDueToBudget += 1;
         continue;
       }
-      await callCronJobOrgApi<Record<string, never>>({
-        method: "DELETE",
-        path: `/jobs/${managed.jobId}`,
-        apiKey,
-      });
+      try {
+        await callCronJobOrgApi<Record<string, never>>({
+          method: "DELETE",
+          path: `/jobs/${managed.jobId}`,
+          apiKey,
+        });
+      } catch (error) {
+        if (isCronJobOrgRateLimitedError(error)) {
+          rateLimitReached = true;
+          rateLimitDetails = error instanceof Error ? error.message : "Rate limit";
+          skippedDueToBudget += 1;
+          continue;
+        }
+        throw error;
+      }
       deleted += 1;
       remainingMutations -= 1;
     }
@@ -1028,6 +1192,14 @@ const syncDirectAutomationCronJobs = async (apiKey: string): Promise<DirectAutom
         ? ` Mutasyon limiti nedeniyle ${skippedDueToBudget} işlem sonraki senkrona bırakıldı.`
         : "";
 
+    const rateLimitSummary = rateLimitReached
+      ? ` cron-job.org rate limitine ulaşıldı; kalan işlemler sonraki senkrona bırakıldı.${rateLimitDetails ? ` (${rateLimitDetails})` : ""}`
+      : "";
+
+    if (created > 0 || updated > 0 || deleted > 0) {
+      invalidateDirectAutomationCronJobsCache();
+    }
+
     return {
       ok: true,
       created,
@@ -1036,7 +1208,7 @@ const syncDirectAutomationCronJobs = async (apiKey: string): Promise<DirectAutom
       deleted,
       desired: desiredByTitle.size,
       existingManaged: managedJobs.length,
-      message: `Direct cron senkronu tamamlandı (desired=${desiredByTitle.size}, created=${created}, updated=${updated}, unchanged=${unchanged}, deleted=${deleted}).${mutationSummary}`,
+      message: `Direct cron senkronu tamamlandı (desired=${desiredByTitle.size}, created=${created}, updated=${updated}, unchanged=${unchanged}, deleted=${deleted}).${mutationSummary}${rateLimitSummary}`,
     };
   } catch (error) {
     return {
@@ -1127,14 +1299,7 @@ export const loadDirectAutomationCronJobs = async (options?: { force?: boolean }
       }
 
       if (isCronJobOrgRateLimitedError(error)) {
-        const fallbackRows = await buildDesiredDirectCronRows(Date.now());
-        const fetchedAt = Date.now();
-        directAutomationCronJobsCache = {
-          rows: fallbackRows,
-          fetchedAt,
-          expiresAt: fetchedAt + DIRECT_JOBS_CACHE_TTL_MS,
-        };
-        return fallbackRows;
+        return [] as DirectAutomationCronJob[];
       }
 
       throw error;
@@ -1179,6 +1344,142 @@ export const findStrictDirectAutomationCronJob = async (args: {
         job.enabled !== false
     ) ?? null
   );
+};
+
+export const ensureDirectAutomationCronJobForBinding = async (
+  args: EnsureDirectAutomationCronJobArgs
+): Promise<SchedulerCronSyncResult> => {
+  const apiKey = resolveCronApiKey();
+  if (!apiKey) {
+    return {
+      ok: false,
+      status: "skipped",
+      message: "Cron API key bulunamadı. Direct cron oluşturma atlandı.",
+    };
+  }
+
+  const schedulerResult = await ensureSchedulerCronJob().catch((error) => {
+    return {
+      ok: false,
+      status: "error",
+      message: "Scheduler cron doğrulanamadı.",
+      details: error instanceof Error ? error.message : "Bilinmeyen hata",
+    } satisfies SchedulerCronSyncResult;
+  });
+
+  const { title, payload } = buildDirectAutomationPayload(args, Date.now());
+
+  try {
+    const listResponse = await callCronJobOrgApi<CronJobListResponse>({
+      method: "GET",
+      path: "/jobs",
+      apiKey,
+    });
+
+    const jobs = ((listResponse.jobs ?? []) as CronJobSummary[])
+      .map((job) => mapCronSummaryToDirectAutomationJob(job))
+      .filter((job): job is DirectAutomationCronJob => Boolean(job));
+
+    const matchingJobs = Array.from(
+      new Map(
+        jobs
+          .filter(
+            (job) =>
+              job.title === title ||
+              (job.storeId === args.storeId && job.webhookConfigId === args.webhookConfigId)
+          )
+          .map((job) => [job.jobId, job])
+      ).values()
+    );
+
+    const primaryJob =
+      matchingJobs.find((job) => job.title === title) ??
+      matchingJobs.find(
+        (job) => job.storeId === args.storeId && job.webhookConfigId === args.webhookConfigId
+      ) ??
+      null;
+
+    const createComparableSummary = (job: DirectAutomationCronJob): CronJobListItem => ({
+      jobId: job.jobId,
+      enabled: job.enabled,
+      title: job.title,
+      url: job.url,
+      requestMethod: job.requestMethod,
+      schedule: job.schedule ?? undefined,
+    });
+
+    if (primaryJob) {
+      const needsUpdate = shouldUpdateManagedJob(createComparableSummary(primaryJob), payload);
+      if (needsUpdate) {
+        await callCronJobOrgApi<Record<string, never>>({
+          method: "PATCH",
+          path: `/jobs/${primaryJob.jobId}`,
+          body: { job: payload },
+          apiKey,
+        });
+      }
+
+      const staleJobs = matchingJobs.filter((job) => job.jobId !== primaryJob.jobId);
+      for (const staleJob of staleJobs) {
+        await callCronJobOrgApi<Record<string, never>>({
+          method: "DELETE",
+          path: `/jobs/${staleJob.jobId}`,
+          apiKey,
+        });
+      }
+
+      invalidateDirectAutomationCronJobsCache();
+
+      return {
+        ok: true,
+        status: needsUpdate ? "updated" : "noop",
+        jobId: primaryJob.jobId,
+        message: `${schedulerResult.message} Direct cron doğrulandı (jobId=${primaryJob.jobId}, store=${args.storeId}, webhook=${args.webhookConfigId}).${
+          staleJobs.length ? ` ${staleJobs.length} kopya direct job temizlendi.` : ""
+        }`,
+      };
+    }
+
+    const created = await callCronJobOrgApi<CronJobCreateResponse>({
+      method: "PUT",
+      path: "/jobs",
+      body: { job: payload },
+      apiKey,
+    });
+
+    invalidateDirectAutomationCronJobsCache();
+
+    if (!created.jobId || !Number.isFinite(created.jobId)) {
+      return {
+        ok: false,
+        status: "error",
+        message: `${schedulerResult.message} Direct cron oluşturuldu ancak jobId alınamadı.`,
+      };
+    }
+
+    return {
+      ok: true,
+      status: "created",
+      jobId: created.jobId,
+      message: `${schedulerResult.message} Direct cron oluşturuldu (jobId=${created.jobId}, store=${args.storeId}, webhook=${args.webhookConfigId}).`,
+    };
+  } catch (error) {
+    if (isCronJobOrgRateLimitedError(error)) {
+      return {
+        ok: false,
+        status: "skipped",
+        message: "cron-job.org rate limit nedeniyle direct cron oluşturma/güncelleme atlandı.",
+        details: error instanceof Error ? error.message : "Rate limit",
+      };
+    }
+
+    return {
+      ok: false,
+      status: "error",
+      message: "Direct automation cron senkronu başarısız.",
+      details: error instanceof Error ? error.message : "Bilinmeyen hata",
+    };
+  }
 };
 
 const findSchedulerJobCandidates = async (apiKey: string) => {
@@ -1457,7 +1758,12 @@ export const syncSchedulerCronJobLifecycle = async (options?: { force?: boolean 
   lifecycleSyncInFlight = inFlight;
 
   try {
-    return await inFlight;
+    const result = await inFlight;
+    await insertCronLifecycleLogWithFallback({
+      force,
+      result,
+    }).catch(() => undefined);
+    return result;
   } finally {
     lifecycleSyncLastAt = Date.now();
     if (lifecycleSyncInFlight === inFlight) {

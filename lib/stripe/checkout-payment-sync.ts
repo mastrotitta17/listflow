@@ -1,6 +1,6 @@
 import type Stripe from "stripe";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { startShipentegraShipmentForOrder, type ShipentegraShipmentDispatchResult } from "@/lib/shipentegra/shipment";
+import { startNavlungoShipmentForOrder, type NavlungoShipmentDispatchResult } from "@/lib/navlungo/shipment";
 import { isUuid } from "@/lib/utils/uuid";
 
 type QueryError = {
@@ -39,6 +39,7 @@ type StoreContextRow = {
   store_name?: string | null;
   name?: string | null;
   phone?: string | null;
+  navlungo_store_id?: string | null;
   currency?: string | null;
   store_currency?: string | null;
 };
@@ -391,12 +392,12 @@ const loadOrderForShipment = async (args: { orderId: string; userId: string | nu
 
 const loadStoreContext = async (args: { userId: string | null; storeId: string }) => {
   const selectCandidates = [
-    "id, store_name, phone, currency, store_currency",
-    "id, name, phone, currency",
-    "id, store_name, phone",
-    "id, name, phone",
-    "id, store_name",
-    "id, name",
+    "id, store_name, phone, navlungo_store_id, currency, store_currency",
+    "id, name, phone, navlungo_store_id, currency",
+    "id, store_name, phone, navlungo_store_id",
+    "id, name, phone, navlungo_store_id",
+    "id, store_name, navlungo_store_id",
+    "id, name, navlungo_store_id",
     "id",
   ] as const;
 
@@ -463,27 +464,33 @@ const isShipmentAlreadyStarted = (row: OrderShipmentRow) => {
   return Boolean(row.shipment_external_order_id || row.navlungo_search_id || row.navlungo_shipment_id);
 };
 
-const buildShipmentPatch = (result: ShipentegraShipmentDispatchResult) => {
+const buildShipmentPatch = (result: NavlungoShipmentDispatchResult) => {
   const nowIso = new Date().toISOString();
 
   if (result.status === "started") {
     return {
       shipment_status: "shipment_started",
       shipment_error: null,
-      shipment_provider: "shipentegra",
-      shipment_external_order_id: String(result.orderId),
-      shipment_tracking_number: result.trackingNumber,
+      shipment_provider: "navlungo",
+      shipment_external_order_id: result.searchId || result.shipmentId,
+      shipment_tracking_number: result.trackingNumber ?? result.shipmentReference,
       shipment_label_url: result.labelUrl ?? null,
-      shipment_invoice_url: result.invoiceUrl ?? null,
+      shipment_invoice_url: null,
       shipment_response: result.response ?? null,
       shipment_last_synced_at: nowIso,
       navlungo_status: "shipment_started",
       navlungo_error: null,
-      navlungo_search_id: String(result.orderId),
-      navlungo_shipment_id: String(result.orderId),
-      navlungo_shipment_reference: result.trackingNumber,
-      navlungo_tracking_url: result.labelUrl ?? result.invoiceUrl ?? null,
-      navlungo_response: result.response ?? null,
+      navlungo_store_id: result.storeId,
+      navlungo_search_id: result.searchId,
+      navlungo_quote_reference: result.quoteReference,
+      navlungo_shipment_id: result.shipmentId,
+      navlungo_shipment_reference: result.shipmentReference,
+      navlungo_tracking_url: result.trackingUrl,
+      navlungo_response: {
+        ...(result.response ?? {}),
+        labelUrl: result.labelUrl ?? null,
+        trackingNumber: result.trackingNumber ?? null,
+      },
       navlungo_last_synced_at: nowIso,
       updated_at: nowIso,
     } as Record<string, unknown>;
@@ -491,18 +498,27 @@ const buildShipmentPatch = (result: ShipentegraShipmentDispatchResult) => {
 
   const failedStatus =
     result.status === "failed"
-      ? result.reason === "ORDER_CREATE_FAILED"
+      ? result.reason === "QUOTE_FAILED"
         ? "order_create_failed"
-        : "shipment_failed"
+        : result.reason === "SHIPMENT_FAILED"
+          ? "shipment_failed"
+          : "failed"
       : "skipped";
 
   return {
     shipment_status: failedStatus,
     shipment_error: result.message,
-    shipment_provider: "shipentegra",
+    shipment_provider: "navlungo",
     shipment_response: result.response ?? null,
     shipment_last_synced_at: nowIso,
-    navlungo_status: failedStatus,
+    navlungo_status:
+      result.status === "failed"
+        ? result.reason === "QUOTE_FAILED"
+          ? "quote_failed"
+          : result.reason === "SHIPMENT_FAILED"
+            ? "shipment_failed"
+            : "failed"
+        : "skipped",
     navlungo_error: result.message,
     navlungo_response: result.response ?? null,
     navlungo_last_synced_at: nowIso,
@@ -573,11 +589,12 @@ const startShipmentForPaidOrder = async (args: { orderId: string; userId: string
     pickNonEmptyValue(storeContext?.store_currency ?? null, storeContext?.currency ?? null)
   );
 
-  let shipment: ShipentegraShipmentDispatchResult;
+  let shipment: NavlungoShipmentDispatchResult;
   try {
-    shipment = await startShipentegraShipmentForOrder({
+    shipment = await startNavlungoShipmentForOrder({
       orderId: order.id,
       localStoreId: order.store_id,
+      navlungoStoreId: storeContext?.navlungo_store_id ?? null,
       storeName,
       storePhone,
       userEmail: profileContext?.email ?? null,
@@ -597,13 +614,12 @@ const startShipmentForPaidOrder = async (args: { orderId: string; userId: string
       labelNumber: order.label_number ?? "",
       amountUsd: Number(order.amount_usd ?? 0),
       currency: storeCurrency,
-      ioss: order.ioss ?? null,
     });
   } catch (error) {
     shipment = {
       status: "failed",
       reason: "UNEXPECTED_ERROR",
-      message: error instanceof Error ? error.message : "Unexpected ShipEntegra orchestration error",
+      message: error instanceof Error ? error.message : "Unexpected Navlungo orchestration error",
     };
   }
 

@@ -116,6 +116,7 @@ export const enMessages = {
     orders: "My Orders",
     settings: "Settings",
     logout: "Sign Out",
+    subscriptionRenewalRequired: "Renew your subscription",
     referralCardTitle: "Referral",
     referralCardUnlocked: "🎉 Reward Unlocked!",
     referralCardFriendsSuffix: "friends",

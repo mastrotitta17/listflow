@@ -61,6 +61,11 @@ export interface Shop {
   orderCount: number;
   plan?: string | null;
   subscriptionStatus?: string | null;
+  renewalRequired?: boolean;
+  renewalState?: "active" | "renewal_required" | "activation_required";
+  currentPeriodEnd?: string | null;
+  lastSubscriptionPlan?: "standard" | "pro" | "turbo" | null;
+  lastSubscriptionInterval?: "month" | "year" | null;
   automationIntervalHours?: number | null;
   automationLastRunAt?: string | null;
   lastSuccessfulAutomationAt?: string | null;

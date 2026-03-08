@@ -1,4 +1,10 @@
-import { getActiveStripeMode, getStripeClientForMode, type StripeMode } from "@/lib/stripe/client";
+import {
+  getActiveStripeMode,
+  getStripeClientForMode,
+  type BillingInterval,
+  type BillingPlan,
+  type StripeMode,
+} from "@/lib/stripe/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 
@@ -14,6 +20,19 @@ export type SettingsSubscriptionRow = {
   stripe_customer_id?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
+};
+
+export type RenewalState = "active" | "renewal_required" | "activation_required";
+
+export type StoreSubscriptionSnapshot = {
+  rows: SettingsSubscriptionRow[];
+  activeSubscription: SettingsSubscriptionRow | null;
+  latestSubscription: SettingsSubscriptionRow | null;
+  renewalRequired: boolean;
+  renewalState: RenewalState;
+  currentPeriodEnd: string | null;
+  lastSubscriptionPlan: BillingPlan | null;
+  lastSubscriptionInterval: BillingInterval | null;
 };
 
 export type StripeCancelFailure = {
@@ -58,6 +77,25 @@ const toDate = (value: string | null | undefined) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const toTimestamp = (row: Pick<SettingsSubscriptionRow, "updated_at" | "created_at">) => {
+  const value = row.updated_at ?? row.created_at ?? null;
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const normalizeBillingPlan = (value: string | null | undefined): BillingPlan | null => {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "standard" || normalized === "pro" || normalized === "turbo") {
+    return normalized;
+  }
+
+  return null;
+};
+
 export const isSubscriptionActive = (row: SettingsSubscriptionRow) => {
   const status = (row.status ?? "").toLowerCase();
   if (!["active", "trialing"].includes(status)) {
@@ -72,12 +110,53 @@ export const isSubscriptionActive = (row: SettingsSubscriptionRow) => {
   return periodEnd.getTime() > Date.now();
 };
 
+export const sortSubscriptionsNewest = <T extends Pick<SettingsSubscriptionRow, "updated_at" | "created_at">>(rows: T[]) => {
+  return [...rows].sort((a, b) => toTimestamp(b) - toTimestamp(a));
+};
+
+export const resolveRenewalState = (rows: SettingsSubscriptionRow[]): RenewalState => {
+  const normalized = sortSubscriptionsNewest(rows);
+  if (normalized.some((row) => isSubscriptionActive(row))) {
+    return "active";
+  }
+
+  if (normalized.length > 0) {
+    return "renewal_required";
+  }
+
+  return "activation_required";
+};
+
+export const summarizeStoreSubscriptions = (rows: SettingsSubscriptionRow[], options?: {
+  lastSubscriptionInterval?: BillingInterval | null;
+}): StoreSubscriptionSnapshot => {
+  const normalizedRows = sortSubscriptionsNewest(rows);
+  const activeSubscription = normalizedRows.find((row) => isSubscriptionActive(row)) ?? null;
+  const latestSubscription = normalizedRows[0] ?? null;
+  const renewalState = resolveRenewalState(normalizedRows);
+
+  return {
+    rows: normalizedRows,
+    activeSubscription,
+    latestSubscription,
+    renewalRequired: renewalState === "renewal_required",
+    renewalState,
+    currentPeriodEnd: activeSubscription?.current_period_end ?? latestSubscription?.current_period_end ?? null,
+    lastSubscriptionPlan: normalizeBillingPlan(activeSubscription?.plan ?? latestSubscription?.plan ?? null),
+    lastSubscriptionInterval: options?.lastSubscriptionInterval ?? null,
+  };
+};
+
 export const resolveStoreIdFromSubscription = (row: SettingsSubscriptionRow) => {
   if (row.store_id) {
     return row.store_id;
   }
 
   return row.shop_id && isUuid(row.shop_id) ? row.shop_id : null;
+};
+
+export const filterSubscriptionsForStore = (rows: SettingsSubscriptionRow[], storeId: string) => {
+  return rows.filter((row) => resolveStoreIdFromSubscription(row) === storeId);
 };
 
 export const loadUserSubscriptions = async (userId: string) => {
@@ -113,6 +192,35 @@ export const loadUserSubscriptions = async (userId: string) => {
     ...row,
     store_id: row.shop_id && isUuid(row.shop_id) ? row.shop_id : null,
   }));
+};
+
+export const resolveStripeBillingIntervalForSubscription = async (
+  row: Pick<SettingsSubscriptionRow, "stripe_subscription_id">
+): Promise<BillingInterval | null> => {
+  const stripeSubscriptionId = row.stripe_subscription_id ?? null;
+  if (!stripeSubscriptionId) {
+    return null;
+  }
+
+  const activeMode = getActiveStripeMode();
+  const modeOrder = resolveModeAttemptOrder(activeMode);
+
+  for (const mode of modeOrder) {
+    try {
+      const subscription = await getStripeClientForMode(mode).subscriptions.retrieve(stripeSubscriptionId);
+      const interval = subscription.items.data[0]?.price?.recurring?.interval;
+      if (interval === "month" || interval === "year") {
+        return interval;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Stripe subscription load failed";
+      if (isStripeNotFoundError(message)) {
+        continue;
+      }
+    }
+  }
+
+  return null;
 };
 
 export const cancelStripeSubscriptionsNow = async (rows: SettingsSubscriptionRow[]) => {

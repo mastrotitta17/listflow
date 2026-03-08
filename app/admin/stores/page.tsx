@@ -1,13 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRightLeft, Check, Copy, Loader2, Pencil, Plus } from "lucide-react";
-import type { ColumnDef } from "@tanstack/react-table";
+import { ArrowDown, ArrowRightLeft, ArrowUp, ArrowUpDown, Check, Copy, Loader2, Pencil, Plus } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { DataTable } from "@/components/ui/data-table";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { sanitizePhoneInput } from "@/lib/phone";
 import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { toast } from "sonner";
@@ -59,6 +59,11 @@ type AutomationOverviewRow = {
   automationUpdatedAt: string | null;
   cadenceHours: number | null;
   nextTriggerAt: string | null;
+  directCronPresent?: boolean;
+  directCronJobId?: number | null;
+  lastCronSyncAt?: string | null;
+  lastCronSyncStatus?: "success" | "skipped" | "error" | null;
+  lastCronSyncMessage?: string | null;
   lastTrigger: LastTrigger | null;
   listingCount?: number;
 };
@@ -88,7 +93,7 @@ type SwitchResponse = {
   error?: string;
 };
 
-type TableRow = AutomationOverviewRow & {
+type AutomationTableRow = AutomationOverviewRow & {
   selectedWebhookConfigId: string;
   availableWebhookOptions: WebhookOption[];
 };
@@ -320,9 +325,15 @@ type NextTriggerCountdownProps = {
   hasSubscription: boolean;
   targetIso: string | null;
   cadenceHours: number | null;
+  directCronPresent?: boolean;
 };
 
-function NextTriggerCountdown({ hasSubscription, targetIso, cadenceHours }: NextTriggerCountdownProps) {
+function NextTriggerCountdown({
+  hasSubscription,
+  targetIso,
+  cadenceHours,
+  directCronPresent = true,
+}: NextTriggerCountdownProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -339,12 +350,584 @@ function NextTriggerCountdown({ hasSubscription, targetIso, cadenceHours }: Next
     return <span className="text-xs text-slate-500">Aktif abonelik yok</span>;
   }
 
+  if (!directCronPresent) {
+    return (
+      <div className="space-y-1">
+        <p className="text-sm font-black text-amber-300">Remote cron doğrulanmadı</p>
+        <p className="text-xs text-slate-500">
+          Sonraki tetik kesinleşmedi {cadenceHours ? `(plan: her ${cadenceHours} saat)` : ""}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-1">
       <p className="text-sm font-black text-white">{formatCountdown(targetIso, nowMs)}</p>
       <p className="text-xs text-slate-500">
         {targetIso ? formatDate(targetIso) : "-"} {cadenceHours ? `(her ${cadenceHours} saat)` : ""}
       </p>
+    </div>
+  );
+}
+
+type StoreTableSortKey =
+  | "storeName"
+  | "userLabel"
+  | "listingCount"
+  | "plan"
+  | "monthIndex"
+  | "activeWebhookName"
+  | "lastTriggerAt"
+  | "nextTriggerAt";
+
+type StoreTableSortDirection = "asc" | "desc";
+
+const normalizeSearchText = (value: string) => {
+  return value
+    .toLocaleLowerCase("tr")
+    .replace(/ı/g, "i")
+    .replace(/İ/g, "i")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+};
+
+const valueToSearchBlob = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => valueToSearchBlob(item)).join(" ");
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  }
+
+  if (typeof value === "object") {
+    return Object.values(value as Record<string, unknown>)
+      .map((item) => valueToSearchBlob(item))
+      .join(" ");
+  }
+
+  return "";
+};
+
+const getValueByPath = (row: Record<string, unknown>, path: string): unknown => {
+  const segments = path.split(".").filter(Boolean);
+  if (!segments.length) {
+    return undefined;
+  }
+
+  let cursor: unknown = row;
+  for (const segment of segments) {
+    if (!cursor || typeof cursor !== "object") {
+      return undefined;
+    }
+
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+
+  return cursor;
+};
+
+const parseDateFilterValue = (value: unknown) => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (typeof value === "number") {
+    const milliseconds = value > 1_000_000_000_000 ? value : value * 1000;
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const SORTABLE_HEADERS: Array<{ key: StoreTableSortKey; label: string }> = [
+  { key: "storeName", label: "Mağaza" },
+  { key: "userLabel", label: "Kullanıcı" },
+  { key: "listingCount", label: "Listing" },
+  { key: "plan", label: "Plan" },
+  { key: "monthIndex", label: "Ay" },
+  { key: "activeWebhookName", label: "Mevcut Otomasyon" },
+  { key: "lastTriggerAt", label: "Son Tetik" },
+  { key: "nextTriggerAt", label: "Sonraki Tetik" },
+];
+
+const getSortValue = (row: AutomationTableRow, key: StoreTableSortKey) => {
+  switch (key) {
+    case "storeName":
+      return row.storeName || "";
+    case "userLabel":
+      return row.userLabel || "";
+    case "listingCount":
+      return row.listingCount ?? 0;
+    case "plan":
+      return row.plan ? PLAN_LABELS[row.plan] ?? row.plan : "";
+    case "monthIndex":
+      return row.monthIndex ?? 0;
+    case "activeWebhookName":
+      return row.activeWebhookName || "";
+    case "lastTriggerAt":
+      return row.lastTrigger?.createdAt ? new Date(row.lastTrigger.createdAt).getTime() : 0;
+    case "nextTriggerAt":
+      return row.nextTriggerAt ? new Date(row.nextTriggerAt).getTime() : 0;
+    default:
+      return "";
+  }
+};
+
+type StoresAutomationTableProps = {
+  rows: AutomationTableRow[];
+  webhookMap: Map<string, WebhookOption>;
+  switchingStoreId: string | null;
+  copiedStoreId: string | null;
+  savingStoreEdit: boolean;
+  onCopyStoreId: (storeId: string) => void;
+  onOpenListingViewer: (store: AutomationOverviewRow) => void;
+  onOpenEditStoreModal: (store: AutomationOverviewRow) => void;
+  onRunSwitch: (store: AutomationTableRow) => void;
+  onSelectWebhook: (storeId: string, webhookConfigId: string) => void;
+};
+
+function StoresAutomationTable({
+  rows,
+  webhookMap,
+  switchingStoreId,
+  copiedStoreId,
+  savingStoreEdit,
+  onCopyStoreId,
+  onOpenListingViewer,
+  onOpenEditStoreModal,
+  onRunSwitch,
+  onSelectWebhook,
+}: StoresAutomationTableProps) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
+  const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
+  const [sortKey, setSortKey] = useState<StoreTableSortKey>("storeName");
+  const [sortDirection, setSortDirection] = useState<StoreTableSortDirection>("asc");
+  const [page, setPage] = useState(1);
+
+  const statusOptions = useMemo(() => {
+    return Array.from(new Set(rows.map((row) => row.storeStatus).filter(Boolean))).sort((a, b) =>
+      String(a).localeCompare(String(b), "tr")
+    );
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    const normalizedQuery = normalizeSearchText(searchQuery.trim());
+    const fromDate = dateFrom
+      ? (() => {
+          const value = new Date(dateFrom);
+          value.setHours(0, 0, 0, 0);
+          return value;
+        })()
+      : null;
+    const toDate = dateTo
+      ? (() => {
+          const value = new Date(dateTo);
+          value.setHours(23, 59, 59, 999);
+          return value;
+        })()
+      : null;
+
+    return rows.filter((row) => {
+      if (statusFilter !== "all" && row.storeStatus.toLowerCase() !== statusFilter.toLowerCase()) {
+        return false;
+      }
+
+      if (fromDate || toDate) {
+        const rowDate = parseDateFilterValue(row.automationUpdatedAt);
+        if (!rowDate) {
+          return false;
+        }
+
+        if (fromDate && rowDate < fromDate) {
+          return false;
+        }
+
+        if (toDate && rowDate > toDate) {
+          return false;
+        }
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      const searchBlob = [
+        "storeName",
+        "storeId",
+        "userLabel",
+        "plan",
+        "subscriptionStatus",
+        "storeCurrency",
+        "category",
+        "activeWebhookName",
+      ]
+        .map((key) => valueToSearchBlob(getValueByPath(row as unknown as Record<string, unknown>, key)))
+        .join(" ");
+
+      return normalizeSearchText(searchBlob).includes(normalizedQuery);
+    });
+  }, [dateFrom, dateTo, rows, searchQuery, statusFilter]);
+
+  const sortedRows = useMemo(() => {
+    return [...filteredRows].sort((left, right) => {
+      const leftValue = getSortValue(left, sortKey);
+      const rightValue = getSortValue(right, sortKey);
+
+      let result = 0;
+      if (typeof leftValue === "number" && typeof rightValue === "number") {
+        result = leftValue - rightValue;
+      } else {
+        result = String(leftValue).localeCompare(String(rightValue), "tr", { sensitivity: "base" });
+      }
+
+      return sortDirection === "asc" ? result : -result;
+    });
+  }, [filteredRows, sortDirection, sortKey]);
+
+  const pageSize = 8;
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+
+  const paginatedRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return sortedRows.slice(start, start + pageSize);
+  }, [page, sortedRows]);
+
+  const toggleSort = (key: StoreTableSortKey) => {
+    if (sortKey === key) {
+      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+
+    setSortKey(key);
+    setSortDirection("asc");
+  };
+
+  const renderSortIcon = (key: StoreTableSortKey) => {
+    if (sortKey !== key) {
+      return <ArrowUpDown className="h-3.5 w-3.5 text-slate-500" />;
+    }
+
+    return sortDirection === "asc" ? (
+      <ArrowUp className="h-3.5 w-3.5 text-indigo-300" />
+    ) : (
+      <ArrowDown className="h-3.5 w-3.5 text-indigo-300" />
+    );
+  };
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setStatusFilter("all");
+    setDateFrom(undefined);
+    setDateTo(undefined);
+    setPage(1);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,1.4fr)_200px_170px_170px_auto]">
+          <Input
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setPage(1);
+            }}
+            placeholder="Mağaza, kullanıcı, plan ara..."
+          />
+          <Select
+            value={statusFilter}
+            onChange={(event) => {
+              setStatusFilter(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="all">Mağaza durumu: Tümü</option>
+            {statusOptions.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </Select>
+          <DatePicker
+            value={dateFrom}
+            onChange={(value) => {
+              setDateFrom(value);
+              setPage(1);
+            }}
+            placeholder="Otomasyon başlangıç"
+          />
+          <DatePicker
+            value={dateTo}
+            onChange={(value) => {
+              setDateTo(value);
+              setPage(1);
+            }}
+            placeholder="Otomasyon bitiş"
+          />
+          <Button variant="outline" onClick={clearFilters} className="cursor-pointer">
+            Filtreleri Temizle
+          </Button>
+        </div>
+        <p className="text-xs text-slate-400">
+          {sortedRows.length} kayıt, sayfa {page}/{totalPages}
+        </p>
+      </div>
+
+      <Table className="min-w-[1280px]">
+        <TableHeader>
+          <TableRow>
+            {SORTABLE_HEADERS.map((header) => (
+              <TableHead key={header.key}>
+                <button
+                  type="button"
+                  onClick={() => toggleSort(header.key)}
+                  className="inline-flex items-center gap-2 text-left text-xs font-black uppercase tracking-widest text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <span>{header.label}</span>
+                  {renderSortIcon(header.key)}
+                </button>
+              </TableHead>
+            ))}
+            <TableHead>Hedef Geçiş</TableHead>
+            <TableHead>Aksiyon</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {paginatedRows.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={10} className="py-10 text-center text-slate-500">
+                Kayıt bulunamadı.
+              </TableCell>
+            </TableRow>
+          ) : null}
+          {paginatedRows.map((item) => {
+            const trigger = item.lastTrigger;
+            const triggerWebhookName = trigger?.webhookConfigId
+              ? webhookMap.get(trigger.webhookConfigId)?.name ?? trigger.webhookConfigId
+              : null;
+            const selectedWebhook =
+              item.availableWebhookOptions.find((option) => option.id === item.selectedWebhookConfigId) ?? null;
+            const switchDisabled =
+              !item.canSwitch || !item.selectedWebhookConfigId || switchingStoreId === item.storeId;
+
+            return (
+              <TableRow key={item.storeId}>
+                <TableCell>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <code className="rounded bg-white/5 px-2 py-1 text-[11px] font-black text-indigo-200">{item.storeId}</code>
+                      <button
+                        type="button"
+                        onClick={() => onCopyStoreId(item.storeId)}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded border border-white/15 bg-white/5 text-slate-300 hover:text-white cursor-pointer"
+                        title="Store ID kopyala"
+                      >
+                        {copiedStoreId === item.storeId ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-300" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    <p className="font-black text-white">{item.storeName}</p>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={getStatusVariant(item.storeStatus)}>{item.storeStatus}</Badge>
+                      <Badge variant="secondary">{item.storeCurrency === "TRY" ? "TRY" : "USD"}</Badge>
+                      <span className="text-xs text-slate-500">{item.category || "-"}</span>
+                    </div>
+                  </div>
+                </TableCell>
+                <TableCell>{item.userLabel}</TableCell>
+                <TableCell>
+                  <button
+                    type="button"
+                    onClick={() => void onOpenListingViewer(item)}
+                    className={`text-sm font-black cursor-pointer underline-offset-2 hover:underline ${
+                      (item.listingCount ?? 0) > 0 ? "text-emerald-400" : "text-slate-500"
+                    }`}
+                    title={`${item.storeName} listinglerini göster`}
+                  >
+                    {item.listingCount ?? 0}
+                  </button>
+                </TableCell>
+                <TableCell>
+                  <div className="space-y-1">
+                    <Badge variant={getStatusVariant(item.subscriptionStatus)}>{item.subscriptionStatus || "-"}</Badge>
+                    <p className="text-xs text-slate-400">{item.plan ? PLAN_LABELS[item.plan] ?? item.plan : "-"}</p>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="space-y-1">
+                    <p className="text-sm font-black text-white">{item.monthIndex}. Ay</p>
+                    <p className="text-xs text-slate-500">Dönem sonu: {formatDate(item.currentPeriodEnd)}</p>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="space-y-1">
+                    <p className="text-xs text-slate-200">{item.activeWebhookName || "-"}</p>
+                    <p className="text-xs text-slate-500">Güncelleme: {formatDate(item.automationUpdatedAt)}</p>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  {!trigger ? (
+                    <span className="text-xs text-slate-500">Henüz job yok</span>
+                  ) : (
+                    <div className="space-y-1">
+                      <Badge variant={getStatusVariant(trigger.status)}>
+                        {trigger.triggerType || "scheduled"} / {trigger.status || "-"}
+                      </Badge>
+                      <p className="text-xs text-slate-500">
+                        {trigger.responseStatusSource === "cron-job.org"
+                          ? `${trigger.responseStatusLabel ?? "cron-job.org"} - ${formatDate(trigger.createdAt)}`
+                          : `${trigger.responseStatusLabel ?? `HTTP ${trigger.responseStatus ?? "-"}`} - ${formatDate(trigger.createdAt)}`}
+                      </p>
+                      {triggerWebhookName ? <p className="text-xs text-slate-400">{triggerWebhookName}</p> : null}
+                      {item.lastCronSyncStatus ? (
+                        <p className="text-xs text-slate-500">
+                          Cron sync: {item.lastCronSyncStatus} - {formatDate(item.lastCronSyncAt ?? null)}
+                        </p>
+                      ) : null}
+                      {trigger.errorMessage ? (
+                        <p className="text-xs text-red-300">{formatErrorMessage(trigger.errorMessage)}</p>
+                      ) : null}
+                      {item.lastCronSyncMessage ? (
+                        <p className="text-xs text-slate-500">{item.lastCronSyncMessage}</p>
+                      ) : null}
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <div className="space-y-1">
+                    <NextTriggerCountdown
+                      hasSubscription={Boolean(item.subscriptionId)}
+                      targetIso={item.nextTriggerAt}
+                      cadenceHours={item.cadenceHours}
+                      directCronPresent={item.directCronPresent}
+                    />
+                    <p className="text-xs text-slate-500">
+                      {item.directCronPresent
+                        ? `direct cron aktif${item.directCronJobId ? ` (#${item.directCronJobId})` : ""}`
+                        : "direct cron eksik"}
+                    </p>
+                  </div>
+                </TableCell>
+                <TableCell className="min-w-[260px]">
+                  <Select
+                    value={item.selectedWebhookConfigId}
+                    onChange={(event) => onSelectWebhook(item.storeId, event.target.value)}
+                    className="min-w-[13rem] w-full"
+                    searchPlaceholder="Webhook ara..."
+                  >
+                    <option value="">Webhook seçin</option>
+                    {item.availableWebhookOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {buildWebhookOptionLabel(option)}
+                      </option>
+                    ))}
+                  </Select>
+                </TableCell>
+                <TableCell>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={() => void onRunSwitch(item)}
+                        disabled={switchDisabled}
+                        size="icon"
+                        className="cursor-pointer"
+                        title={
+                          switchingStoreId === item.storeId
+                            ? "Geçiş yapılıyor..."
+                            : `${selectedWebhook?.name || "Webhook"} hedefine geçir`
+                        }
+                        aria-label="Webhooka geçir"
+                      >
+                        {switchingStoreId === item.storeId ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <ArrowRightLeft className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="cursor-pointer"
+                        onClick={() => onOpenEditStoreModal(item)}
+                        disabled={savingStoreEdit}
+                        title="Mağazayı düzenle"
+                        aria-label="Mağazayı düzenle"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    {selectedWebhook ? (
+                      <p className="max-w-[220px] truncate text-xs text-slate-400" title={selectedWebhook.name}>
+                        {selectedWebhook.name}
+                      </p>
+                    ) : null}
+                    {!item.selectedWebhookConfigId ? (
+                      <p className="text-xs text-amber-300">
+                        {item.storeCurrency} para birimi için uygun webhook bulunamadı.
+                      </p>
+                    ) : null}
+                    {!item.subscriptionId ? <p className="text-xs text-amber-300">Aktif abonelik yok.</p> : null}
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-slate-400">
+          {sortedRows.length === 0
+            ? "0 kayıt"
+            : `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, sortedRows.length)} / ${sortedRows.length} kayıt`}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="cursor-pointer"
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+            disabled={page <= 1}
+          >
+            Önceki
+          </Button>
+          <span className="min-w-[72px] text-center text-xs text-slate-400">
+            Sayfa {page}/{totalPages}
+          </span>
+          <Button
+            variant="outline"
+            className="cursor-pointer"
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+            disabled={page >= totalPages}
+          >
+            Sonraki
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -495,8 +1078,10 @@ export default function AdminStoresPage() {
     toast.error(categoriesError);
   }, [categoriesError]);
 
-  const loadOverview = useCallback(async () => {
-    setLoading(true);
+  const loadOverview = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -516,13 +1101,11 @@ export default function AdminStoresPage() {
         const next = { ...prev };
 
         for (const row of nextRows) {
-          const eligibleWebhookIds = nextWebhookOptions
-            .filter((option) => (row.eligibleWebhookConfigIds ?? []).includes(option.id))
-            .map((option) => option.id);
+          const allWebhookIds = nextWebhookOptions.map((option) => option.id);
           const selectedCurrent = next[row.storeId];
-          const hasSelectedStillValid = eligibleWebhookIds.includes(selectedCurrent);
+          const hasSelectedStillValid = allWebhookIds.includes(selectedCurrent);
           const defaultTarget =
-            row.activeWebhookConfigId && eligibleWebhookIds.includes(row.activeWebhookConfigId)
+            row.activeWebhookConfigId && allWebhookIds.includes(row.activeWebhookConfigId)
               ? row.activeWebhookConfigId
               : "";
 
@@ -534,7 +1117,9 @@ export default function AdminStoresPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Automation overview yüklenemedi.");
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -713,7 +1298,7 @@ export default function AdminStoresPage() {
       setCreateStoreOpen(false);
       setSelectedUser(null);
       resetCreateStoreForm();
-      await loadOverview();
+      await loadOverview({ silent: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Mağaza eklenemedi.");
     } finally {
@@ -821,7 +1406,7 @@ export default function AdminStoresPage() {
       setEditStoreNameDraft("");
       setEditStoreCurrencyDraft("USD");
       setEditStorePlanDraft("standard");
-      await loadOverview();
+      await loadOverview({ silent: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Mağaza güncellenemedi.");
     } finally {
@@ -864,8 +1449,8 @@ export default function AdminStoresPage() {
   }, []);
 
   const runSwitch = useCallback(
-    async (store: TableRow) => {
-      const rowWithSelection = store as TableRow;
+    async (store: AutomationTableRow) => {
+      const rowWithSelection = store as AutomationTableRow;
       const targetWebhookConfigId = rowWithSelection.selectedWebhookConfigId ?? selectedWebhookByStore[store.storeId];
 
       if (!targetWebhookConfigId) {
@@ -873,11 +1458,9 @@ export default function AdminStoresPage() {
         return;
       }
 
-      const isTargetVisibleForStore = rowWithSelection.availableWebhookOptions.some(
-        (option) => option.id === targetWebhookConfigId
-      );
-      if (!isTargetVisibleForStore) {
-        setError("Seçilen webhook bu mağaza için uygun değil. Lütfen listeden tekrar seç.");
+      const isTargetVisible = webhookMap.has(targetWebhookConfigId);
+      if (!isTargetVisible) {
+        setError("Seçilen webhook listede bulunamadı. Lütfen tekrar seç.");
         return;
       }
 
@@ -915,7 +1498,7 @@ export default function AdminStoresPage() {
 
         const webhookName = webhookMap.get(targetWebhookConfigId)?.name ?? "hedef webhook";
         setSuccessMessage(`${store.storeName} için ${webhookName} otomasyonu tetiklendi.`);
-        await loadOverview();
+        await loadOverview({ silent: true });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Geçiş işlemi başarısız.");
       } finally {
@@ -925,20 +1508,19 @@ export default function AdminStoresPage() {
     [loadOverview, selectedWebhookByStore, webhookMap]
   );
 
-  const tableRows = useMemo<TableRow[]>(() => {
+  const tableRows = useMemo<AutomationTableRow[]>(() => {
     return rows.map((row) => {
-      const eligibleIds = row.eligibleWebhookConfigIds ?? [];
-      const fallbackOptions = webhookOptions.filter((option) => eligibleIds.includes(option.id));
-
       const selectedCurrent = selectedWebhookByStore[row.storeId] ?? "";
-      const selectedWebhookConfigId = fallbackOptions.some((option) => option.id === selectedCurrent)
+      const selectedWebhookConfigId = webhookOptions.some((option) => option.id === selectedCurrent)
         ? selectedCurrent
-        : fallbackOptions[0]?.id ?? "";
+        : row.activeWebhookConfigId && webhookOptions.some((option) => option.id === row.activeWebhookConfigId)
+          ? row.activeWebhookConfigId
+          : webhookOptions[0]?.id ?? "";
 
       return {
         ...row,
         selectedWebhookConfigId,
-        availableWebhookOptions: fallbackOptions,
+        availableWebhookOptions: webhookOptions,
       };
     });
   }, [rows, selectedWebhookByStore, webhookOptions]);
@@ -954,241 +1536,6 @@ export default function AdminStoresPage() {
       // no-op
     }
   }, []);
-
-  const columns = useMemo<ColumnDef<TableRow>[]>(
-    () => [
-      {
-        accessorKey: "storeName",
-        header: "Mağaza",
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <code className="rounded bg-white/5 px-2 py-1 text-[11px] font-black text-indigo-200">{item.storeId}</code>
-                <button
-                  type="button"
-                  onClick={() => void handleCopyStoreId(item.storeId)}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded border border-white/15 bg-white/5 text-slate-300 hover:text-white cursor-pointer"
-                  title="Store ID kopyala"
-                >
-                  {copiedStoreId === item.storeId ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
-                </button>
-              </div>
-              <p className="font-black text-white">{item.storeName}</p>
-              <div className="flex items-center gap-2">
-                <Badge variant={getStatusVariant(item.storeStatus)}>{item.storeStatus}</Badge>
-                <Badge variant="secondary">{item.storeCurrency === "TRY" ? "TRY" : "USD"}</Badge>
-                <span className="text-xs text-slate-500">{item.category || "-"}</span>
-              </div>
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "userLabel",
-        header: "Kullanıcı",
-      },
-      {
-        accessorKey: "listingCount",
-        header: "Listing",
-        cell: ({ row }) => {
-          const item = row.original;
-          const count = item.listingCount ?? 0;
-          return (
-            <button
-              type="button"
-              onClick={() => void openListingViewer(item)}
-              className={`text-sm font-black cursor-pointer underline-offset-2 hover:underline ${
-                count > 0 ? "text-emerald-400" : "text-slate-500"
-              }`}
-              title={`${item.storeName} listinglerini göster`}
-            >
-              {count}
-            </button>
-          );
-        },
-      },
-      {
-        accessorKey: "plan",
-        header: "Plan",
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="space-y-1">
-              <Badge variant={getStatusVariant(item.subscriptionStatus)}>{item.subscriptionStatus || "-"}</Badge>
-              <p className="text-xs text-slate-400">{item.plan ? PLAN_LABELS[item.plan] ?? item.plan : "-"}</p>
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "monthIndex",
-        header: "Ay",
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="space-y-1">
-              <p className="text-sm font-black text-white">{item.monthIndex}. Ay</p>
-              <p className="text-xs text-slate-500">Dönem sonu: {formatDate(item.currentPeriodEnd)}</p>
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "activeWebhookName",
-        header: "Mevcut Otomasyon",
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="space-y-1">
-              <p className="text-xs text-slate-200">{item.activeWebhookName || "-"}</p>
-              <p className="text-xs text-slate-500">Güncelleme: {formatDate(item.automationUpdatedAt)}</p>
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "lastTrigger",
-        header: "Son Tetik",
-        cell: ({ row }) => {
-          const trigger = row.original.lastTrigger;
-          const triggerWebhookName = trigger?.webhookConfigId
-            ? webhookMap.get(trigger.webhookConfigId)?.name ?? trigger.webhookConfigId
-            : null;
-
-          if (!trigger) {
-            return <span className="text-xs text-slate-500">Henüz job yok</span>;
-          }
-
-          return (
-            <div className="space-y-1">
-              <Badge variant={getStatusVariant(trigger.status)}>
-                {trigger.triggerType || "scheduled"} / {trigger.status || "-"}
-              </Badge>
-              <p className="text-xs text-slate-500">
-                {trigger.responseStatusSource === "cron-job.org"
-                  ? `${trigger.responseStatusLabel ?? "cron-job.org"} - ${formatDate(trigger.createdAt)}`
-                  : `${trigger.responseStatusLabel ?? `HTTP ${trigger.responseStatus ?? "-"}`} - ${formatDate(trigger.createdAt)}`}
-              </p>
-              {triggerWebhookName ? <p className="text-xs text-slate-400">{triggerWebhookName}</p> : null}
-              {trigger.errorMessage ? <p className="text-xs text-red-300">{formatErrorMessage(trigger.errorMessage)}</p> : null}
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "nextTriggerAt",
-        header: "Sonraki Tetik",
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <NextTriggerCountdown
-              hasSubscription={Boolean(item.subscriptionId)}
-              targetIso={item.nextTriggerAt}
-              cadenceHours={item.cadenceHours}
-            />
-          );
-        },
-      },
-      {
-        id: "switchTarget",
-        header: "Hedef Geçiş",
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <Select
-              value={item.selectedWebhookConfigId}
-              onChange={(event) =>
-                setSelectedWebhookByStore((prev) => ({
-                  ...prev,
-                  [item.storeId]: event.target.value,
-                }))
-              }
-              className="min-w-[13rem] w-full"
-              searchPlaceholder="Webhook ara..."
-            >
-              <option value="">Webhook seçin</option>
-              {item.availableWebhookOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {buildWebhookOptionLabel(option)}
-                </option>
-              ))}
-            </Select>
-          );
-        },
-      },
-      {
-        id: "actions",
-        header: "Aksiyon",
-        cell: ({ row }) => {
-          const item = row.original;
-          const selectedWebhook = item.availableWebhookOptions.find((option) => option.id === item.selectedWebhookConfigId) ?? null;
-          const switchDisabled =
-            !item.canSwitch ||
-            !item.selectedWebhookConfigId ||
-            switchingStoreId === item.storeId;
-
-          return (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Button
-                  onClick={() => void runSwitch(item)}
-                  disabled={switchDisabled}
-                  size="icon"
-                  className="cursor-pointer"
-                  title={
-                    switchingStoreId === item.storeId
-                      ? "Geçiş yapılıyor..."
-                      : `${selectedWebhook?.name || "Webhook"} hedefine geçir`
-                  }
-                  aria-label="Webhooka geçir"
-                >
-                  {switchingStoreId === item.storeId ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <ArrowRightLeft className="h-4 w-4" />
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="cursor-pointer"
-                  onClick={() => openEditStoreModal(item)}
-                  disabled={savingStoreEdit}
-                  title="Mağazayı düzenle"
-                  aria-label="Mağazayı düzenle"
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-              </div>
-              {selectedWebhook ? (
-                <p className="text-xs text-slate-400 truncate" title={selectedWebhook.name}>
-                  {selectedWebhook.name}
-                </p>
-              ) : null}
-              {!item.selectedWebhookConfigId ? (
-                <p className="text-xs text-amber-300">
-                  {item.storeCurrency} para birimi için uygun webhook bulunamadı.
-                </p>
-              ) : null}
-              {!item.subscriptionId ? <p className="text-xs text-amber-300">Aktif abonelik yok.</p> : null}
-            </div>
-          );
-        },
-      },
-    ],
-    [
-      openEditStoreModal,
-      openListingViewer,
-      runSwitch,
-      switchingStoreId,
-      copiedStoreId,
-      handleCopyStoreId,
-      savingStoreEdit,
-      webhookMap,
-    ]
-  );
 
   return (
     <div className="space-y-6">
@@ -1249,26 +1596,22 @@ export default function AdminStoresPage() {
             </div>
           ) : (
             <div className="rounded-2xl border border-white/10 bg-black/20 p-2 sm:p-3">
-              <DataTable
-                columns={columns}
-                data={tableRows}
-                searchPlaceholder="Mağaza, kullanıcı, plan ara..."
-                searchKeys={[
-                  "storeName",
-                  "storeId",
-                  "userLabel",
-                  "plan",
-                  "subscriptionStatus",
-                  "storeCurrency",
-                  "category",
-                  "activeWebhookName",
-                ]}
-                pageSize={8}
-                statusFilterKey="storeStatus"
-                dateFilterKey="automationUpdatedAt"
-                statusFilterLabel="Mağaza Durumu"
-                dateFilterLabel="Otomasyon Güncelleme"
-                filtersInline
+              <StoresAutomationTable
+                rows={tableRows}
+                webhookMap={webhookMap}
+                switchingStoreId={switchingStoreId}
+                copiedStoreId={copiedStoreId}
+                savingStoreEdit={savingStoreEdit}
+                onCopyStoreId={(storeId) => void handleCopyStoreId(storeId)}
+                onOpenListingViewer={(store) => void openListingViewer(store)}
+                onOpenEditStoreModal={openEditStoreModal}
+                onRunSwitch={(store) => void runSwitch(store)}
+                onSelectWebhook={(storeId, webhookConfigId) =>
+                  setSelectedWebhookByStore((prev) => ({
+                    ...prev,
+                    [storeId]: webhookConfigId,
+                  }))
+                }
               />
             </div>
           )}

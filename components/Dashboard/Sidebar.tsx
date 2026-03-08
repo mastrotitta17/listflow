@@ -28,6 +28,7 @@ import {
 type SidebarProps = {
   activeSection?: DashboardSection;
   mobileOpen?: boolean;
+  expiredStoreCount?: number;
   onClose?: () => void;
 };
 
@@ -139,7 +140,12 @@ const ReferralCard: React.FC<{
   );
 };
 
-const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, onClose }) => {
+const Sidebar: React.FC<SidebarProps> = ({
+  activeSection,
+  mobileOpen = false,
+  expiredStoreCount = 0,
+  onClose,
+}) => {
   const { dashboardSection, setDashboardSection, setView } = useStore();
   const { t } = useI18n();
   const router = useRouter();
@@ -268,6 +274,13 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, mobileOpen = false, on
               >
                 <item.icon className={`w-4.5 h-4.5 transition-transform ${isActive ? 'scale-110 text-indigo-400' : 'group-hover:scale-110'}`} />
                 <span className="font-bold text-[14px] tracking-tight">{item.label}</span>
+                {item.id === DashboardSection.ETSY_AUTOMATION && expiredStoreCount > 0 ? (
+                  <span
+                    className="ml-auto inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-red-500 animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.7)]"
+                    title={t("sidebar.subscriptionRenewalRequired")}
+                    aria-label={t("sidebar.subscriptionRenewalRequired")}
+                  />
+                ) : null}
                 {item.comingSoon && (
                   <span className="ml-auto shrink-0 rounded-full border border-amber-500/30 bg-amber-500 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-900 absolute right-3 top-1/2 -translate-y-1/2 group-hover/coming:opacity-100 opacity-0 transition-all duration-300 z-50">
                     {t("common.comingSoon")}

@@ -98,6 +98,20 @@ type MfaFactor = {
   status: string;
 };
 
+type ExpiredStoreSummary = {
+  id: string;
+  name: string;
+  plan: string | null;
+  currentPeriodEnd: string | null;
+  renewalState: "renewal_required";
+};
+
+type SettingsPanelProps = {
+  expiredStores?: ExpiredStoreSummary[];
+  onRenewStore?: (storeId: string) => void | Promise<void>;
+  renewingStoreId?: string | null;
+};
+
 const resolveSettingsSection = (pathname: string | null): SettingsSectionKey => {
   if (!pathname) {
     return "profile";
@@ -118,7 +132,11 @@ const resolveSettingsSection = (pathname: string | null): SettingsSectionKey => 
   return "profile";
 };
 
-const SettingsPanel: React.FC = () => {
+const SettingsPanel: React.FC<SettingsPanelProps> = ({
+  expiredStores = [],
+  onRenewStore,
+  renewingStoreId = null,
+}) => {
   const { t, locale, setLocale } = useI18n();
   const pathname = usePathname();
   const isEn = locale === "en";
@@ -921,6 +939,51 @@ const SettingsPanel: React.FC = () => {
       </div>
 
       <div className="space-y-3">
+        {expiredStores.length > 0 ? (
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-red-200">
+              {isEn ? "Renew Expired Stores" : "Süresi Biten Mağazaları Yenile"}
+            </p>
+            <p className="mt-1 text-xs text-slate-300">
+              {isEn
+                ? "Renew the stores below to reactivate automation and continue product uploads."
+                : "Aşağıdaki mağazaları yenileyerek otomasyonu tekrar aktif edebilir ve ürün yüklemeye devam edebilirsiniz."}
+            </p>
+            <div className="mt-4 space-y-3">
+              {expiredStores.map((store) => (
+                <div
+                  key={store.id}
+                  className="rounded-xl border border-red-400/20 bg-[#101826]/70 px-3 py-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-black text-white">{store.name}</p>
+                      <p className="mt-1 text-[11px] text-slate-300">
+                        {store.plan
+                          ? isEn
+                            ? `Previous plan: ${store.plan}`
+                            : `Önceki plan: ${store.plan}`
+                          : isEn
+                            ? "Previous subscription detected"
+                            : "Önceki abonelik bulundu"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void onRenewStore?.(store.id)}
+                      disabled={!onRenewStore || renewingStoreId === store.id}
+                      className="inline-flex items-center gap-2 rounded-xl border border-red-400/30 bg-red-500/20 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-red-100 transition-all hover:bg-red-500/30 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                    >
+                      {renewingStoreId === store.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      {isEn ? "Renew Subscription" : "Aboneliği Yenile"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {!isTurboPlan ? (
           <button
             type="button"
