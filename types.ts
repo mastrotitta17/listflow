@@ -54,6 +54,7 @@ export interface Shop {
   id: string;
   name: string;
   category: string;
+  currency?: "USD" | "TRY" | null;
   subscription: string;
   url?: string;
   isPaid: boolean;

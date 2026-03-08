@@ -23,6 +23,7 @@ type StoreRow = {
   user_id: string;
   store_name: string;
   category: string | null;
+  store_currency?: "USD" | "TRY" | null;
   status: string | null;
   price_cents: number | null;
   active_webhook_config_id?: string | null;
@@ -111,6 +112,23 @@ const normalizeCategoryKey = (value: string | null | undefined) => {
 
   const normalized = value.trim().toLowerCase();
   return normalized || null;
+};
+
+const normalizeStoreCurrency = (value: string | null | undefined): "USD" | "TRY" | null => {
+  const normalized = (value ?? "").trim().toUpperCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "TRY" || normalized === "TL" || normalized === "₺" || normalized === "TURKISH_LIRA") {
+    return "TRY";
+  }
+
+  if (normalized === "USD" || normalized === "$") {
+    return "USD";
+  }
+
+  return null;
 };
 
 const isDirectAutomationMode = () =>
@@ -419,22 +437,51 @@ const loadSchedulerJobs = async (subscriptionIds: string[]) => {
 const loadStores = async (userId: string) => {
   const candidates = [
     {
+      select:
+        "id, user_id, store_name, category, status, price_cents, store_currency, currency, active_webhook_config_id, automation_updated_at, created_at",
+      hasStoreCurrencyColumn: true,
+      hasActiveWebhookColumn: true,
+      hasAutomationUpdatedAtColumn: true,
+    },
+    {
+      select: "id, user_id, store_name, category, status, price_cents, store_currency, currency, active_webhook_config_id, created_at",
+      hasStoreCurrencyColumn: true,
+      hasActiveWebhookColumn: true,
+      hasAutomationUpdatedAtColumn: false,
+    },
+    {
+      select: "id, user_id, store_name, category, status, price_cents, store_currency, currency, automation_updated_at, created_at",
+      hasStoreCurrencyColumn: true,
+      hasActiveWebhookColumn: false,
+      hasAutomationUpdatedAtColumn: true,
+    },
+    {
+      select: "id, user_id, store_name, category, status, price_cents, store_currency, currency, created_at",
+      hasStoreCurrencyColumn: true,
+      hasActiveWebhookColumn: false,
+      hasAutomationUpdatedAtColumn: false,
+    },
+    {
       select: "id, user_id, store_name, category, status, price_cents, active_webhook_config_id, automation_updated_at, created_at",
+      hasStoreCurrencyColumn: false,
       hasActiveWebhookColumn: true,
       hasAutomationUpdatedAtColumn: true,
     },
     {
       select: "id, user_id, store_name, category, status, price_cents, active_webhook_config_id, created_at",
+      hasStoreCurrencyColumn: false,
       hasActiveWebhookColumn: true,
       hasAutomationUpdatedAtColumn: false,
     },
     {
       select: "id, user_id, store_name, category, status, price_cents, automation_updated_at, created_at",
+      hasStoreCurrencyColumn: false,
       hasActiveWebhookColumn: false,
       hasAutomationUpdatedAtColumn: true,
     },
     {
       select: "id, user_id, store_name, category, status, price_cents, created_at",
+      hasStoreCurrencyColumn: false,
       hasActiveWebhookColumn: false,
       hasAutomationUpdatedAtColumn: false,
     },
@@ -455,6 +502,8 @@ const loadStores = async (userId: string) => {
         user_id: string;
         store_name: string;
         category: string | null;
+        store_currency?: string | null;
+        currency?: string | null;
         status: string | null;
         price_cents: number | null;
         active_webhook_config_id?: string | null;
@@ -462,6 +511,9 @@ const loadStores = async (userId: string) => {
         created_at: string | null;
       }>).map((row) => ({
         ...row,
+        store_currency: candidate.hasStoreCurrencyColumn
+          ? normalizeStoreCurrency(row.store_currency ?? row.currency ?? null)
+          : null,
         active_webhook_config_id: candidate.hasActiveWebhookColumn ? row.active_webhook_config_id ?? null : null,
         automation_updated_at: candidate.hasAutomationUpdatedAtColumn ? row.automation_updated_at ?? null : null,
       }));
@@ -474,7 +526,7 @@ const loadStores = async (userId: string) => {
 
     lastErrorMessage = query.error.message;
 
-    if (!isRecoverableColumnError(query.error, ["active_webhook_config_id", "automation_updated_at"])) {
+    if (!isRecoverableColumnError(query.error, ["store_currency", "currency", "active_webhook_config_id", "automation_updated_at"])) {
       throw new Error(query.error.message);
     }
   }
@@ -1200,6 +1252,7 @@ export async function GET(request: NextRequest) {
         id: store.id,
         storeName: store.store_name,
         category: store.category,
+        storeCurrency: store.store_currency ?? null,
         status: store.status,
         priceCents: store.price_cents ?? 0,
         orderCount: countsByStoreId.get(store.id) ?? 0,

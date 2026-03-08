@@ -24,6 +24,7 @@ import { Select } from "@/components/ui/select";
 import { openCrispChat } from "@/lib/crisp";
 import type { Shop } from "@/types";
 import { toast } from "sonner";
+import OwnProductRequestModal from "@/components/Dashboard/OwnProductRequestModal";
 
 type BillingPlan = "standard" | "pro" | "turbo";
 type BillingInterval = "month" | "year";
@@ -38,6 +39,7 @@ type StoreOverviewRow = {
   id: string;
   storeName: string;
   category: string | null;
+  storeCurrency?: "USD" | "TRY" | null;
   status: string | null;
   priceCents: number;
   orderCount: number;
@@ -130,6 +132,7 @@ const EtsyPanel: React.FC = () => {
   const [hoveredTimerStoreId, setHoveredTimerStoreId] = useState<string | null>(null);
   const [pinnedTimerStoreId, setPinnedTimerStoreId] = useState<string | null>(null);
   const [deleteTargetShop, setDeleteTargetShop] = useState<Shop | null>(null);
+  const [ownProductTargetShop, setOwnProductTargetShop] = useState<Shop | null>(null);
   const [isDeletingStoreId, setIsDeletingStoreId] = useState<string | null>(null);
   const [isCancelingStoreSubscriptionId, setIsCancelingStoreSubscriptionId] = useState<string | null>(null);
   const [nowTs, setNowTs] = useState<number>(Date.now());
@@ -352,6 +355,7 @@ const EtsyPanel: React.FC = () => {
       id: row.id,
       name: row.storeName,
       category: row.category || (locale === "en" ? "General" : "Genel"),
+      currency: row.storeCurrency ?? "USD",
       subscription: moneyLabel(row.priceCents),
       isPaid: row.renewalState === "active",
       hasActiveAutomationWebhook: row.hasActiveAutomationWebhook ?? false,
@@ -1027,6 +1031,15 @@ const EtsyPanel: React.FC = () => {
                     <p className="text-base font-black text-white">{shop.orderCount}</p>
                   </div>
 
+                  <button
+                    type="button"
+                    onClick={() => setOwnProductTargetShop(shop)}
+                    className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-slate-100 transition-all hover:border-indigo-400/30 hover:bg-indigo-500/10 cursor-pointer inline-flex items-center justify-center gap-2"
+                  >
+                    <Package className="h-3.5 w-3.5" />
+                    {locale === "en" ? "Your Product" : "Senin Ürünün"}
+                  </button>
+
                   <div className="pt-1">
                     {isRenewalRequired ? (
                       <span className="inline-flex items-center rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-red-200">
@@ -1142,6 +1155,16 @@ const EtsyPanel: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      <OwnProductRequestModal
+        shop={ownProductTargetShop}
+        open={Boolean(ownProductTargetShop)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setOwnProductTargetShop(null);
+          }
+        }}
+      />
 
       <AnimatePresence>
         {activationModal && (
