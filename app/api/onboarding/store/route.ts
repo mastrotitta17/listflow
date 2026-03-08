@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { resolveLegacyOnboardingRequestUser } from "@/lib/auth/legacy-onboarding";
+import {
+  consumeLegacyOnboardingToken,
+  resolveLegacyOnboardingRequestUser,
+} from "@/lib/auth/legacy-onboarding";
 import { syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeStoreNameInput } from "@/lib/stores/name";
@@ -959,6 +962,8 @@ export async function POST(request: NextRequest) {
           : message;
       }
     }
+
+    await consumeLegacyOnboardingToken(resolvedUser.onboardingToken);
 
     return NextResponse.json({
       id: storeId,

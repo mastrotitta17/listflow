@@ -43,6 +43,7 @@ const STALE_PROCESSING_TTL_MS = 60 * 1000;
 const SELF_RETRY_PROCESSING_TTL_MS = 3 * 1000;
 const STUCK_PROCESSING_FORCE_RECOVER_MS = 2 * 60 * 1000;
 const ORPHAN_PROCESSING_RECOVER_MS = 30 * 1000;
+const EXTENSION_AUTO_RETRY_EVENT = "listing_auto_retry_requeued";
 
 const normalizeString = (value: unknown) => {
   if (typeof value !== "string") {
@@ -121,6 +122,59 @@ const hasRowCompletionProof = (row: RowRecord) => {
   const hasUrlProof = Boolean(listingUrl && !/\/listing-editor\//i.test(listingUrl));
   const hasIdProof = Boolean(listingId);
   return Boolean(completedAt || hasIdProof || hasUrlProof);
+};
+
+const hasConsumedExtensionAutoRetry = async (args: {
+  listingId: string;
+  storeId?: string | null;
+  userId?: string | null;
+}) => {
+  let query = supabaseAdmin
+    .from("extension_logs")
+    .select("id", { head: true, count: "exact" })
+    .eq("event", EXTENSION_AUTO_RETRY_EVENT)
+    .eq("metadata->>listing_id", args.listingId);
+
+  if (args.storeId) {
+    query = query.eq("store_id", args.storeId);
+  }
+
+  if (args.userId) {
+    query = query.eq("user_id", args.userId);
+  }
+
+  const result = await query.limit(1);
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return (result.count ?? 0) > 0;
+};
+
+const persistExtensionAutoRetryConsumption = async (args: {
+  listingId: string;
+  storeId?: string | null;
+  userId?: string | null;
+  reason?: string | null;
+}) => {
+  const payload = {
+    user_id: args.userId ?? null,
+    store_id: args.storeId ?? null,
+    store_name: null,
+    level: "warn",
+    event: EXTENSION_AUTO_RETRY_EVENT,
+    message: "Eklenti hatası sonrası listing tek seferlik yeniden kuyruğa alındı.",
+    metadata: {
+      listing_id: args.listingId,
+      retry_scope: "single_use",
+      reason: normalizeString(args.reason) || null,
+    },
+  };
+
+  const insert = await supabaseAdmin.from("extension_logs").insert(payload);
+  if (insert.error) {
+    throw new Error(insert.error.message);
+  }
 };
 
 const sortByOldestFirst = (a: RowRecord, b: RowRecord) => {
@@ -1474,22 +1528,28 @@ export const syncGuestListingPayload = async (args: GuestSyncArgs) => {
 export const resetFailedListingForUser = async (args: {
   userId: string;
   listingId: string;
-}): Promise<boolean> => {
+  reason?: string | null;
+}): Promise<{ reset: boolean; reason: string | null }> => {
   const listingId = normalizeString(args.listingId);
-  if (!listingId || !args.userId) return false;
+  if (!listingId || !args.userId) return { reset: false, reason: "invalid_request" };
 
   const identifier: ListingIdentifier = { column: "id", value: listingId };
   const listing = await loadListingByIdentifier(identifier);
-  if (!listing) return false;
+  if (!listing) return { reset: false, reason: "listing_not_found" };
 
   const allStoreAliases = await loadStoreAliasesByUser(args.userId);
   const belongs = rowBelongsToUser(listing, { userId: args.userId, allowedClientIds: allStoreAliases });
-  if (!belongs) return false;
+  if (!belongs) return { reset: false, reason: "not_owner" };
+
+  const storeId = readClientId(listing);
+  if (await hasConsumedExtensionAutoRetry({ listingId, storeId, userId: args.userId })) {
+    return { reset: false, reason: "already_retried" };
+  }
 
   const status = normalizeStatus(listing.status ?? listing.listing_status);
   // "failed" ya da "processing" kabul et: reportJobToApi network hatası alırsa listing
   // "processing" kalabilir; extension job hatası aldığına göre reset güvenlidir.
-  if (status !== "failed" && status !== "processing") return false;
+  if (status !== "failed" && status !== "processing") return { reset: false, reason: "invalid_status" };
 
   const nowIso = new Date().toISOString();
   const payload: RowRecord = {};
@@ -1503,26 +1563,37 @@ export const resetFailedListingForUser = async (args: {
   addIfPresent(listing, "last_error", null, payload);
 
   await updateRowByIdentifier(identifier, payload);
-  return true;
+  await persistExtensionAutoRetryConsumption({
+    listingId,
+    storeId,
+    userId: args.userId,
+    reason: args.reason ?? null,
+  });
+  return { reset: true, reason: null };
 };
 
 export const resetFailedListingForClient = async (args: {
   clientId: string;
   listingId: string;
-}): Promise<boolean> => {
+  reason?: string | null;
+}): Promise<{ reset: boolean; reason: string | null }> => {
   const listingId = normalizeString(args.listingId);
   const clientId = normalizeString(args.clientId);
-  if (!listingId || !clientId) return false;
+  if (!listingId || !clientId) return { reset: false, reason: "invalid_request" };
 
   const identifier: ListingIdentifier = { column: "id", value: listingId };
   const listing = await loadListingByIdentifier(identifier);
-  if (!listing) return false;
+  if (!listing) return { reset: false, reason: "listing_not_found" };
 
   const rowClientId = readClientId(listing);
-  if (rowClientId && rowClientId !== clientId) return false;
+  if (rowClientId && rowClientId !== clientId) return { reset: false, reason: "client_mismatch" };
+
+  if (await hasConsumedExtensionAutoRetry({ listingId, storeId: clientId })) {
+    return { reset: false, reason: "already_retried" };
+  }
 
   const status = normalizeStatus(listing.status ?? listing.listing_status);
-  if (status !== "failed" && status !== "processing") return false;
+  if (status !== "failed" && status !== "processing") return { reset: false, reason: "invalid_status" };
 
   const nowIso = new Date().toISOString();
   const payload: RowRecord = {};
@@ -1536,7 +1607,12 @@ export const resetFailedListingForClient = async (args: {
   addIfPresent(listing, "last_error", null, payload);
 
   await updateRowByIdentifier(identifier, payload);
-  return true;
+  await persistExtensionAutoRetryConsumption({
+    listingId,
+    storeId: clientId,
+    reason: args.reason ?? null,
+  });
+  return { reset: true, reason: null };
 };
 
 export const applyGuestListingJobReport = async (args: GuestReportArgs) => {

@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
     const reset = await resetFailedListingForUser({
       userId: auth.user.id,
       listingId,
+      reason: "extension_auto_retry",
     });
 
     return NextResponse.json(

@@ -142,7 +142,8 @@ export async function GET(request: NextRequest) {
         email: authUser.email ?? null,
         fullName: metadataFullName ?? profile.fullName ?? null,
         phone: metadataPhone ?? profile.phone ?? null,
-        legacyOnboardingRequired: Boolean(metadata.legacy_onboarding_required),
+        legacyOnboardingRequired:
+          resolvedUser.authMethod === "legacy_token" ? true : Boolean(metadata.legacy_onboarding_required),
         legacyPasswordSet: Boolean(metadata.legacy_password_set),
       },
     });

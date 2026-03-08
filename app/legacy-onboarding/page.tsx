@@ -31,8 +31,14 @@ const buildLegacyHeaders = (onboardingToken: string) => ({
   [LEGACY_ONBOARDING_TOKEN_HEADER]: onboardingToken,
 });
 
+const buildLegacyApiUrl = (path: string, onboardingToken: string) => {
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set("token", onboardingToken);
+  return `${url.pathname}${url.search}`;
+};
+
 const loadLegacyOnboardingUser = async (onboardingToken: string): Promise<LegacyBootstrapUser | null> => {
-  const response = await fetch("/api/legacy-onboarding/profile", {
+  const response = await fetch(buildLegacyApiUrl("/api/legacy-onboarding/profile", onboardingToken), {
     method: "GET",
     cache: "no-store",
     headers: buildLegacyHeaders(onboardingToken),
@@ -79,7 +85,7 @@ export default function LegacyOnboardingPage() {
       throw new Error("Onboarding bağlantısı bulunamadı.");
     }
 
-    const response = await fetch("/api/legacy-onboarding/profile", {
+    const response = await fetch(buildLegacyApiUrl("/api/legacy-onboarding/profile", onboardingToken), {
       method: "POST",
       headers: buildLegacyHeaders(onboardingToken),
       body: JSON.stringify({
@@ -182,12 +188,6 @@ export default function LegacyOnboardingPage() {
         if (!legacyUser) {
           setCurrentUser(null);
           setBootstrapError("Onboarding bağlantısı geçersiz, süresi dolmuş veya zaten kullanılmış.");
-          return;
-        }
-
-        if (!legacyUser.legacyOnboardingRequired) {
-          setCurrentUser(null);
-          setBootstrapError("Bu onboarding bağlantısı zaten tamamlanmış. Giriş yapın veya yeni link isteyin.");
           return;
         }
 
@@ -294,7 +294,7 @@ export default function LegacyOnboardingPage() {
         throw new Error("Onboarding bağlantısı bulunamadı.");
       }
 
-      const response = await fetch("/api/onboarding/store", {
+      const response = await fetch(buildLegacyApiUrl("/api/onboarding/store", onboardingToken), {
         method: "POST",
         headers: buildLegacyHeaders(onboardingToken),
         body: JSON.stringify({

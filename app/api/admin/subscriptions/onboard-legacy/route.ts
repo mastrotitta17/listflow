@@ -1,6 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { notFoundResponse, requireAdminRequest } from "@/lib/auth/admin-request";
+import {
+  createLegacyOnboardingTokenRecord,
+  invalidateLegacyOnboardingTokensForUser,
+} from "@/lib/auth/legacy-onboarding";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 import { resolvePublicSiteUrl } from "@/lib/url/public-site";
@@ -306,6 +310,14 @@ export async function POST(request: NextRequest) {
     if (metadataUpdate.error) {
       throw new Error(metadataUpdate.error.message);
     }
+
+    await invalidateLegacyOnboardingTokensForUser(authUser.id);
+    await createLegacyOnboardingTokenRecord({
+      token: onboardingToken,
+      userId: authUser.id,
+      email,
+      createdBy: admin.user.id,
+    });
 
     await ensureProfile(authUser.id, email);
 
