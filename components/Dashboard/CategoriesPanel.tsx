@@ -333,15 +333,14 @@ const CategoriesPanel: React.FC<CategoriesPanelProps> = ({ routeCategorySlug = n
     };
   }, []);
 
-  if (loading) {
-    return <CategoriesPanelSkeleton />;
-  }
-
+  const selectedVideoId = useMemo(() => extractYouTubeVideoId(youtubeDraft), [youtubeDraft]);
   const activeCategoryId = isMobile ? mobileSelectedCategoryId : selectedCategoryId;
   const selectedCategory = categories.find((category) => category.id === activeCategoryId) ?? (isMobile ? undefined : categories[0]);
   const showMobileCategoryList = isMobile && !mobileSelectedCategoryId;
 
-  const selectedVideoId = useMemo(() => extractYouTubeVideoId(youtubeDraft), [youtubeDraft]);
+  if (loading) {
+    return <CategoriesPanelSkeleton />;
+  }
 
   const openCatalogModal = (subProduct: SubProduct) => {
     setSelectedSubProduct(subProduct);
