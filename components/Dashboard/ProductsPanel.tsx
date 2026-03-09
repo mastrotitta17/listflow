@@ -14,7 +14,6 @@ import {
   Package,
   RefreshCw,
   Search,
-  Tag,
   Trash2,
 } from "lucide-react";
 
@@ -348,7 +347,7 @@ const ProductsPanel: React.FC = () => {
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 [@media(min-width:1850px)]:grid-cols-5">
             {Array.from({ length: 5 }).map((_, index) => (
               <div key={index} className="overflow-hidden rounded-[22px] border border-white/10 bg-white/5">
-                <div className="aspect-[16/10] animate-pulse bg-white/5" />
+                <div className="aspect-[4/3.5] animate-pulse bg-white/5" />
                 <div className="space-y-3 p-4">
                   <div className="h-5 w-2/3 animate-pulse rounded-full bg-white/5" />
                   <div className="h-4 w-full animate-pulse rounded-full bg-white/5" />
@@ -371,7 +370,7 @@ const ProductsPanel: React.FC = () => {
                   key={row.id}
                   className="overflow-hidden rounded-[22px] border border-white/10 bg-white/5 backdrop-blur-xl transition hover:border-indigo-400/30 hover:bg-white/[0.07]"
                 >
-                  <div className="relative aspect-[16/10] overflow-hidden bg-[#0b1020]">
+                  <div className="relative aspect-[4/3.5] overflow-hidden bg-[#0b1020]">
                     {row.imageUrl ? (
                       <img src={row.imageUrl} alt={row.title} className="h-full w-full object-cover" loading="lazy" />
                     ) : (
@@ -394,7 +393,7 @@ const ProductsPanel: React.FC = () => {
                         <h3 className="line-clamp-2 text-base font-black tracking-tight text-white [@media(min-width:1700px)]:text-lg">
                           {row.title}
                         </h3>
-                        <span className="shrink-0 text-sm font-black text-indigo-300">
+                        <span className="shrink-0 rounded-full border border-teal-400/30 bg-teal-500/10 px-3 py-1 text-sm font-black tracking-[0.08em] text-teal-200 shadow-[0_10px_24px_rgba(20,184,166,0.18)]">
                           {currencyFormatter.format(row.price)}
                         </span>
                       </div>
@@ -409,36 +408,14 @@ const ProductsPanel: React.FC = () => {
                         <span>{t("productsPanel.quantityLabel")}: {row.quantity}</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Tag className="h-3.5 w-3.5 text-slate-500" />
+                        <Boxes className="h-3.5 w-3.5 text-slate-500" />
                         <span>{t("productsPanel.categoryLabel")}: {row.category ?? "-"}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Calendar className="h-3.5 w-3.5 text-slate-500" />
                         <span>{t("productsPanel.createdLabel")}: {dateFormatter.format(new Date(row.createdAt))}</span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <RefreshCw className="h-3.5 w-3.5 text-slate-500" />
-                        <span>{t("productsPanel.updatedLabel")}: {dateFormatter.format(new Date(row.updatedAt))}</span>
-                      </div>
                     </div>
-
-                    {row.tags.length > 0 ? (
-                      <div className="space-y-2">
-                        <p className="text-[11px] font-black uppercase tracking-[0.28em] text-slate-500">
-                          {t("productsPanel.tagsLabel")}
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {row.tags.slice(0, 8).map((tag) => (
-                            <span
-                              key={`${row.id}-${tag}`}
-                              className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold text-slate-300"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
 
                     <div className="pt-1">
                       <div className="flex items-center justify-between w-full gap-x-2">
