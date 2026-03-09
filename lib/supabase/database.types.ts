@@ -348,6 +348,127 @@ export type Database = {
         }
         Relationships: []
       }
+      mobile_push_messages: {
+        Row: {
+          audience: string
+          body: string
+          created_at: string
+          created_by: string | null
+          deeplink_url: string | null
+          failure_count: number
+          id: string
+          payload: Json
+          requested_count: number
+          response: Json | null
+          success_count: number
+          title: string
+        }
+        Insert: {
+          audience?: string
+          body: string
+          created_at?: string
+          created_by?: string | null
+          deeplink_url?: string | null
+          failure_count?: number
+          id?: string
+          payload?: Json
+          requested_count?: number
+          response?: Json | null
+          success_count?: number
+          title: string
+        }
+        Update: {
+          audience?: string
+          body?: string
+          created_at?: string
+          created_by?: string | null
+          deeplink_url?: string | null
+          failure_count?: number
+          id?: string
+          payload?: Json
+          requested_count?: number
+          response?: Json | null
+          success_count?: number
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mobile_push_messages_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      mobile_push_tokens: {
+        Row: {
+          app_build: string | null
+          app_id: string | null
+          app_version: string | null
+          created_at: string
+          device_model: string | null
+          device_name: string | null
+          expo_push_token: string
+          id: string
+          is_active: boolean
+          last_seen_at: string
+          locale: string | null
+          os_name: string | null
+          os_version: string | null
+          platform: string
+          project_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          app_build?: string | null
+          app_id?: string | null
+          app_version?: string | null
+          created_at?: string
+          device_model?: string | null
+          device_name?: string | null
+          expo_push_token: string
+          id?: string
+          is_active?: boolean
+          last_seen_at?: string
+          locale?: string | null
+          os_name?: string | null
+          os_version?: string | null
+          platform: string
+          project_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          app_build?: string | null
+          app_id?: string | null
+          app_version?: string | null
+          created_at?: string
+          device_model?: string | null
+          device_name?: string | null
+          expo_push_token?: string
+          id?: string
+          is_active?: boolean
+          last_seen_at?: string
+          locale?: string | null
+          os_name?: string | null
+          os_version?: string | null
+          platform?: string
+          project_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mobile_push_tokens_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
       products: {
         Row: {
           catalog_description: string | null

@@ -1537,13 +1537,17 @@ export const syncGuestListingPayload = async (args: GuestSyncArgs) => {
 
 export const resetFailedListingForUser = async (args: {
   userId: string;
-  listingId: string;
+  listingId?: string | null;
+  listingKey?: string | null;
   reason?: string | null;
 }): Promise<{ reset: boolean; reason: string | null }> => {
   const listingId = normalizeString(args.listingId);
-  if (!listingId || !args.userId) return { reset: false, reason: "invalid_request" };
+  const listingKey = normalizeString(args.listingKey);
+  if ((!listingId && !listingKey) || !args.userId) return { reset: false, reason: "invalid_request" };
 
-  const identifier: ListingIdentifier = { column: "id", value: listingId };
+  const identifier: ListingIdentifier = listingId
+    ? { column: "id", value: listingId }
+    : { column: "key", value: listingKey };
   const listing = await loadListingByIdentifier(identifier);
   if (!listing) return { reset: false, reason: "listing_not_found" };
 
@@ -1552,7 +1556,8 @@ export const resetFailedListingForUser = async (args: {
   if (!belongs) return { reset: false, reason: "not_owner" };
 
   const storeId = readClientId(listing);
-  if (await hasConsumedExtensionAutoRetry({ listingId, storeId, userId: args.userId })) {
+  const resolvedListingIdentifier = normalizeString(readFirstString(listing, ["id", "key"])) || listingId || listingKey;
+  if (await hasConsumedExtensionAutoRetry({ listingId: resolvedListingIdentifier, storeId, userId: args.userId })) {
     return { reset: false, reason: "already_retried" };
   }
 
@@ -1571,10 +1576,11 @@ export const resetFailedListingForUser = async (args: {
   addIfPresent(listing, "claimed_by", null, payload);
   addIfPresent(listing, "error", null, payload);
   addIfPresent(listing, "last_error", null, payload);
+  addIfPresent(listing, "manual_requeue_requested_at", nowIso, payload);
 
   await updateRowByIdentifier(identifier, payload);
   await persistExtensionAutoRetryConsumption({
-    listingId,
+    listingId: resolvedListingIdentifier,
     storeId,
     userId: args.userId,
     reason: args.reason ?? null,
@@ -1584,21 +1590,26 @@ export const resetFailedListingForUser = async (args: {
 
 export const resetFailedListingForClient = async (args: {
   clientId: string;
-  listingId: string;
+  listingId?: string | null;
+  listingKey?: string | null;
   reason?: string | null;
 }): Promise<{ reset: boolean; reason: string | null }> => {
   const listingId = normalizeString(args.listingId);
+  const listingKey = normalizeString(args.listingKey);
   const clientId = normalizeString(args.clientId);
-  if (!listingId || !clientId) return { reset: false, reason: "invalid_request" };
+  if ((!listingId && !listingKey) || !clientId) return { reset: false, reason: "invalid_request" };
 
-  const identifier: ListingIdentifier = { column: "id", value: listingId };
+  const identifier: ListingIdentifier = listingId
+    ? { column: "id", value: listingId }
+    : { column: "key", value: listingKey };
   const listing = await loadListingByIdentifier(identifier);
   if (!listing) return { reset: false, reason: "listing_not_found" };
 
   const rowClientId = readClientId(listing);
   if (rowClientId && rowClientId !== clientId) return { reset: false, reason: "client_mismatch" };
 
-  if (await hasConsumedExtensionAutoRetry({ listingId, storeId: clientId })) {
+  const resolvedListingIdentifier = normalizeString(readFirstString(listing, ["id", "key"])) || listingId || listingKey;
+  if (await hasConsumedExtensionAutoRetry({ listingId: resolvedListingIdentifier, storeId: clientId })) {
     return { reset: false, reason: "already_retried" };
   }
 
@@ -1615,10 +1626,11 @@ export const resetFailedListingForClient = async (args: {
   addIfPresent(listing, "claimed_by", null, payload);
   addIfPresent(listing, "error", null, payload);
   addIfPresent(listing, "last_error", null, payload);
+  addIfPresent(listing, "manual_requeue_requested_at", nowIso, payload);
 
   await updateRowByIdentifier(identifier, payload);
   await persistExtensionAutoRetryConsumption({
-    listingId,
+    listingId: resolvedListingIdentifier,
     storeId: clientId,
     reason: args.reason ?? null,
   });

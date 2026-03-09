@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 type RetryBody = {
   listing_id?: unknown;
+  listing_key?: unknown;
 };
 
 const toTrimmed = (value: unknown) => (typeof value === "string" ? value.trim() : "");
@@ -20,13 +21,15 @@ export async function POST(request: NextRequest) {
 
     const body = (await request.json().catch(() => ({}))) as RetryBody;
     const listingId = toTrimmed(body.listing_id);
-    if (!listingId) {
-      return NextResponse.json({ error: "listing_id required" }, { status: 400 });
+    const listingKey = toTrimmed(body.listing_key);
+    if (!listingId && !listingKey) {
+      return NextResponse.json({ error: "listing_id or listing_key required" }, { status: 400 });
     }
 
     const reset = await resetFailedListingForUser({
       userId: auth.user.id,
-      listingId,
+      listingId: listingId || null,
+      listingKey: listingKey || null,
       reason: "extension_auto_retry",
     });
 

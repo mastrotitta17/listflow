@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import {
   BadgeDollarSign,
+  BellRing,
   BookOpen,
   CreditCard,
   FolderTree,
@@ -27,6 +28,7 @@ export type AdminNavIcon =
   | "payments"
   | "subscriptions"
   | "webhooks"
+  | "push"
   | "stripe";
 
 export type AdminNavItem = {
@@ -45,6 +47,7 @@ const ICON_BY_KEY: Record<AdminNavIcon, LucideIcon> = {
   payments: WalletCards,
   subscriptions: CreditCard,
   webhooks: Webhook,
+  push: BellRing,
   stripe: BadgeDollarSign,
 };
 

@@ -22,6 +22,7 @@ const NAV_ITEMS: AdminNavItem[] = [
   { href: "/admin/payments", label: "Ödemeler", icon: "payments" },
   { href: "/admin/subscriptions", label: "Abonelikler", icon: "subscriptions" },
   { href: "/admin/webhooks", label: "Webhook Console", icon: "webhooks" },
+  { href: "/admin/push", label: "Mobil Bildirim", icon: "push" },
   { href: "/admin/stripe", label: "Stripe", icon: "stripe" },
 ];
 

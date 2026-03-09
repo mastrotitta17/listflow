@@ -11,6 +11,10 @@ const OWN_PRODUCT_WEBHOOK_URL =
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
+type FormDataLike = {
+  get: (name: string) => FormDataEntryValue | null;
+};
+
 type OwnedStoreRow = {
   id: string;
   user_id: string;
@@ -95,7 +99,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: "Store not found" }, { status: 404 });
     }
 
-    const formData = await request.formData();
+    const formData = (await request.formData()) as unknown as FormDataLike;
     const title = asTrimmedString(formData.get("title")).slice(0, 180);
     const description = asTrimmedString(formData.get("description")).slice(0, 5000);
     const price = parsePrice(asTrimmedString(formData.get("price")));
