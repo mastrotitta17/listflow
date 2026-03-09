@@ -3,6 +3,7 @@ import { getAccessTokenFromRequest, getProfileByUserId, getUserFromAccessToken, 
 import { isAdminResource, ADMIN_RESOURCE_MAP } from "@/lib/admin/resources";
 import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { isUuid } from "@/lib/utils/uuid";
 
 const notFoundResponse = () => NextResponse.json({ error: "Not Found" }, { status: 404 });
 const isMissingTableError = (error: { message?: string; code?: string } | null | undefined) => {
@@ -123,6 +124,24 @@ const normalizeSubscriptionPlan = (value: unknown): "standard" | "pro" | "turbo"
   return null;
 };
 
+const normalizeCategoryText = (value: unknown) => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized || null;
+};
+
+const asOptionalTrimmedString = (value: unknown) => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized || null;
+};
+
 type StoreRow = Record<string, unknown>;
 type SubscriptionPlanRow = {
   id: string;
@@ -167,7 +186,17 @@ const loadStoreRowById = async (storeId: string) => {
 
 const updateStoreWithFallback = async (storeId: string, patch: Record<string, unknown>) => {
   let candidatePatch = { ...patch };
-  const optionalKeys = ["store_name", "store_currency", "currency", "updated_at"];
+  const optionalKeys = [
+    "store_name",
+    "store_currency",
+    "currency",
+    "category",
+    "category_id",
+    "product_id",
+    "sub_category_id",
+    "subcategory_id",
+    "updated_at",
+  ];
 
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const result = await supabaseAdmin
@@ -356,10 +385,17 @@ const patchStoreResource = async (id: string, body: Record<string, unknown>) => 
     Object.prototype.hasOwnProperty.call(body, "store_currency") || Object.prototype.hasOwnProperty.call(body, "currency");
   const hasPlanField =
     Object.prototype.hasOwnProperty.call(body, "plan") || Object.prototype.hasOwnProperty.call(body, "subscription_plan");
+  const hasCategoryField =
+    Object.prototype.hasOwnProperty.call(body, "category") ||
+    Object.prototype.hasOwnProperty.call(body, "topCategoryId") ||
+    Object.prototype.hasOwnProperty.call(body, "subCategoryId");
 
   const requestedStoreName = typeof body.store_name === "string" ? normalizeStoreNameInput(body.store_name) : null;
   const requestedCurrency = normalizeStoreCurrency(body.store_currency ?? body.currency);
   const requestedPlan = normalizeSubscriptionPlan(body.plan ?? body.subscription_plan);
+  const requestedCategory = normalizeCategoryText(body.category);
+  const requestedTopCategoryId = asOptionalTrimmedString(body.topCategoryId);
+  const requestedSubCategoryId = asOptionalTrimmedString(body.subCategoryId);
 
   if (hasStoreNameField && !requestedStoreName) {
     throw new Error("Geçersiz mağaza adı.");
@@ -373,8 +409,12 @@ const patchStoreResource = async (id: string, body: Record<string, unknown>) => 
     throw new Error("Geçersiz abonelik planı. Sadece standard, pro veya turbo kullanılabilir.");
   }
 
-  if (!requestedStoreName && !requestedCurrency && !requestedPlan) {
-    throw new Error("Geçerli güncelleme alanı yok (store_name, store_currency, plan).");
+  if (hasCategoryField && !requestedCategory) {
+    throw new Error("Geçersiz mağaza kategorisi.");
+  }
+
+  if (!requestedStoreName && !requestedCurrency && !requestedPlan && !requestedCategory) {
+    throw new Error("Geçerli güncelleme alanı yok (store_name, store_currency, category, plan).");
   }
 
   const currentStore = await loadStoreRowById(id);
@@ -384,10 +424,31 @@ const patchStoreResource = async (id: string, body: Record<string, unknown>) => 
 
   const currentStoreName = typeof currentStore.store_name === "string" ? normalizeStoreNameInput(currentStore.store_name) : "";
   const currentCurrency = resolveStoreCurrencyFromRow(currentStore);
+  const currentCategory = normalizeCategoryText(currentStore.category);
+  const currentProductId =
+    asOptionalTrimmedString(currentStore.product_id) ??
+    asOptionalTrimmedString(currentStore.sub_category_id) ??
+    asOptionalTrimmedString(currentStore.subcategory_id);
 
   const storePatch: Record<string, unknown> = {};
   if (requestedStoreName && requestedStoreName !== currentStoreName) {
     storePatch.store_name = requestedStoreName;
+  }
+  if (
+    requestedCategory &&
+    (requestedCategory !== currentCategory ||
+      requestedSubCategoryId !== currentProductId ||
+      requestedTopCategoryId !== asOptionalTrimmedString(currentStore.category_id))
+  ) {
+    storePatch.category = requestedCategory;
+    if (requestedTopCategoryId && isUuid(requestedTopCategoryId)) {
+      storePatch.category_id = requestedTopCategoryId;
+    } else {
+      storePatch.category_id = null;
+    }
+    storePatch.product_id = requestedSubCategoryId && isUuid(requestedSubCategoryId) ? requestedSubCategoryId : null;
+    storePatch.sub_category_id = requestedSubCategoryId;
+    storePatch.subcategory_id = requestedSubCategoryId;
   }
   if (Object.keys(storePatch).length > 0) {
     storePatch.updated_at = new Date().toISOString();

@@ -170,6 +170,81 @@ const PLAN_LABELS: Record<string, string> = {
 };
 type EditablePlan = "standard" | "pro" | "turbo";
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
+const normalizeForMatch = (value: string | null | undefined) =>
+  (value ?? "")
+    .toLocaleLowerCase("tr-TR")
+    .replaceAll("ı", "i")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const resolveStoreCategoryDrafts = (
+  store: Pick<AutomationOverviewRow, "category" | "productId"> | null,
+  categories: PublicCategory[]
+) => {
+  if (!store || categories.length === 0) {
+    return {
+      parentCategoryId: categories[0]?.id ?? "",
+      subCategoryId: categories.length ? LISTFLOW_DECIDE_VALUE : "",
+    };
+  }
+
+  if (store.productId) {
+    for (const category of categories) {
+      const matchedSubCategory = (category.subProducts ?? []).find((subCategory) => subCategory.id === store.productId);
+      if (matchedSubCategory) {
+        return {
+          parentCategoryId: category.id,
+          subCategoryId: matchedSubCategory.id,
+        };
+      }
+    }
+  }
+
+  const normalizedCategory = normalizeForMatch(store.category);
+  if (!normalizedCategory) {
+    return {
+      parentCategoryId: categories[0]?.id ?? "",
+      subCategoryId: categories.length ? LISTFLOW_DECIDE_VALUE : "",
+    };
+  }
+
+  for (const category of categories) {
+    const normalizedParent = normalizeForMatch(category.name);
+    const matchedSubCategory = (category.subProducts ?? []).find((subCategory) => {
+      const normalizedSubCategory = normalizeForMatch(subCategory.name);
+      return (
+        normalizedSubCategory === normalizedCategory ||
+        normalizedCategory.includes(normalizedSubCategory) ||
+        (normalizedParent && normalizedCategory.includes(normalizedParent) && normalizedCategory.includes(normalizedSubCategory))
+      );
+    });
+
+    if (matchedSubCategory) {
+      return {
+        parentCategoryId: category.id,
+        subCategoryId: matchedSubCategory.id,
+      };
+    }
+
+    if (
+      normalizedParent &&
+      (normalizedParent === normalizedCategory || normalizedCategory.includes(normalizedParent))
+    ) {
+      return {
+        parentCategoryId: category.id,
+        subCategoryId: category.subProducts?.length ? LISTFLOW_DECIDE_VALUE : "",
+      };
+    }
+  }
+
+  return {
+    parentCategoryId: categories[0]?.id ?? "",
+    subCategoryId: categories.length ? LISTFLOW_DECIDE_VALUE : "",
+  };
+};
+
 const resolveEditablePlan = (value: string | null | undefined): EditablePlan => {
   const normalized = (value ?? "").toLowerCase();
   if (normalized === "pro" || normalized === "turbo") {
@@ -1000,6 +1075,8 @@ export default function AdminStoresPage() {
   const [editStoreNameDraft, setEditStoreNameDraft] = useState("");
   const [editStoreCurrencyDraft, setEditStoreCurrencyDraft] = useState<"USD" | "TRY">("USD");
   const [editStorePlanDraft, setEditStorePlanDraft] = useState<EditablePlan>("standard");
+  const [editSelectedParentCategoryId, setEditSelectedParentCategoryId] = useState("");
+  const [editSelectedSubCategoryId, setEditSelectedSubCategoryId] = useState("");
   const [savingStoreEdit, setSavingStoreEdit] = useState(false);
   const [listingViewerOpen, setListingViewerOpen] = useState(false);
   const [listingViewerStore, setListingViewerStore] = useState<AutomationOverviewRow | null>(null);
@@ -1035,6 +1112,33 @@ export default function AdminStoresPage() {
 
     return availableSubCategories.find((subcategory) => subcategory.id === selectedSubCategoryId) ?? availableSubCategories[0];
   }, [availableSubCategories, selectedSubCategoryId]);
+  const editSelectedParentCategory = useMemo(
+    () => categories.find((category) => category.id === editSelectedParentCategoryId) ?? categories[0] ?? null,
+    [categories, editSelectedParentCategoryId]
+  );
+  const editAvailableSubCategories = useMemo(() => {
+    if (!editSelectedParentCategory) {
+      return [] as PublicSubCategory[];
+    }
+
+    return (editSelectedParentCategory.subProducts ?? [])
+      .map((subProduct) => ({
+        id: subProduct.id,
+        name: subProduct.name,
+      }))
+      .filter((item) => Boolean(item.id) && Boolean(item.name));
+  }, [editSelectedParentCategory]);
+  const editResolvedSubCategory = useMemo(() => {
+    if (!editAvailableSubCategories.length) {
+      return null;
+    }
+
+    if (editSelectedSubCategoryId === LISTFLOW_DECIDE_VALUE || !editSelectedSubCategoryId) {
+      return editAvailableSubCategories[0];
+    }
+
+    return editAvailableSubCategories.find((subcategory) => subcategory.id === editSelectedSubCategoryId) ?? editAvailableSubCategories[0];
+  }, [editAvailableSubCategories, editSelectedSubCategoryId]);
   const filteredUsers = useMemo(() => {
     const needle = userSearch.trim().toLowerCase();
     if (!needle) {
@@ -1193,6 +1297,14 @@ export default function AdminStoresPage() {
   }, [createStoreOpen, categories.length, categoriesLoading, loadCategories]);
 
   useEffect(() => {
+    if (!editStoreOpen || categories.length > 0 || categoriesLoading) {
+      return;
+    }
+
+    void loadCategories();
+  }, [editStoreOpen, categories.length, categoriesLoading, loadCategories]);
+
+  useEffect(() => {
     if (!selectedParentCategoryId && categories[0]) {
       setSelectedParentCategoryId(categories[0].id);
     }
@@ -1216,6 +1328,35 @@ export default function AdminStoresPage() {
 
     setSelectedSubCategoryId(LISTFLOW_DECIDE_VALUE);
   }, [availableSubCategories, selectedSubCategoryId]);
+
+  useEffect(() => {
+    if (!editStoreOpen || !editingStore || !categories.length) {
+      return;
+    }
+
+    const nextDrafts = resolveStoreCategoryDrafts(editingStore, categories);
+    setEditSelectedParentCategoryId(nextDrafts.parentCategoryId);
+    setEditSelectedSubCategoryId(nextDrafts.subCategoryId);
+  }, [categories, editStoreOpen, editingStore]);
+
+  useEffect(() => {
+    if (!editAvailableSubCategories.length) {
+      if (editSelectedSubCategoryId !== "") {
+        setEditSelectedSubCategoryId("");
+      }
+      return;
+    }
+
+    if (
+      editSelectedSubCategoryId &&
+      editSelectedSubCategoryId !== LISTFLOW_DECIDE_VALUE &&
+      editAvailableSubCategories.some((subcategory) => subcategory.id === editSelectedSubCategoryId)
+    ) {
+      return;
+    }
+
+    setEditSelectedSubCategoryId(LISTFLOW_DECIDE_VALUE);
+  }, [editAvailableSubCategories, editSelectedSubCategoryId]);
 
   const resetCreateStoreForm = useCallback(() => {
     setStoreNameDraft("");
@@ -1321,14 +1462,20 @@ export default function AdminStoresPage() {
 
   const openEditStoreModal = useCallback((store: AutomationOverviewRow) => {
     const resolvedPlan = resolveEditablePlan(store.plan);
+    const nextDrafts = resolveStoreCategoryDrafts(store, categories);
     setEditingStore(store);
     setEditStoreNameDraft(store.storeName || "");
     setEditStoreCurrencyDraft(store.storeCurrency === "TRY" ? "TRY" : "USD");
     setEditStorePlanDraft(resolvedPlan);
+    setEditSelectedParentCategoryId(nextDrafts.parentCategoryId);
+    setEditSelectedSubCategoryId(nextDrafts.subCategoryId);
     setEditStoreOpen(true);
     setError(null);
     setSuccessMessage(null);
-  }, []);
+    if (!categories.length) {
+      void loadCategories();
+    }
+  }, [categories, loadCategories]);
 
   const handleSaveStoreEdit = useCallback(async () => {
     if (!editingStore) {
@@ -1345,10 +1492,39 @@ export default function AdminStoresPage() {
     const currentCurrency = editingStore.storeCurrency === "TRY" ? "TRY" : "USD";
     const currentPlan = resolveEditablePlan(editingStore.plan);
     const hasSubscription = Boolean(editingStore.subscriptionId);
+    const selectedParentCategory =
+      categories.find((category) => category.id === editSelectedParentCategoryId) ?? categories[0] ?? null;
+
+    if (!selectedParentCategory) {
+      setError("Kategori listesi yüklenemedi. Lütfen tekrar deneyin.");
+      return;
+    }
+
+    const selectedSubCategories = (selectedParentCategory.subProducts ?? []).filter(
+      (subCategory) => Boolean(subCategory.id) && Boolean(subCategory.name)
+    );
+    const selectedSubCategory =
+      !selectedSubCategories.length
+        ? null
+        : editSelectedSubCategoryId === LISTFLOW_DECIDE_VALUE || !editSelectedSubCategoryId
+          ? selectedSubCategories[0] ?? null
+          : selectedSubCategories.find((subCategory) => subCategory.id === editSelectedSubCategoryId) ??
+            selectedSubCategories[0] ??
+            null;
+
+    const nextCategoryName = selectedSubCategory?.name || selectedParentCategory.name;
+    const nextTopCategoryId =
+      (selectedParentCategory.dbId && selectedParentCategory.dbId.trim()) ||
+      (selectedParentCategory.id && selectedParentCategory.id.trim()) ||
+      null;
+    const nextSubCategoryId = selectedSubCategory?.id?.trim() || null;
     const changedStoreName = normalizedStoreName !== currentStoreName;
     const changedCurrency = editStoreCurrencyDraft !== currentCurrency;
     const changedPlan = hasSubscription && editStorePlanDraft !== currentPlan;
-    const noChanges = !changedStoreName && !changedCurrency && !changedPlan;
+    const changedCategory =
+      normalizeForMatch(nextCategoryName) !== normalizeForMatch(editingStore.category) ||
+      (editingStore.productId ?? null) !== nextSubCategoryId;
+    const noChanges = !changedStoreName && !changedCurrency && !changedPlan && !changedCategory;
 
     if (noChanges) {
       setSuccessMessage("Kaydedilecek bir değişiklik bulunamadı.");
@@ -1357,6 +1533,8 @@ export default function AdminStoresPage() {
       setEditStoreNameDraft("");
       setEditStoreCurrencyDraft("USD");
       setEditStorePlanDraft("standard");
+      setEditSelectedParentCategoryId("");
+      setEditSelectedSubCategoryId("");
       return;
     }
 
@@ -1372,6 +1550,11 @@ export default function AdminStoresPage() {
       }
       if (changedCurrency) {
         patchPayload.store_currency = editStoreCurrencyDraft;
+      }
+      if (changedCategory) {
+        patchPayload.category = nextCategoryName;
+        patchPayload.topCategoryId = nextTopCategoryId;
+        patchPayload.subCategoryId = nextSubCategoryId;
       }
       if (changedPlan) {
         patchPayload.plan = editStorePlanDraft;
@@ -1402,6 +1585,7 @@ export default function AdminStoresPage() {
       const changeLabels: string[] = [];
       if (changedStoreName) changeLabels.push(`isim: ${normalizedStoreName}`);
       if (changedCurrency) changeLabels.push(`para birimi: ${editStoreCurrencyDraft}`);
+      if (changedCategory) changeLabels.push(`kategori: ${selectedParentCategory.name}${selectedSubCategory ? ` / ${selectedSubCategory.name}` : ""}`);
       if (changedPlan) changeLabels.push(`plan: ${PLAN_LABELS[editStorePlanDraft]}`);
       setSuccessMessage(`${editingStore.storeName} mağazası güncellendi (${changeLabels.join(", ")}).`);
       setEditStoreOpen(false);
@@ -1409,13 +1593,24 @@ export default function AdminStoresPage() {
       setEditStoreNameDraft("");
       setEditStoreCurrencyDraft("USD");
       setEditStorePlanDraft("standard");
+      setEditSelectedParentCategoryId("");
+      setEditSelectedSubCategoryId("");
       await loadOverview({ silent: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Mağaza güncellenemedi.");
     } finally {
       setSavingStoreEdit(false);
     }
-  }, [editStoreCurrencyDraft, editStoreNameDraft, editStorePlanDraft, editingStore, loadOverview]);
+  }, [
+    categories,
+    editSelectedParentCategoryId,
+    editSelectedSubCategoryId,
+    editStoreCurrencyDraft,
+    editStoreNameDraft,
+    editStorePlanDraft,
+    editingStore,
+    loadOverview,
+  ]);
 
   const openListingViewer = useCallback(async (store: AutomationOverviewRow) => {
     setListingViewerStore(store);
@@ -2011,6 +2206,8 @@ export default function AdminStoresPage() {
             setEditStoreNameDraft("");
             setEditStoreCurrencyDraft("USD");
             setEditStorePlanDraft("standard");
+            setEditSelectedParentCategoryId("");
+            setEditSelectedSubCategoryId("");
           }
         }}
       >
@@ -2019,7 +2216,7 @@ export default function AdminStoresPage() {
             <DialogTitle>Mağaza Düzenle</DialogTitle>
             <DialogDescription>
               {editingStore
-                ? `${editingStore.storeId} için mağaza adı, para birimi ve abonelik planını güncelle`
+                ? `${editingStore.storeId} için mağaza adı, kategori, para birimi ve abonelik planını güncelle`
                 : "Düzenlenecek mağaza seçilmedi."}
             </DialogDescription>
           </DialogHeader>
@@ -2035,6 +2232,45 @@ export default function AdminStoresPage() {
                 disabled={!editingStore || savingStoreEdit}
               />
               <p className="text-xs text-slate-500">Etsy linki girersen otomatik mağaza adı çıkarılır.</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400">Üst Kategori</label>
+              <Select
+                value={editSelectedParentCategoryId}
+                onChange={(event) => setEditSelectedParentCategoryId(event.target.value)}
+                disabled={!editingStore || savingStoreEdit || categoriesLoading || categories.length === 0}
+              >
+                {categoriesLoading ? <option value="">Kategoriler yükleniyor...</option> : null}
+                {!categoriesLoading && categories.length === 0 ? <option value="">Kategori bulunamadı</option> : null}
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400">Alt Kategori</label>
+              <Select
+                value={editAvailableSubCategories.length ? editSelectedSubCategoryId : ""}
+                onChange={(event) => setEditSelectedSubCategoryId(event.target.value)}
+                disabled={!editingStore || savingStoreEdit || categoriesLoading || !editAvailableSubCategories.length}
+              >
+                {editAvailableSubCategories.length ? <option value={LISTFLOW_DECIDE_VALUE}>Listflow karar versin</option> : null}
+                {!editAvailableSubCategories.length ? <option value="">Alt kategori yok</option> : null}
+                {editAvailableSubCategories.map((subcategory) => (
+                  <option key={subcategory.id} value={subcategory.id}>
+                    {subcategory.name}
+                  </option>
+                ))}
+              </Select>
+              {editSelectedSubCategoryId === LISTFLOW_DECIDE_VALUE && editAvailableSubCategories.length ? (
+                <p className="text-xs text-slate-500">
+                  Listflow karar versin seçiliyken ilk alt kategori kullanılır: {editAvailableSubCategories[0]?.name}
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-2 border border-white/10 rounded-xl py-2 px-3 flex justify-between items-center w-full">
@@ -2090,6 +2326,8 @@ export default function AdminStoresPage() {
                 setEditStoreNameDraft("");
                 setEditStoreCurrencyDraft("USD");
                 setEditStorePlanDraft("standard");
+                setEditSelectedParentCategoryId("");
+                setEditSelectedSubCategoryId("");
               }}
               disabled={savingStoreEdit}
             >
