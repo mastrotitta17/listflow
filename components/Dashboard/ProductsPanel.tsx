@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { supabase } from "../../lib/supabaseClient";
 import { useI18n } from "@/lib/i18n/provider";
@@ -30,6 +30,7 @@ type ProductRow = {
   title: string;
   description: string;
   imageUrl: string | null;
+  images: string[];
   price: number;
   quantity: number;
   status: string;
@@ -71,6 +72,194 @@ const statusTone = (value: string) => {
   }
 
   return "border-slate-300/30 bg-slate-950/90 text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)]";
+};
+
+type ProductCardProps = {
+  row: ProductRow;
+  currencyText: string;
+  createdAtText: string;
+  selectedStoreId: string | null;
+  requeueingListingId: string | null;
+  removingListingId: string | null;
+  onRequeue: (row: ProductRow) => void;
+  onRemove: (row: ProductRow) => void;
+  t: ReturnType<typeof useI18n>["t"];
+};
+
+const ProductCard: React.FC<ProductCardProps> = ({
+  row,
+  currencyText,
+  createdAtText,
+  selectedStoreId,
+  requeueingListingId,
+  removingListingId,
+  onRequeue,
+  onRemove,
+  t,
+}) => {
+  const images = row.images.length > 0 ? row.images : row.imageUrl ? [row.imageUrl] : [];
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [isHovered, setIsHovered] = useState(false);
+  const lastPointerXRef = useRef<number | null>(null);
+  const lastSwitchAtRef = useRef(0);
+
+  useEffect(() => {
+    setActiveImageIndex(0);
+  }, [row.id]);
+
+  const moveToImage = useCallback(
+    (direction: "next" | "prev") => {
+      if (images.length <= 1) {
+        return;
+      }
+
+      setActiveImageIndex((current) => {
+        if (direction === "next") {
+          return (current + 1) % images.length;
+        }
+        return (current - 1 + images.length) % images.length;
+      });
+    },
+    [images.length]
+  );
+
+  const handleMouseMove = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (images.length <= 1) {
+        return;
+      }
+
+      const now = Date.now();
+      const clientX = event.clientX;
+      const lastX = lastPointerXRef.current;
+      lastPointerXRef.current = clientX;
+
+      if (lastX === null) {
+        return;
+      }
+
+      if (now - lastSwitchAtRef.current < 180) {
+        return;
+      }
+
+      const delta = clientX - lastX;
+      if (Math.abs(delta) < 28) {
+        return;
+      }
+
+      moveToImage(delta > 0 ? "next" : "prev");
+      lastSwitchAtRef.current = now;
+    },
+    [images.length, moveToImage]
+  );
+
+  return (
+    <article className="overflow-hidden rounded-[22px] border border-white/10 bg-white/5 backdrop-blur-xl transition hover:border-indigo-400/30 hover:bg-white/[0.07]">
+      <div
+        className="group relative aspect-[4/3.5] overflow-hidden bg-[#0b1020]"
+        onMouseEnter={() => {
+          setIsHovered(true);
+          lastPointerXRef.current = null;
+        }}
+        onMouseLeave={() => {
+          setIsHovered(false);
+          lastPointerXRef.current = null;
+        }}
+        onMouseMove={handleMouseMove}
+      >
+        {images.length > 0 ? (
+          <img
+            src={images[activeImageIndex]}
+            alt={row.title}
+            className="h-full w-full object-cover transition duration-300"
+            loading="lazy"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,#312e81_0%,#0b1020_55%,#06070c_100%)]">
+            <Boxes className="h-10 w-10 text-indigo-300/60" />
+          </div>
+        )}
+        <div className="absolute left-4 top-4">
+          <span
+            className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.2em] backdrop-blur-md ${statusTone(row.status)}`}
+          >
+            {row.status}
+          </span>
+        </div>
+
+        {images.length > 1 ? (
+          <div
+            className={`absolute inset-x-0 bottom-3 flex items-center justify-center gap-1.5 transition duration-200 ${isHovered ? "opacity-100" : "opacity-0"}`}
+          >
+            {images.map((_, index) => (
+              <button
+                key={`${row.id}-image-${index}`}
+                type="button"
+                onClick={() => setActiveImageIndex(index)}
+                aria-label={`${t("productsPanel.imageLabel")} ${index + 1}`}
+                className={`h-1.5 rounded-full transition-all ${index === activeImageIndex ? "w-6 bg-white" : "w-3 bg-white/40 hover:bg-white/70"}`}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="space-y-3 p-4 [@media(max-height:820px)]:space-y-2.5">
+        <div className="space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <h3 className="line-clamp-2 text-base font-black tracking-tight text-white [@media(min-width:1700px)]:text-lg">
+              {row.title}
+            </h3>
+            <span className="shrink-0 rounded-full border border-teal-400/30 bg-teal-500/10 px-3 py-1 text-sm font-black tracking-[0.08em] text-teal-200 shadow-[0_10px_24px_rgba(20,184,166,0.18)]">
+              {currencyText}
+            </span>
+          </div>
+          {row.description ? (
+            <p className="line-clamp-3 text-sm leading-6 text-slate-400">{row.description}</p>
+          ) : null}
+        </div>
+
+        <div className="grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
+          <div className="flex items-center gap-2">
+            <Package className="h-3.5 w-3.5 text-slate-500" />
+            <span>{t("productsPanel.quantityLabel")}: {row.quantity}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Boxes className="h-3.5 w-3.5 text-slate-500" />
+            <span>{t("productsPanel.categoryLabel")}: {row.category ?? "-"}</span>
+          </div>
+          <div className="flex items-center gap-2 sm:col-span-2">
+            <Calendar className="h-3.5 w-3.5 text-slate-500" />
+            <span>{createdAtText}</span>
+          </div>
+        </div>
+
+        <div className="pt-1">
+          <div className="flex items-center justify-between w-full gap-x-2">
+            <button
+              type="button"
+              onClick={() => (selectedStoreId ? onRequeue(row) : undefined)}
+              disabled={!selectedStoreId || removingListingId === row.id || requeueingListingId === row.id}
+              className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-400/25 bg-indigo-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-indigo-100 transition hover:border-indigo-300/50 hover:bg-indigo-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${requeueingListingId === row.id ? "animate-spin" : ""}`} />
+              {requeueingListingId === row.id ? t("productsPanel.requeueing") : t("productsPanel.requeue")}
+            </button>
+            <button
+              type="button"
+              onClick={() => onRemove(row)}
+              disabled={!selectedStoreId || removingListingId === row.id || requeueingListingId === row.id}
+              title={t("productsPanel.removeLabel")}
+              aria-label={t("productsPanel.removeLabel")}
+              className="flex h-10 w-auto items-center justify-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-red-100 transition hover:border-red-300/50 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Trash2 className={`h-3.5 w-3.5 ${removingListingId === row.id ? "animate-pulse" : ""}`} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </article>
+  );
 };
 
 const ProductsPanel: React.FC = () => {
@@ -366,99 +555,34 @@ const ProductsPanel: React.FC = () => {
           <>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 [@media(min-width:1850px)]:grid-cols-5">
               {rows.map((row) => (
-                <article
+                <ProductCard
                   key={row.id}
-                  className="overflow-hidden rounded-[22px] border border-white/10 bg-white/5 backdrop-blur-xl transition hover:border-indigo-400/30 hover:bg-white/[0.07]"
-                >
-                  <div className="relative aspect-[4/3.5] overflow-hidden bg-[#0b1020]">
-                    {row.imageUrl ? (
-                      <img src={row.imageUrl} alt={row.title} className="h-full w-full object-cover" loading="lazy" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,#312e81_0%,#0b1020_55%,#06070c_100%)]">
-                        <Boxes className="h-10 w-10 text-indigo-300/60" />
-                      </div>
-                    )}
-                    <div className="absolute left-4 top-4">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.2em] backdrop-blur-md ${statusTone(row.status)}`}
-                      >
-                        {row.status}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 p-4 [@media(max-height:820px)]:space-y-2.5">
-                    <div className="space-y-2">
-                      <div className="flex items-start justify-between gap-3">
-                        <h3 className="line-clamp-2 text-base font-black tracking-tight text-white [@media(min-width:1700px)]:text-lg">
-                          {row.title}
-                        </h3>
-                        <span className="shrink-0 rounded-full border border-teal-400/30 bg-teal-500/10 px-3 py-1 text-sm font-black tracking-[0.08em] text-teal-200 shadow-[0_10px_24px_rgba(20,184,166,0.18)]">
-                          {currencyFormatter.format(row.price)}
-                        </span>
-                      </div>
-                      {row.description ? (
-                        <p className="line-clamp-3 text-sm leading-6 text-slate-400">{row.description}</p>
-                      ) : null}
-                    </div>
-
-                    <div className="grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
-                      <div className="flex items-center gap-2">
-                        <Package className="h-3.5 w-3.5 text-slate-500" />
-                        <span>{t("productsPanel.quantityLabel")}: {row.quantity}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Boxes className="h-3.5 w-3.5 text-slate-500" />
-                        <span>{t("productsPanel.categoryLabel")}: {row.category ?? "-"}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Calendar className="h-3.5 w-3.5 text-slate-500" />
-                        <span>{t("productsPanel.createdLabel")}: {dateFormatter.format(new Date(row.createdAt))}</span>
-                      </div>
-                    </div>
-
-                    <div className="pt-1">
-                      <div className="flex items-center justify-between w-full gap-x-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            selectedStore
-                              ? requeueMutation.mutate({
-                                  listingId: row.id,
-                                  listingKey: row.key,
-                                  storeId: selectedStore.id,
-                                })
-                              : undefined
-                          }
-                          disabled={requeueMutation.isPending || removeMutation.isPending}
-                          className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-400/25 bg-indigo-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-indigo-100 transition hover:border-indigo-300/50 hover:bg-indigo-500/15 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <RefreshCw className={`h-3.5 w-3.5 ${requeueingListingId === row.id ? "animate-spin" : ""}`} />
-                          {requeueingListingId === row.id ? t("productsPanel.requeueing") : t("productsPanel.requeue")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!selectedStore) return;
-                            const confirmed = window.confirm(t("productsPanel.removeConfirm"));
-                            if (!confirmed) return;
-                            removeMutation.mutate({
-                              listingId: row.id,
-                              listingKey: row.key,
-                              storeId: selectedStore.id,
-                            });
-                          }}
-                          disabled={requeueMutation.isPending || removeMutation.isPending}
-                          title={t("productsPanel.removeLabel")}
-                          aria-label={t("productsPanel.removeLabel")}
-                          className="flex h-10 w-auto items-center justify-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-red-100 transition hover:border-red-300/50 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <Trash2 className={`h-3.5 w-3.5 ${removingListingId === row.id ? "animate-pulse" : ""}`} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </article>
+                  row={row}
+                  currencyText={currencyFormatter.format(row.price)}
+                  createdAtText={dateFormatter.format(new Date(row.createdAt))}
+                  selectedStoreId={selectedStore?.id ?? null}
+                  requeueingListingId={requeueingListingId}
+                  removingListingId={removingListingId}
+                  onRequeue={(targetRow) => {
+                    if (!selectedStore) return;
+                    requeueMutation.mutate({
+                      listingId: targetRow.id,
+                      listingKey: targetRow.key,
+                      storeId: selectedStore.id,
+                    });
+                  }}
+                  onRemove={(targetRow) => {
+                    if (!selectedStore) return;
+                    const confirmed = window.confirm(t("productsPanel.removeConfirm"));
+                    if (!confirmed) return;
+                    removeMutation.mutate({
+                      listingId: targetRow.id,
+                      listingKey: targetRow.key,
+                      storeId: selectedStore.id,
+                    });
+                  }}
+                  t={t}
+                />
               ))}
             </div>
 

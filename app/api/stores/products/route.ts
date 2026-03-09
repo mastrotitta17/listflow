@@ -22,6 +22,8 @@ type ListingRow = {
   title: string | null;
   description: string | null;
   image_1_url: string | null;
+  image_2_url: string | null;
+  image_3_url: string | null;
   price: number | null;
   quantity: number | null;
   status: string | null;
@@ -128,7 +130,7 @@ export async function GET(request: NextRequest) {
     let query = supabaseAdmin
       .from("listing")
       .select(
-        "id,key,title,description,image_1_url,price,quantity,status,tags,category,created_at,updated_at",
+        "id,key,title,description,image_1_url,image_2_url,image_3_url,price,quantity,status,tags,category,created_at,updated_at",
         { count: "exact" }
       )
       .eq("client_id", selectedStore.id)
@@ -150,6 +152,11 @@ export async function GET(request: NextRequest) {
       title: row.title ?? "Untitled",
       description: row.description ?? "",
       imageUrl: normalizePublicAssetUrl(row.image_1_url) ?? null,
+      images: [
+        normalizePublicAssetUrl(row.image_1_url) ?? null,
+        normalizePublicAssetUrl(row.image_2_url) ?? null,
+        normalizePublicAssetUrl(row.image_3_url) ?? null,
+      ].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value) === index),
       price: Number.isFinite(row.price ?? NaN) ? row.price : 0,
       quantity: row.quantity ?? 0,
       status: row.status ?? "pending",

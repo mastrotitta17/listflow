@@ -142,6 +142,7 @@ export const trMessages = {
     quantityLabel: "Adet",
     categoryLabel: "Kategori",
     tagsLabel: "Etiketler",
+    imageLabel: "Görsel",
     refresh: "Yenile",
     loadError: "Ürünler yüklenemedi.",
     requeue: "Sıraya Al",

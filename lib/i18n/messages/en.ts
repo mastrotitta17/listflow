@@ -142,6 +142,7 @@ export const enMessages = {
     quantityLabel: "Quantity",
     categoryLabel: "Category",
     tagsLabel: "Tags",
+    imageLabel: "Image",
     refresh: "Refresh",
     loadError: "Products could not be loaded.",
     requeue: "Queue Again",
