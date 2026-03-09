@@ -67,6 +67,7 @@ export const enMessages = {
   },
   dashboard: {
     sections: {
+      HOME: "DASHBOARD",
       CATEGORIES: "CATEGORIES",
       ETSY_AUTOMATION: "ETSY AUTOMATION",
       PRODUCTS: "PRODUCTS",
@@ -96,11 +97,13 @@ export const enMessages = {
     tourNext: "Next",
     tourFinish: "Finish Tour",
     tourStepWelcomeTitle: "Welcome to Listflow",
-    tourStepWelcomeDescription: "This short walkthrough explains the dashboard flow in under a minute.",
+    tourStepWelcomeDescription: "This short walkthrough shows the dashboard logic and the next sections that move your store forward.",
     tourStepCategoriesTitle: "Categories and sub-products",
     tourStepCategoriesDescription: "In Categories, you can review niche options and choose the right sub-products for your store.",
     tourStepEtsyTitle: "Etsy automation center",
     tourStepEtsyDescription: "Manage store creation, automation status, and next upload timing from this section.",
+    tourStepProductsTitle: "Manage the product queue",
+    tourStepProductsDescription: "Use Products to requeue generated listings, remove weak ones, and connect them to your order flow.",
     tourStepOrdersTitle: "Order tracking",
     tourStepOrdersDescription: "Track payment status and order operations from a single Orders screen.",
     tourStepSettingsTitle: "Plan and account controls",
@@ -109,6 +112,7 @@ export const enMessages = {
   },
   sidebar: {
     premiumSuite: "Premium Suite",
+    home: "Dashboard",
     categories: "Categories",
     etsyAutomation: "Etsy Automation",
     products: "Products",
@@ -156,6 +160,9 @@ export const enMessages = {
     removeError: "Product could not be removed.",
     removeConfirm: "Are you sure you want to remove this product from the queue?",
     removeLabel: "Remove product",
+  },
+  homePanel: {
+    loadError: "Dashboard could not be loaded.",
   },
   payment: {
     title: "Payment Successful!",

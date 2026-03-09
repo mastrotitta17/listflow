@@ -1,4 +1,5 @@
 import DashboardRouteView from "@/components/Dashboard/DashboardRouteView";
+import { buildPrivateMetadata } from "@/lib/seo";
 import { DashboardSection } from "@/types";
 
 type CategoriesSlugPageProps = {
@@ -6,6 +7,8 @@ type CategoriesSlugPageProps = {
     categorySlug: string;
   }>;
 };
+
+export const metadata = buildPrivateMetadata("Category Detail", "/categories");
 
 export default async function CategoriesSlugPage({ params }: CategoriesSlugPageProps) {
   const { categorySlug } = await params;

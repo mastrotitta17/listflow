@@ -104,6 +104,13 @@ const toSyntheticChangeEvent = (value: string, name: string | undefined): Native
   } as NativeSelectChangeEvent;
 };
 
+const stopSelectTypeaheadEvent = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  event.stopPropagation();
+  if (typeof event.nativeEvent.stopImmediatePropagation === "function") {
+    event.nativeEvent.stopImmediatePropagation();
+  }
+};
+
 const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
   (
     {
@@ -168,6 +175,26 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
       };
     }, [open, shouldShowSearch]);
 
+    React.useEffect(() => {
+      if (!open || !shouldShowSearch) {
+        return;
+      }
+
+      const frame = window.requestAnimationFrame(() => {
+        const input = searchInputRef.current;
+        if (!input || document.activeElement === input) {
+          return;
+        }
+
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
+
+      return () => {
+        window.cancelAnimationFrame(frame);
+      };
+    }, [open, searchQuery, shouldShowSearch]);
+
     return (
       <div className="w-full">
         <SelectPrimitive.Root
@@ -220,14 +247,21 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
                       onChange={(event) => setSearchQuery(event.target.value)}
                       onClick={(event) => event.stopPropagation()}
                       onPointerDown={(event) => event.stopPropagation()}
-                      onKeyDownCapture={(event) => event.stopPropagation()}
+                      onKeyDownCapture={(event) => {
+                        stopSelectTypeaheadEvent(event);
+                      }}
                       onKeyDown={(event) => {
-                        event.stopPropagation();
+                        stopSelectTypeaheadEvent(event);
                         if (event.key === "Enter") {
                           event.preventDefault();
                         }
                       }}
-                      onKeyUp={(event) => event.stopPropagation()}
+                      onKeyUp={(event) => {
+                        event.stopPropagation();
+                        if (typeof event.nativeEvent.stopImmediatePropagation === "function") {
+                          event.nativeEvent.stopImmediatePropagation();
+                        }
+                      }}
                       placeholder={searchPlaceholder}
                       className="w-full rounded-md border border-white/10 bg-[#11131b] py-1.5 pl-8 pr-2 text-xs text-white outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500/70"
                     />

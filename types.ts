@@ -6,6 +6,7 @@ export enum View {
 }
 
 export enum DashboardSection {
+  HOME = 'HOME',
   CATEGORIES = 'CATEGORIES',
   ETSY_AUTOMATION = 'ETSY_AUTOMATION',
   PRODUCTS = 'PRODUCTS',

@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import Link from "next/link";
 import Sidebar from './Sidebar';
+import HomePanel from './HomePanel';
 import CategoriesPanel from './CategoriesPanel';
 import EtsyPanel from './EtsyPanel';
 import ProductsPanel from './ProductsPanel';
@@ -50,7 +51,7 @@ type StoreSubscriptionSummaryResponse = {
 const PLAN_PRIORITY = ["turbo", "pro", "standard"] as const;
 const TOUR_STORAGE_KEY_PREFIX = "listflow:dashboard-tour:v1:";
 const TOUR_SESSION_KEY_PREFIX = "listflow:dashboard-tour-session:v1:";
-const TOUR_SIDE_PATTERN: Array<"left" | "right"> = ["left", "right", "left", "right", "left"];
+const TOUR_SIDE_PATTERN: Array<"left" | "right"> = ["left", "right", "left", "right", "left", "right"];
 
 const AppStoreIcon = () => (
   <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true">
@@ -113,7 +114,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const tourSteps = useMemo(
     () => [
       {
-        section: DashboardSection.CATEGORIES,
+        section: DashboardSection.HOME,
         title: t("dashboard.tourStepWelcomeTitle"),
         description: t("dashboard.tourStepWelcomeDescription"),
       },
@@ -126,6 +127,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         section: DashboardSection.ETSY_AUTOMATION,
         title: t("dashboard.tourStepEtsyTitle"),
         description: t("dashboard.tourStepEtsyDescription"),
+      },
+      {
+        section: DashboardSection.PRODUCTS,
+        title: t("dashboard.tourStepProductsTitle"),
+        description: t("dashboard.tourStepProductsDescription"),
       },
       {
         section: DashboardSection.ORDERS,
@@ -309,7 +315,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             !tourDismissedInSession &&
             shouldShowTourForUser(user)
           ) {
-            setDashboardSection(DashboardSection.CATEGORIES);
+            setDashboardSection(DashboardSection.HOME);
             setTourStepIndex(0);
             setTourVisible(true);
           }
@@ -571,6 +577,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const renderContent = () => {
     switch (activeSection) {
+      case DashboardSection.HOME: return <HomePanel />;
       case DashboardSection.CATEGORIES: return <CategoriesPanel routeCategorySlug={routeCategorySlug} />;
       case DashboardSection.ETSY_AUTOMATION: return <EtsyPanel />;
       case DashboardSection.PRODUCTS: return <ProductsPanel />;

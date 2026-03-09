@@ -6,7 +6,7 @@ import { AppState, View, DashboardSection } from './types';
 
 export const useStore = create<AppState>((set:any) => ({
   currentView: View.LANDING,
-  dashboardSection: DashboardSection.CATEGORIES,
+  dashboardSection: DashboardSection.HOME,
   isDarkMode: typeof window !== "undefined" ? window.matchMedia('(prefers-color-scheme: dark)').matches : false,
 
   // ✅ CHANGED: default shop kaldırıldı (Mavi Dükkan yok)

@@ -1,11 +1,18 @@
-"use client";
-
 import Link from "next/link";
+import { cookies, headers } from "next/headers";
 import { ArrowLeft } from "lucide-react";
-import { useI18n } from "@/lib/i18n/provider";
+import { detectLocale } from "@/lib/i18n/detect-locale";
+import { buildMetadata } from "@/lib/seo";
 
-export default function PrivacyPolicyPage() {
-  const { locale } = useI18n();
+export const metadata = buildMetadata({
+  title: "Privacy Policy",
+  description: "Read how Listflow collects, uses, protects, and processes account, billing, store, and automation data.",
+  path: "/policies/privacy",
+  keywords: ["privacy policy", "data processing", "listflow privacy"],
+});
+
+export default async function PrivacyPolicyPage() {
+  const locale = detectLocale(await cookies(), await headers());
   const isEn = locale === "en";
 
   return (

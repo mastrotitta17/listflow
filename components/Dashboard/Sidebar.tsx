@@ -12,6 +12,7 @@ import {
   Boxes,
   Gift,
   Globe2,
+  House,
   Layers,
   LogOut,
   Package,
@@ -154,6 +155,8 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const resolveSectionPath = (section: DashboardSection) => {
     switch (section) {
+      case DashboardSection.HOME:
+        return "/dashboard";
       case DashboardSection.CATEGORIES:
         return "/categories";
       case DashboardSection.ETSY_AUTOMATION:
@@ -181,6 +184,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   useEffect(() => {
     const staticPaths = [
+      "/dashboard",
       "/categories",
       "/etsy-automation",
       "/products",
@@ -215,6 +219,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const menuItems = [
+    { id: DashboardSection.HOME, label: t("sidebar.home"), icon: House },
     { id: DashboardSection.CATEGORIES, label: t("sidebar.categories"), icon: Layers },
     { id: DashboardSection.ETSY_AUTOMATION, label: t("sidebar.etsyAutomation"), icon: Store },
     { id: DashboardSection.PRODUCTS, label: t("sidebar.products"), icon: Boxes },
@@ -245,8 +250,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         className="shrink-0 flex items-center gap-4 px-2 py-6 mb-4 [@media(max-height:840px)]:py-4 [@media(max-height:840px)]:mb-3 group cursor-pointer"
         onClick={() => {
           onClose?.();
-          setView(View.LANDING);
-          router.push("/");
+          setView(View.DASHBOARD);
+          setDashboardSection(DashboardSection.HOME);
+          router.push("/dashboard");
         }}
       >
         <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:rotate-6 transition-all border border-indigo-400/30">

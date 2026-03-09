@@ -222,7 +222,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
       }
 
       setView(View.DASHBOARD);
-      router.replace("/categories");
+      router.replace("/dashboard");
       if (active) {
         setBootstrapping(false);
       }
@@ -311,7 +311,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
     setView(View.DASHBOARD);
 
     if (standalone) {
-      router.push("/categories");
+      router.push("/dashboard");
       return;
     }
 

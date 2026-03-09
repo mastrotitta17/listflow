@@ -190,6 +190,62 @@ export const ProductsPanelSkeleton = () => (
   </div>
 );
 
+export const DashboardHomePanelSkeleton = () => (
+  <div className="h-full overflow-y-auto px-4 py-5 sm:px-5 lg:px-6">
+    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 pb-8">
+      <GlassCard className="overflow-hidden p-5 sm:p-7 lg:p-8">
+        <Skeleton className="h-6 w-36 rounded-full bg-white/10" />
+        <Skeleton className="mt-4 h-12 w-full max-w-3xl rounded-[28px] bg-white/10" />
+        <Skeleton className="mt-3 h-12 w-full max-w-2xl rounded-[28px] bg-white/10" />
+        <Skeleton className="mt-4 h-5 w-full max-w-2xl rounded-full bg-white/10" />
+        <div className="mt-8 grid gap-3 sm:grid-cols-2 xl:max-w-[460px]">
+          <Skeleton className="h-28 rounded-[24px] bg-white/10" />
+          <Skeleton className="h-28 rounded-[24px] bg-white/10" />
+        </div>
+      </GlassCard>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <GlassCard key={index} className="p-5">
+            <Skeleton className="h-4 w-24 rounded-full bg-white/10" />
+            <Skeleton className="mt-5 h-10 w-20 rounded-full bg-white/10" />
+            <Skeleton className="mt-3 h-4 w-full rounded-full bg-white/10" />
+          </GlassCard>
+        ))}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+        <GlassCard className="p-5 sm:p-6">
+          <Skeleton className="h-6 w-40 rounded-full bg-white/10" />
+          <div className="mt-5 space-y-3">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <Skeleton key={index} className="h-28 w-full rounded-[24px] bg-white/10" />
+            ))}
+          </div>
+        </GlassCard>
+        <div className="space-y-5">
+          <GlassCard className="p-5 sm:p-6">
+            <Skeleton className="h-6 w-40 rounded-full bg-white/10" />
+            <div className="mt-5 space-y-3">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <Skeleton key={index} className="h-24 w-full rounded-[24px] bg-white/10" />
+              ))}
+            </div>
+          </GlassCard>
+          <GlassCard className="p-5 sm:p-6">
+            <Skeleton className="h-6 w-32 rounded-full bg-white/10" />
+            <div className="mt-5 space-y-3">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <Skeleton key={index} className="h-20 w-full rounded-[22px] bg-white/10" />
+              ))}
+            </div>
+          </GlassCard>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
 export const SettingsPanelSkeleton = () => (
   <div className="h-full w-full overflow-y-auto custom-scrollbar pr-0 pt-2 sm:pr-2">
     <div className="space-y-6 pb-8">

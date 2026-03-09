@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { cookies, headers } from "next/headers";
 import { detectLocale } from "@/lib/i18n/detect-locale";
@@ -7,6 +7,7 @@ import MobileAppBridge from "@/components/MobileAppBridge";
 import QueryProvider from "@/components/providers/QueryProvider";
 import { Toaster } from "@/components/ui/sonner";
 import RuntimeErrorNoiseFilter from "@/components/RuntimeErrorNoiseFilter";
+import { rootMetadata } from "@/lib/seo";
 import "./globals.css";
 import { SpeedInsights } from "@vercel/speed-insights/next"
 import { Analytics } from '@vercel/analytics/next';
@@ -21,9 +22,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "Dashboard | listflow.pro",
-  description: "Listflow SaaS platform",
+export const metadata = rootMetadata;
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#0a0a0c",
+  colorScheme: "dark",
 };
 
 export default async function RootLayout({

@@ -67,6 +67,7 @@ export const trMessages = {
   },
   dashboard: {
     sections: {
+      HOME: "DASHBOARD",
       CATEGORIES: "KATEGORİLER",
       ETSY_AUTOMATION: "ETSY OTOMASYON",
       PRODUCTS: "ÜRÜNLER",
@@ -96,11 +97,13 @@ export const trMessages = {
     tourNext: "İleri",
     tourFinish: "Eğitimi Bitir",
     tourStepWelcomeTitle: "Listflow'a hoş geldiniz",
-    tourStepWelcomeDescription: "Bu kısa eğitimle panelin çalışma mantığını 1 dakikada öğreneceksiniz.",
+    tourStepWelcomeDescription: "Bu kısa eğitimle dashboardın ana mantığını ve seni ileri taşıyacak bölümleri 1 dakikada göreceksin.",
     tourStepCategoriesTitle: "Kategori ve alt ürün seçimi",
     tourStepCategoriesDescription: "Kategoriler bölümünde niş ürünleri inceleyip mağazanız için uygun alt ürünleri seçebilirsiniz.",
     tourStepEtsyTitle: "Etsy otomasyon merkezi",
     tourStepEtsyDescription: "Mağaza ekleme, otomasyon takibi ve bir sonraki ürün yükleme süresini bu bölümden yönetirsiniz.",
+    tourStepProductsTitle: "Ürün kuyruğunu yönetin",
+    tourStepProductsDescription: "Ürünler bölümünde üretilen listingleri sıraya alabilir, kaldırabilir ve sipariş akışına bağlayabilirsiniz.",
     tourStepOrdersTitle: "Sipariş takibi",
     tourStepOrdersDescription: "Siparişlerim ekranında ödeme durumlarını ve sipariş akışını tek noktadan izleyebilirsiniz.",
     tourStepSettingsTitle: "Plan ve hesap yönetimi",
@@ -109,6 +112,7 @@ export const trMessages = {
   },
   sidebar: {
     premiumSuite: "Premium Suite",
+    home: "Dashboard",
     categories: "Kategoriler",
     etsyAutomation: "Etsy Otomasyon",
     products: "Ürünler",
@@ -156,6 +160,9 @@ export const trMessages = {
     removeError: "Ürün kaldırılamadı.",
     removeConfirm: "Bu ürünü sıradan kaldırmak istediğinize emin misiniz?",
     removeLabel: "Ürünü kaldır",
+  },
+  homePanel: {
+    loadError: "Dashboard yüklenemedi.",
   },
   payment: {
     title: "Ödeme Başarılı!",

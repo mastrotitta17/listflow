@@ -1,11 +1,18 @@
-"use client";
-
 import Link from "next/link";
+import { cookies, headers } from "next/headers";
 import { ArrowLeft } from "lucide-react";
-import { useI18n } from "@/lib/i18n/provider";
+import { detectLocale } from "@/lib/i18n/detect-locale";
+import { buildMetadata } from "@/lib/seo";
 
-export default function TermsPage() {
-  const { locale } = useI18n();
+export const metadata = buildMetadata({
+  title: "Terms of Service",
+  description: "Review the Listflow terms of service for account use, billing responsibilities, acceptable use, and platform scope.",
+  path: "/policies/terms",
+  keywords: ["terms of service", "listflow terms", "usage policy"],
+});
+
+export default async function TermsPage() {
+  const locale = detectLocale(await cookies(), await headers());
   const isEn = locale === "en";
 
   return (
