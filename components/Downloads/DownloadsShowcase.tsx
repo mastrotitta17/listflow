@@ -434,7 +434,7 @@ export default function DownloadsShowcase({ initialLocale }: ShowcaseProps) {
 
   // ── JSX ───────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#040406] text-white">
+    <div className="min-h-screen min-h-[100dvh] bg-[#040406] text-white">
 
       {/* Back button — fixed top-left, always visible */}
       <motion.button

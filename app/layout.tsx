@@ -36,7 +36,7 @@ export default async function RootLayout({
   return (
     <html lang={locale} suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} overflow-x-hidden antialiased`}
       >
         <I18nProvider locale={locale}>
           <QueryProvider>

@@ -11,6 +11,7 @@ import { ArrowLeft, Loader2, Lock, Mail, Rocket, ShieldCheck, User as UserIcon }
 import { useI18n } from "@/lib/i18n/provider";
 import { buildOAuthRedirectTo } from "@/lib/auth/oauth-client";
 import { toast } from "sonner";
+import { AuthPageSkeleton } from "@/components/loading/PageSkeletons";
 
 const REFERRAL_STORAGE_KEY = "listflow:pending_ref";
 
@@ -100,6 +101,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<{ message: string; type: "error" | "success" } | null>(null);
   const [mfaRequired, setMfaRequired] = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(standalone);
   const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState("");
   const [mfaVerifying, setMfaVerifying] = useState(false);
@@ -199,11 +201,17 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
       } = await supabase.auth.getSession();
 
       if (!active || !session) {
+        if (active) {
+          setBootstrapping(false);
+        }
         return;
       }
 
       const requiresMfa = await resolveMfaRequirement();
       if (!active || requiresMfa) {
+        if (active && requiresMfa) {
+          setBootstrapping(false);
+        }
         return;
       }
 
@@ -215,6 +223,9 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
 
       setView(View.DASHBOARD);
       router.replace("/categories");
+      if (active) {
+        setBootstrapping(false);
+      }
     };
 
     void redirectIfAuthenticated();
@@ -223,6 +234,12 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
       active = false;
     };
   }, [resolveMfaRequirement, router, setView, standalone]);
+
+  useEffect(() => {
+    if (!standalone) {
+      setBootstrapping(false);
+    }
+  }, [standalone]);
 
   useEffect(() => {
     if (!standalone || typeof window === "undefined") {
@@ -257,6 +274,10 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
       hideStyle?.remove();
     };
   }, [standalone]);
+
+  if (standalone && bootstrapping) {
+    return <AuthPageSkeleton />;
+  }
 
   const validateEmail = (value: string) => {
     return String(value)
@@ -480,7 +501,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#07090f] px-4 py-8 sm:px-6 lg:px-8">
+    <div className="relative min-h-screen min-h-[100dvh] overflow-hidden bg-[#07090f] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute -left-40 top-[-220px] h-[460px] w-[460px] rounded-full bg-indigo-600/30 blur-[150px]" />
         <div className="absolute right-[-140px] top-16 h-[360px] w-[360px] rounded-full bg-cyan-500/20 blur-[140px]" />
@@ -489,7 +510,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
 
       <button
         onClick={goBack}
-        className="absolute left-4 top-4 z-50 flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs font-black uppercase tracking-[0.16em] text-slate-300 transition-all hover:text-white sm:left-8 sm:top-8 cursor-pointer"
+        className="absolute left-3 top-3 z-50 flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-300 transition-all hover:text-white sm:left-8 sm:top-8 sm:text-xs cursor-pointer"
       >
         <ArrowLeft className="h-4 w-4" />
         {locale === "en" ? "Back" : "Geri"}
@@ -499,9 +520,9 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
-        className="relative z-10 mx-auto mt-12 grid w-full max-w-6xl overflow-hidden rounded-[34px] border border-white/15 bg-[#0d111b]/92 shadow-[0_25px_80px_rgba(5,10,25,0.65)] backdrop-blur-xl lg:mt-16 lg:grid-cols-[1.05fr_0.95fr]"
+        className="relative z-10 mx-auto mt-10 grid w-full max-w-6xl overflow-hidden rounded-[26px] border border-white/15 bg-[#0d111b]/92 shadow-[0_25px_80px_rgba(5,10,25,0.65)] backdrop-blur-xl sm:rounded-[34px] lg:mt-16 lg:grid-cols-[1.05fr_0.95fr]"
       >
-        <div className="relative hidden border-r border-white/10 px-10 py-12 lg:block">
+        <div className="relative hidden border-r border-white/10 px-8 py-10 lg:block">
           <div className="mb-10 flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-indigo-400/40 bg-indigo-600 shadow-[0_0_28px_rgba(79,70,229,0.35)]">
               <Rocket className="h-5 w-5 text-white" />
@@ -511,7 +532,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
             </p>
           </div>
 
-          <h1 className="max-w-md text-4xl font-black leading-[1.05] tracking-tight text-white">
+          <h1 className="max-w-md text-3xl font-black leading-[1.05] tracking-tight text-white xl:text-4xl">
             {locale === "en"
               ? "Scale Etsy listings with a clean automation workflow"
               : "Etsy listelemelerini güçlü bir otomasyon akışıyla ölçekle"}
@@ -535,7 +556,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
           </div>
         </div>
 
-        <div className="px-6 py-8 sm:px-10 sm:py-10">
+        <div className="px-5 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-10">
           <div className="mb-8 lg:hidden">
             <div className="mb-5 flex items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-indigo-400/40 bg-indigo-600 shadow-[0_0_24px_rgba(79,70,229,0.35)]">
@@ -559,7 +580,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
                   <ShieldCheck className="h-5 w-5 text-indigo-200" />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-black tracking-tight text-white">
+                <h2 className="text-xl font-black tracking-tight text-white sm:text-2xl">
                     {locale === "en" ? "Two-Factor Verification" : "İki Aşamalı Doğrulama"}
                   </h2>
                   <p className="text-xs font-semibold text-slate-400">
@@ -614,7 +635,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
           ) : (
             <>
               <div className="mb-6">
-                <h2 className="text-3xl font-black tracking-tight text-white">
+                <h2 className="text-2xl font-black tracking-tight text-white sm:text-3xl">
                   {isLogin ? t("auth.welcome") : t("auth.createAccount")}
                 </h2>
                 <p className="mt-2 text-sm font-semibold text-slate-400">

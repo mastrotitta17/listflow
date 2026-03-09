@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 import { useI18n } from "@/lib/i18n/provider";
 import { Select } from "@/components/ui/select";
@@ -14,6 +15,7 @@ import {
   Package,
   RefreshCw,
   Search,
+  Send,
   Trash2,
 } from "lucide-react";
 
@@ -81,6 +83,7 @@ type ProductCardProps = {
   selectedStoreId: string | null;
   requeueingListingId: string | null;
   removingListingId: string | null;
+  onSendOrder: (row: ProductRow) => void;
   onRequeue: (row: ProductRow) => void;
   onRemove: (row: ProductRow) => void;
   t: ReturnType<typeof useI18n>["t"];
@@ -93,6 +96,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
   selectedStoreId,
   requeueingListingId,
   removingListingId,
+  onSendOrder,
   onRequeue,
   onRemove,
   t,
@@ -244,6 +248,17 @@ const ProductCard: React.FC<ProductCardProps> = ({
         </div>
 
         <div className="pt-1">
+          <div className="mb-2">
+            <button
+              type="button"
+              onClick={() => (selectedStoreId ? onSendOrder(row) : undefined)}
+              disabled={!selectedStoreId || removingListingId === row.id || requeueingListingId === row.id}
+              className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-3 text-xs font-black uppercase tracking-[0.2em] text-emerald-100 transition hover:border-emerald-300/50 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Send className="h-3.5 w-3.5" />
+              {t("productsPanel.sendOrder")}
+            </button>
+          </div>
           <div className="flex items-center justify-between w-full gap-x-2">
             <button
               type="button"
@@ -273,6 +288,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
 const ProductsPanel: React.FC = () => {
   const { t, locale } = useI18n();
+  const router = useRouter();
   const [selectedStoreId, setSelectedStoreId] = useState("");
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState("");
@@ -572,6 +588,10 @@ const ProductsPanel: React.FC = () => {
                   selectedStoreId={selectedStore?.id ?? null}
                   requeueingListingId={requeueingListingId}
                   removingListingId={removingListingId}
+                  onSendOrder={(targetRow) => {
+                    if (!selectedStore) return;
+                    router.push(`/orders?create=1&storeId=${encodeURIComponent(selectedStore.id)}&listingId=${encodeURIComponent(targetRow.id)}`);
+                  }}
                   onRequeue={(targetRow) => {
                     if (!selectedStore) return;
                     requeueMutation.mutate({

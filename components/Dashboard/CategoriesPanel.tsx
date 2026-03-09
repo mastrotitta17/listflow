@@ -28,6 +28,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { CategoriesPanelSkeleton } from "@/components/loading/PageSkeletons";
 
 type FeedbackMessage = {
   type: "success" | "error";
@@ -116,7 +117,7 @@ type CategoriesPanelProps = {
 const CategoriesPanel: React.FC<CategoriesPanelProps> = ({ routeCategorySlug = null }) => {
   const { selectedCategoryId, setSelectedCategory } = useStore();
   const { t, locale } = useI18n();
-  const { categories, error, reload } = useCategoriesRepository(locale);
+  const { categories, loading, error, reload } = useCategoriesRepository(locale);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -237,6 +238,11 @@ const CategoriesPanel: React.FC<CategoriesPanelProps> = ({ routeCategorySlug = n
       return;
     }
 
+    if (isMobile) {
+      setMobileSelectedCategoryId(null);
+      return;
+    }
+
     const firstCategory = categories[0];
     if (!firstCategory) {
       return;
@@ -244,7 +250,7 @@ const CategoriesPanel: React.FC<CategoriesPanelProps> = ({ routeCategorySlug = n
 
     const firstRouteSlug = getCategoryRouteSlug(firstCategory);
     router.replace(`/categories/${encodeURIComponent(firstRouteSlug)}`);
-  }, [categories, pathname, router]);
+  }, [categories, isMobile, pathname, router]);
 
   useEffect(() => {
     if (!routeCategorySlug || !categories.length) {
@@ -326,6 +332,10 @@ const CategoriesPanel: React.FC<CategoriesPanelProps> = ({ routeCategorySlug = n
       mounted = false;
     };
   }, []);
+
+  if (loading) {
+    return <CategoriesPanelSkeleton />;
+  }
 
   const activeCategoryId = isMobile ? mobileSelectedCategoryId : selectedCategoryId;
   const selectedCategory = categories.find((category) => category.id === activeCategoryId) ?? (isMobile ? undefined : categories[0]);
@@ -600,6 +610,7 @@ const CategoriesPanel: React.FC<CategoriesPanelProps> = ({ routeCategorySlug = n
                     onClick={() => {
                       setMobileSelectedCategoryId(null);
                       setSelectedCategory("");
+                      router.push("/categories");
                     }}
                     className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-200 hover:bg-white/10 transition-all cursor-pointer"
                   >
@@ -821,10 +832,10 @@ const CategoriesPanel: React.FC<CategoriesPanelProps> = ({ routeCategorySlug = n
       </div>
 
       <Dialog open={Boolean(selectedSubProduct)} onOpenChange={(open) => !open && closeCatalogModal()}>
-        <DialogContent className="h-screen w-screen max-w-none translate-x-[-50%] translate-y-[-50%] rounded-none border-0 bg-[#0a0a0c] p-0">
-          <div className="h-full w-full overflow-y-auto custom-scrollbar px-5 py-8 sm:px-10 sm:py-10 lg:px-16 lg:py-14">
+        <DialogContent className="h-[100dvh] w-[100vw] max-w-none translate-x-[-50%] translate-y-[-50%] rounded-none border-0 bg-[#0a0a0c] p-0">
+          <div className="custom-scrollbar h-full w-full overflow-y-auto px-4 py-6 sm:px-8 sm:py-8 lg:px-16 lg:py-14">
             <DialogHeader className="space-y-2">
-              <DialogTitle className="text-3xl font-black text-white tracking-tight">
+              <DialogTitle className="text-2xl font-black tracking-tight text-white sm:text-3xl">
                 {selectedSubProduct?.name} · {t("categories.catalogModalTitle")}
               </DialogTitle>
               <DialogDescription className="text-slate-400 font-medium">

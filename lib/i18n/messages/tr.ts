@@ -149,6 +149,7 @@ export const trMessages = {
     requeueing: "Sıraya Alınıyor",
     requeueSuccess: "Ürün tekrar sıraya alındı.",
     requeueError: "Ürün tekrar sıraya alınamadı.",
+    sendOrder: "Sipariş Gönder",
     remove: "Kaldır",
     removing: "Kaldırılıyor",
     removeSuccess: "Ürün sıradan kaldırıldı.",

@@ -149,6 +149,7 @@ export const enMessages = {
     requeueing: "Queueing",
     requeueSuccess: "Product was queued again.",
     requeueError: "Product could not be queued again.",
+    sendOrder: "Send Order",
     remove: "Remove",
     removing: "Removing",
     removeSuccess: "Product was removed from queue.",

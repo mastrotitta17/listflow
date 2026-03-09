@@ -75,7 +75,7 @@ const PaymentSuccess: React.FC = () => {
   }, [sessionId]);
 
   return (
-    <div className="relative min-h-screen w-full flex items-center justify-center bg-[#0a0a0c] p-6 overflow-hidden">
+    <div className="relative flex min-h-screen min-h-[100dvh] w-full items-center justify-center overflow-hidden bg-[#0a0a0c] p-4 sm:p-6">
       {state === 'ready' ? (
         <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
           {confettiPieces.map((piece) => (
@@ -104,19 +104,19 @@ const PaymentSuccess: React.FC = () => {
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-20 max-w-md w-full p-10 rounded-[48px] glass-card-pro border border-emerald-500/20 text-center shadow-2xl"
+        className="glass-card-pro relative z-20 max-w-md w-full rounded-[28px] border border-emerald-500/20 p-6 text-center shadow-2xl sm:rounded-[48px] sm:p-10"
       >
-        <div className="w-24 h-24 bg-emerald-500/10 rounded-[32px] flex items-center justify-center mx-auto mb-8 border border-emerald-500/20 shadow-[0_0_40px_rgba(16,185,129,0.1)]">
-          {state === 'loading' && <Loader2 className="w-12 h-12 text-emerald-400 animate-spin" />}
-          {state === 'ready' && <CheckCircle2 className="w-12 h-12 text-emerald-400" />}
-          {state === 'error' && <AlertCircle className="w-12 h-12 text-red-400" />}
+        <div className="mx-auto mb-6 flex h-18 w-18 items-center justify-center rounded-[24px] border border-emerald-500/20 bg-emerald-500/10 shadow-[0_0_40px_rgba(16,185,129,0.1)] sm:mb-8 sm:h-24 sm:w-24 sm:rounded-[32px]">
+          {state === 'loading' && <Loader2 className="h-10 w-10 animate-spin text-emerald-400 sm:h-12 sm:w-12" />}
+          {state === 'ready' && <CheckCircle2 className="h-10 w-10 text-emerald-400 sm:h-12 sm:w-12" />}
+          {state === 'error' && <AlertCircle className="h-10 w-10 text-red-400 sm:h-12 sm:w-12" />}
         </div>
 
-        {state === 'ready' && <h1 className="text-3xl font-black text-white tracking-tight mb-4">{t('payment.title')}</h1>}
-        {state === 'loading' && <h1 className="text-3xl font-black text-white tracking-tight mb-4">{t('payment.waitingSync')}</h1>}
-        {state === 'error' && <h1 className="text-3xl font-black text-white tracking-tight mb-4">{t('payment.syncFailed')}</h1>}
+        {state === 'ready' && <h1 className="mb-4 text-2xl font-black tracking-tight text-white sm:text-3xl">{t('payment.title')}</h1>}
+        {state === 'loading' && <h1 className="mb-4 text-2xl font-black tracking-tight text-white sm:text-3xl">{t('payment.waitingSync')}</h1>}
+        {state === 'error' && <h1 className="mb-4 text-2xl font-black tracking-tight text-white sm:text-3xl">{t('payment.syncFailed')}</h1>}
 
-        <p className="text-slate-400 font-medium mb-10 leading-relaxed">
+        <p className="mb-8 text-sm font-medium leading-relaxed text-slate-400 sm:mb-10 sm:text-base">
           {state === 'ready' ? t('payment.subtitle') : t('payment.waitingSync')}
         </p>
 
@@ -125,7 +125,7 @@ const PaymentSuccess: React.FC = () => {
             onClick={() => {
               window.location.href = '/';
             }}
-            className="w-full py-5 rounded-2xl bg-indigo-600 text-white font-black text-sm uppercase tracking-widest shadow-xl shadow-indigo-500/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3 cursor-pointer"
+            className="flex w-full items-center justify-center gap-3 rounded-2xl bg-indigo-600 px-4 py-4 text-sm font-black uppercase tracking-widest text-white shadow-xl shadow-indigo-500/20 transition-all hover:scale-[1.02] active:scale-95 cursor-pointer sm:py-5"
           >
             {t('payment.backToPanel')} <ArrowRight className="w-5 h-5" />
           </button>

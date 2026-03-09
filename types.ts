@@ -83,6 +83,10 @@ export interface Order {
   subProductName: string;
   variantName?: string;
   productLink: string;
+  listingId?: string | null;
+  listingKey?: string | null;
+  listingTitle?: string | null;
+  listingImageUrl?: string | null;
   category: string;
   date: string;
   address: string;

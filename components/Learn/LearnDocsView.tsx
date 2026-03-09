@@ -36,7 +36,7 @@ export default function LearnDocsView({ locale, activeGuide, guides }: LearnDocs
   const otherGuides = guides.filter((guide) => guide.slug !== activeGuide.slug).slice(0, 3);
 
   return (
-    <div className="min-h-screen bg-[#07080d] text-white">
+    <div className="min-h-screen min-h-[100dvh] bg-[#07080d] text-white">
       <div className="mx-auto w-full max-w-[1600px] px-4 py-4 sm:px-6 lg:px-8">
         <header className="mb-6 flex items-center justify-between rounded-2xl border border-indigo-500/20 bg-[#0f1320]/90 px-5 py-4 backdrop-blur">
           <Link href="/" className="group inline-flex items-center gap-3">

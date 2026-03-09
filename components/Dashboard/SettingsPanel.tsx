@@ -22,6 +22,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { useI18n } from "@/lib/i18n/provider";
 import { sanitizePhoneInput } from "@/lib/phone";
 import { toast } from "sonner";
+import { SettingsPanelSkeleton } from "@/components/loading/PageSkeletons";
 
 type ProfilePayload = {
   userId: string;
@@ -1144,13 +1145,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   };
 
   return (
-    <div className="h-full w-full overflow-y-auto custom-scrollbar pr-2 pt-2">
+    <div className="h-full w-full overflow-y-auto custom-scrollbar pr-0 pt-2 sm:pr-2">
 
-      {loading ? (
-        <div className="rounded-[32px] border border-white/10 bg-[#101626] p-16 text-center">
-          <p className="text-zinc-400 font-medium">{t("common.loading")}...</p>
-        </div>
-      ) : null}
+      {loading ? <SettingsPanelSkeleton /> : null}
 
       {!loading && loadingError ? (
         <div className="mb-6 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
@@ -1160,7 +1157,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
       {!loading && !loadingError ? (
         <div className="space-y-6 pb-8">
-          <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-[#0f1422]/95 p-7 shadow-[0_24px_70px_rgba(5,10,28,0.5)]">
+          <section className="relative overflow-hidden rounded-[24px] border border-white/10 bg-[#0f1422]/95 p-5 shadow-[0_24px_70px_rgba(5,10,28,0.5)] sm:rounded-[32px] sm:p-7">
             <div className="pointer-events-none absolute inset-0">
               <div className="absolute -left-20 -top-20 h-52 w-52 rounded-full bg-indigo-500/20 blur-3xl" />
               <div className="absolute -right-20 bottom-[-60px] h-52 w-52 rounded-full bg-cyan-500/10 blur-3xl" />
@@ -1270,7 +1267,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
       <AnimatePresence>
         {totpEnrollment ? (
-          <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 sm:p-6">
+          <div className="fixed inset-0 z-[140] flex items-center justify-center p-3 sm:p-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1282,7 +1279,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               initial={{ opacity: 0, scale: 0.92, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="relative w-full max-w-2xl rounded-[30px] border border-indigo-400/30 bg-[#0f1526] p-6 shadow-[0_30px_90px_rgba(5,10,28,0.8)] sm:p-8"
+              className="relative w-full max-w-2xl max-h-[min(92vh,calc(100dvh-1rem))] overflow-y-auto rounded-[24px] border border-indigo-400/30 bg-[#0f1526] p-4 shadow-[0_30px_90px_rgba(5,10,28,0.8)] sm:rounded-[30px] sm:p-8"
             >
               <div className="mb-4 flex items-center gap-2 text-indigo-100">
                 <QrCode className="h-5 w-5" />
@@ -1294,7 +1291,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
                 <div className="flex justify-center lg:justify-start">
                   {qrDataUrl ? (
-                    <div className="relative h-[320px] w-[320px] rounded-[22px] bg-white p-4 shadow-2xl">
+                    <div className="relative h-[min(320px,72vw)] w-[min(320px,72vw)] rounded-[22px] bg-white p-4 shadow-2xl sm:h-[320px] sm:w-[320px]">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={qrDataUrl}
@@ -1306,7 +1303,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       </div>
                     </div>
                   ) : (
-                    <div className="flex h-[320px] w-[320px] items-center justify-center rounded-[22px] border border-white/10 bg-[#11192d] text-xs text-slate-400">
+                    <div className="flex h-[min(320px,72vw)] w-[min(320px,72vw)] items-center justify-center rounded-[22px] border border-white/10 bg-[#11192d] text-center text-xs text-slate-400 sm:h-[320px] sm:w-[320px]">
                       {isEn ? "QR could not be generated." : "QR kod üretilemedi."}
                     </div>
                   )}
@@ -1367,7 +1364,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         ) : null}
 
         {showDeleteAccountModal ? (
-          <div className="fixed inset-0 z-[130] flex items-center justify-center px-6">
+          <div className="fixed inset-0 z-[130] flex items-center justify-center px-3 py-4 sm:px-6 sm:py-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1379,13 +1376,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="relative w-full max-w-lg rounded-[32px] border border-red-500/30 bg-[#120b0b] p-8 shadow-2xl"
+              className="relative w-full max-w-lg max-h-[min(92vh,calc(100dvh-1rem))] overflow-y-auto rounded-[24px] border border-red-500/30 bg-[#120b0b] p-4 shadow-2xl sm:rounded-[32px] sm:p-8"
             >
               <h3 className="mb-2 text-2xl font-black text-white">{t("settings.deleteAccountConfirmTitle")}</h3>
               <p className="mb-3 text-sm text-red-100">{t("settings.deleteAccountConfirmText")}</p>
               <p className="mb-6 text-xs font-bold text-red-200/70">{t("settings.deleteAccountWarning")}</p>
 
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row">
                 <button
                   type="button"
                   onClick={() => setShowDeleteAccountModal(false)}

@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useI18n } from "@/lib/i18n/provider";
 import { sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
+import { LegacyOnboardingSkeleton } from "@/components/loading/PageSkeletons";
 
 type StoreCurrency = "USD" | "TRY";
 type LegacyOnboardingStep = 1 | 2;
@@ -59,7 +60,7 @@ export default function LegacyOnboardingPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { locale } = useI18n();
-  const { categories } = useCategoriesRepository(locale);
+  const { categories, loading: categoriesLoading } = useCategoriesRepository(locale);
   const onboardingToken = (searchParams.get("token") ?? "").trim();
 
   const [loading, setLoading] = useState(true);
@@ -216,6 +217,11 @@ export default function LegacyOnboardingPage() {
     };
   }, [onboardingToken]);
 
+
+  if (loading || categoriesLoading) {
+    return <LegacyOnboardingSkeleton />;
+  }
+
   const handleSetPassword = async () => {
     const normalizedName = fullName.trim();
     const normalizedPhone = phone.trim();
@@ -334,7 +340,7 @@ export default function LegacyOnboardingPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#07090f]">
+      <div className="flex min-h-screen min-h-[100dvh] items-center justify-center bg-[#07090f] px-4">
         <div className="flex items-center gap-3 text-slate-200">
           <Loader2 className="h-5 w-5 animate-spin text-indigo-400" />
           <span className="text-sm font-bold">Kurulum hazırlanıyor...</span>
@@ -345,15 +351,15 @@ export default function LegacyOnboardingPage() {
 
   if (!currentUser) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#07090f] px-4">
+      <div className="flex min-h-screen min-h-[100dvh] items-center justify-center bg-[#07090f] px-4">
         <Card className="w-full max-w-xl border-white/10 bg-[#0d111b]/95 text-white shadow-2xl">
-          <CardHeader>
+          <CardHeader className="space-y-2 p-5 sm:p-6">
             <CardTitle className="text-xl font-black">Bağlantı Doğrulanamadı</CardTitle>
             <CardDescription className="text-slate-400">
               {bootstrapError ?? "Onboarding bağlantısı doğrulanamadı. Lütfen yeni link kullanın."}
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex justify-end">
+          <CardContent className="flex justify-end p-5 pt-0 sm:p-6 sm:pt-0">
             <Button type="button" className="cursor-pointer" onClick={() => window.location.reload()}>
               Tekrar Dene
             </Button>
@@ -364,23 +370,23 @@ export default function LegacyOnboardingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#07090f] px-4 py-8 sm:px-6 lg:px-8">
+    <div className="min-h-screen min-h-[100dvh] bg-[#07090f] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
       <div className="mx-auto w-full max-w-3xl">
         <Card className="border-white/10 bg-[#0d111b]/95 text-white shadow-2xl">
-          <CardHeader className="space-y-3">
-            <div className="flex items-center gap-3">
+          <CardHeader className="space-y-3 p-5 sm:p-6">
+            <div className="flex items-start gap-3 sm:items-center">
               <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-indigo-400/40 bg-indigo-600 shadow-[0_0_25px_rgba(79,70,229,0.35)]">
                 <Rocket className="h-5 w-5 text-white" />
               </div>
               <div>
-                <CardTitle className="text-2xl font-black tracking-tight">Legacy Kullanıcı Kurulumu</CardTitle>
+                <CardTitle className="text-xl font-black tracking-tight sm:text-2xl">Legacy Kullanıcı Kurulumu</CardTitle>
                 <CardDescription className="text-slate-400">
                   Güvenlik ve mağaza bilgilerini tamamlayıp Pro aboneliğini mağazanıza bağlayın.
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-8">
+          <CardContent className="space-y-6 p-5 pt-0 sm:space-y-8 sm:p-6 sm:pt-0">
             <div className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-white/3 p-2">
               <div
                 className={`rounded-xl px-3 py-2 text-center text-xs font-black tracking-wide ${
@@ -470,14 +476,14 @@ export default function LegacyOnboardingPage() {
                 </div>
 
                 {!passwordSet ? (
-                  <div className="flex justify-end">
+                  <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
                     <Button type="button" onClick={() => void handleSetPassword()} disabled={settingPassword}>
                       {settingPassword ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                       Şifreyi Oluştur ve Devam Et
                     </Button>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-xs font-semibold text-emerald-300">Şifre adımı zaten tamamlanmış.</p>
                     <Button type="button" onClick={() => setCurrentStep(2)}>
                       Mağaza Adımına Geç

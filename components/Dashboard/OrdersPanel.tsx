@@ -22,6 +22,7 @@ import {
   Link as LinkIcon,
   Layers,
   X,
+  ImageIcon,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n/provider';
 import { normalizePhoneForStorage, sanitizePhoneInput } from '@/lib/phone';
@@ -29,6 +30,7 @@ import { useCategoriesRepository } from '@/lib/repositories/categories';
 import { useOrdersRepository } from '@/lib/repositories/orders';
 import { toast } from 'sonner';
 import { Select } from '@/components/ui/select';
+import { OrdersPanelSkeleton } from '@/components/loading/PageSkeletons';
 
 type GeoCountryOption = {
   code: string;
@@ -42,6 +44,17 @@ type GeoStateOption = {
 
 type GeoCityOption = {
   name: string;
+};
+
+type OrderProductOption = {
+  id: string;
+  key: string | null;
+  title: string;
+  imageUrl: string | null;
+  category: string | null;
+  price: number;
+  status: string;
+  storeId: string;
 };
 
 type FilterStatus = 'all' | 'paid' | 'unpaid';
@@ -120,6 +133,16 @@ const OrdersPanel: React.FC = () => {
   const { orders, loading, error, createOrder, deleteOrder, reload } = useOrdersRepository();
   const searchParams = useSearchParams();
   const handledCheckoutSessionRef = useRef<string | null>(null);
+  const initialCreateIntentRef = useRef<{
+    open: boolean;
+    storeId: string;
+    listingId: string;
+  }>({
+    open: searchParams.get('create') === '1',
+    storeId: (searchParams.get('storeId') ?? '').trim(),
+    listingId: (searchParams.get('listingId') ?? '').trim(),
+  });
+  const createIntentAppliedRef = useRef(false);
   const [showModal, setShowModal] = useState(false);
   const { t, locale } = useI18n();
   const { categories } = useCategoriesRepository(locale);
@@ -134,6 +157,14 @@ const OrdersPanel: React.FC = () => {
   const [selectedSubId, setSelectedSubId] = useState('');
   const [selectedVarId, setSelectedVarId] = useState('');
   const [productLink, setProductLink] = useState('');
+  const [showManualProductLink, setShowManualProductLink] = useState(false);
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [productPickerSearchInput, setProductPickerSearchInput] = useState('');
+  const [productPickerSearchQuery, setProductPickerSearchQuery] = useState('');
+  const [productPickerRows, setProductPickerRows] = useState<OrderProductOption[]>([]);
+  const [productPickerLoading, setProductPickerLoading] = useState(false);
+  const [productPickerError, setProductPickerError] = useState<string | null>(null);
+  const [selectedListing, setSelectedListing] = useState<OrderProductOption | null>(null);
   const [address, setAddress] = useState('');
   const [receiverName, setReceiverName] = useState('');
   const [receiverPhone, setReceiverPhone] = useState('');
@@ -180,6 +211,36 @@ const OrdersPanel: React.FC = () => {
 
     toast.error(geoError);
   }, [geoError]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setProductPickerSearchQuery(productPickerSearchInput.trim());
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [productPickerSearchInput]);
+
+  useEffect(() => {
+    if (createIntentAppliedRef.current || !initialCreateIntentRef.current.open) {
+      return;
+    }
+
+    createIntentAppliedRef.current = true;
+    setShowModal(true);
+
+    if (initialCreateIntentRef.current.storeId) {
+      setSelectedStoreId(initialCreateIntentRef.current.storeId);
+    }
+
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('create');
+      url.searchParams.delete('storeId');
+      url.searchParams.delete('listingId');
+      const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState({}, '', nextUrl);
+    }
+  }, []);
 
   useEffect(() => {
     const payment = (searchParams.get('payment') ?? '').toLowerCase();
@@ -300,6 +361,50 @@ const OrdersPanel: React.FC = () => {
       setStoreOptionsLoading(false);
     }
   }, [t]);
+
+  const fetchProductOptions = useCallback(async (args: { storeId: string; query?: string; listingId?: string }) => {
+    const params = new URLSearchParams({
+      storeId: args.storeId,
+      page: '1',
+      pageSize: args.listingId ? '1' : '24',
+    });
+
+    if (args.query) {
+      params.set('q', args.query);
+    }
+
+    if (args.listingId) {
+      params.set('listingId', args.listingId);
+    }
+
+    const response = await fetch(`/api/stores/products?${params.toString()}`, {
+      method: 'GET',
+      cache: 'no-store',
+      credentials: 'include',
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      rows?: Array<{
+        id: string;
+        key: string | null;
+        title: string;
+        imageUrl: string | null;
+        category: string | null;
+        price: number;
+        status: string;
+      }>;
+      error?: string;
+    };
+
+    if (!response.ok) {
+      throw new Error(payload.error || (locale === 'en' ? 'Products could not be loaded.' : 'Ürünler yüklenemedi.'));
+    }
+
+    return (payload.rows ?? []).map((row) => ({
+      ...row,
+      storeId: args.storeId,
+    }));
+  }, [locale]);
 
   const loadCountryOptions = useCallback(async () => {
     setGeoLoadingCountries(true);
@@ -448,6 +553,87 @@ const OrdersPanel: React.FC = () => {
     void hydrateGeoByCountry(receiverCountryCode);
   }, [countryOptions.length, hydrateGeoByCountry, loadCountryOptions, loadStoreOptions, receiverCountryCode, showModal]);
 
+  useEffect(() => {
+    if (!showModal || !selectedStoreId) {
+      setProductPickerRows([]);
+      setProductPickerError(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      setProductPickerLoading(true);
+      setProductPickerError(null);
+
+      try {
+        const rows = await fetchProductOptions({
+          storeId: selectedStoreId,
+          query: productPickerSearchQuery || undefined,
+        });
+
+        if (!cancelled) {
+          setProductPickerRows(rows);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setProductPickerRows([]);
+          setProductPickerError(loadError instanceof Error ? loadError.message : t('productsPanel.loadError'));
+        }
+      } finally {
+        if (!cancelled) {
+          setProductPickerLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchProductOptions, productPickerSearchQuery, selectedStoreId, showModal, t]);
+
+  useEffect(() => {
+    const intent = initialCreateIntentRef.current;
+    if (!showModal || !selectedStoreId || !intent.listingId || selectedListing?.id === intent.listingId) {
+      return;
+    }
+
+    if (intent.storeId && intent.storeId !== selectedStoreId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadSelectedListing = async () => {
+      try {
+        const rows = await fetchProductOptions({
+          storeId: selectedStoreId,
+          listingId: intent.listingId,
+        });
+
+        if (!cancelled && rows[0]) {
+          setSelectedListing(rows[0]);
+        }
+      } catch {
+        // ignore initial deep-link prefill failure; user can still choose manually
+      }
+    };
+
+    void loadSelectedListing();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchProductOptions, selectedListing?.id, selectedStoreId, showModal]);
+
+  useEffect(() => {
+    if (selectedListing && selectedListing.storeId !== selectedStoreId) {
+      setSelectedListing(null);
+    }
+  }, [selectedListing, selectedStoreId]);
+
   const handleCountryChange = (nextCountryCode: string) => {
     const normalizedCountryCode = nextCountryCode.trim().toUpperCase();
     setReceiverCountryCode(normalizedCountryCode);
@@ -470,6 +656,14 @@ const OrdersPanel: React.FC = () => {
   const handleCityChange = (nextCity: string) => {
     setReceiverCity(nextCity);
     setReceiverTown((previousValue) => previousValue || nextCity);
+  };
+
+  const handleOrderStoreChange = (nextStoreId: string) => {
+    setSelectedStoreId(nextStoreId);
+    setSelectedListing(null);
+    setProductPickerSearchInput('');
+    setProductPickerSearchQuery('');
+    setShowManualProductLink(false);
   };
 
   const baseMaliyet = useMemo(
@@ -503,6 +697,7 @@ const OrdersPanel: React.FC = () => {
           order.address,
           order.labelNumber,
           order.productLink,
+          order.listingTitle,
           order.receiverName,
           order.receiverCity,
           order.note,
@@ -556,6 +751,8 @@ const OrdersPanel: React.FC = () => {
       return;
     }
 
+    const trimmedProductLink = productLink.trim();
+
     const resolvedReceiverTown = receiverTown.trim() || receiverCity.trim();
 
     const normalizedReceiverPhone = normalizePhoneForStorage(receiverPhone);
@@ -570,6 +767,11 @@ const OrdersPanel: React.FC = () => {
       return;
     }
 
+    if (!selectedListing && !trimmedProductLink) {
+      toast.error(locale === 'en' ? 'Select a product or enter an Etsy link.' : 'Bir ürün seçin veya Etsy linki girin.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -578,7 +780,11 @@ const OrdersPanel: React.FC = () => {
         category: currentCategory.name,
         subProductName: currentSubProduct.name,
         variantName: currentVariation?.name ?? null,
-        productLink,
+        productLink: trimmedProductLink,
+        listingId: selectedListing?.id ?? null,
+        listingKey: selectedListing?.key ?? null,
+        listingTitle: selectedListing?.title ?? null,
+        listingImageUrl: selectedListing?.imageUrl ?? null,
         date: new Date().toISOString().split('T')[0],
         address,
         receiverName: receiverName.trim(),
@@ -615,6 +821,11 @@ const OrdersPanel: React.FC = () => {
       setSelectedSubId('');
       setSelectedVarId('');
       setProductLink('');
+      setSelectedListing(null);
+      setShowManualProductLink(false);
+      setProductPickerSearchInput('');
+      setProductPickerSearchQuery('');
+      setProductPickerOpen(false);
       if (storeOptions.length > 1) {
         setSelectedStoreId('');
       }
@@ -705,7 +916,7 @@ const OrdersPanel: React.FC = () => {
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-3 p-5 custom-scrollbar">
+      <div className="custom-scrollbar flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
         {error && (
           <div className="p-4 rounded-2xl border border-red-500/20 bg-red-500/10 text-red-300 text-sm">
             {error}
@@ -713,11 +924,9 @@ const OrdersPanel: React.FC = () => {
         )}
 
         {loading ? (
-          <div className="p-16 glass rounded-[32px] text-center border-2 border-dashed border-zinc-200 dark:border-white/10">
-            <p className="text-zinc-400 font-medium">{t('common.loading')}...</p>
-          </div>
+          <OrdersPanelSkeleton />
         ) : filteredOrders.length === 0 ? (
-          <div className="p-16 glass rounded-[32px] text-center border-2 border-dashed border-zinc-200 dark:border-white/10">
+          <div className="glass rounded-[24px] border-2 border-dashed border-zinc-200 p-8 text-center dark:border-white/10 sm:rounded-[32px] sm:p-16">
             <p className="text-zinc-400 font-medium">{t('orders.empty')}</p>
           </div>
         ) : (
@@ -796,7 +1005,7 @@ const OrdersPanel: React.FC = () => {
 
       <AnimatePresence>
         {deleteTargetOrder && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center px-6">
+          <div className="fixed inset-0 z-[120] flex items-center justify-center px-3 py-4 sm:px-6 sm:py-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -808,7 +1017,7 @@ const OrdersPanel: React.FC = () => {
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="relative w-full max-w-lg p-8 rounded-[32px] glass-card-pro border border-white/10 shadow-2xl"
+              className="relative w-full max-w-lg max-h-[min(92vh,calc(100dvh-1rem))] overflow-y-auto rounded-[24px] border border-white/10 p-4 glass-card-pro shadow-2xl sm:rounded-[32px] sm:p-8"
             >
               <h3 className="text-2xl font-black text-white mb-2">{t('orders.deleteConfirmTitle')}</h3>
               <p className="text-slate-300 text-sm mb-6">{t('orders.deleteConfirm')}</p>
@@ -817,7 +1026,7 @@ const OrdersPanel: React.FC = () => {
                 {deleteTargetOrder.label}
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row">
                 <button
                   onClick={() => setDeleteTargetOrder(null)}
                   disabled={deletingOrderId === deleteTargetOrder.id}
@@ -841,19 +1050,19 @@ const OrdersPanel: React.FC = () => {
 
       <AnimatePresence>
         {showModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-6">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center px-3 py-3 sm:px-4 sm:py-6">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowModal(false)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
             <motion.div
               initial={{ opacity: 0, y: 50, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 50, scale: 0.95 }}
-              className="relative w-full max-w-4xl p-6 lg:p-10 rounded-[40px] glass-card shadow-2xl overflow-y-auto max-h-full custom-scrollbar bg-[#0a0a0c]"
+              className="relative w-full max-w-4xl max-h-[min(94vh,calc(100dvh-0.75rem))] overflow-y-auto rounded-[24px] bg-[#0a0a0c] p-4 shadow-2xl glass-card custom-scrollbar sm:rounded-[32px] sm:p-6 lg:rounded-[40px] lg:p-10"
             >
-              <div className="flex items-center gap-3 mb-8">
+              <div className="mb-6 flex items-center gap-3 sm:mb-8">
                 <div className="p-3 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-500/30">
                   <Send className="text-white w-6 h-6" />
                 </div>
-                <h2 className="text-3xl font-black tracking-tight">{t('orders.newOrder')}</h2>
+                <h2 className="text-2xl font-black tracking-tight sm:text-3xl">{t('orders.newOrder')}</h2>
               </div>
 
               <form onSubmit={handleSendOrder} className="space-y-6">
@@ -862,7 +1071,7 @@ const OrdersPanel: React.FC = () => {
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">{t('orders.storeLabel')}</label>
                     <Select
                       value={selectedStoreId}
-                      onChange={(event) => setSelectedStoreId(event.target.value)}
+                      onChange={(event) => handleOrderStoreChange(event.target.value)}
                       disabled={storeOptionsLoading || storeOptions.length === 0}
                       className="h-[54px] rounded-2xl disabled:opacity-60"
                     >
@@ -927,19 +1136,80 @@ const OrdersPanel: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Ürün Etsy Linki (Zorunlu)</label>
-                  <div className="relative">
-                    <LinkIcon className="absolute left-4 top-3.5 w-4 h-4 text-zinc-400" />
-                    <input
-                      required
-                      type="url"
-                      value={productLink}
-                      onChange={(e) => setProductLink(e.target.value)}
-                      placeholder="https://www.etsy.com/listing/..."
-                      className="w-full pl-10 pr-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
-                    />
+                <div className="space-y-3 rounded-[24px] border border-white/10 bg-white/5 p-4 sm:p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-zinc-400">
+                        {locale === 'en' ? 'Order Product' : 'Sipariş Ürünü'}
+                      </label>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {locale === 'en'
+                          ? 'Choose the product that received the order, or enter the Etsy link if it is not listed.'
+                          : 'Sipariş gelen ürünü seçin, listede yoksa Etsy linkini manuel girin.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setProductPickerOpen(true)}
+                      disabled={!selectedStoreId}
+                      className="inline-flex items-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-500/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-200 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                    >
+                      <ImageIcon className="h-4 w-4" />
+                      {selectedListing ? (locale === 'en' ? 'Change Product' : 'Ürünü Değiştir') : (locale === 'en' ? 'Select Product' : 'Ürün Seç')}
+                    </button>
                   </div>
+
+                  {selectedListing ? (
+                    <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-[#0a0a0c] p-3">
+                      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl bg-white/5">
+                        {selectedListing.imageUrl ? (
+                          <img src={selectedListing.imageUrl} alt={selectedListing.title} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center">
+                            <Package className="h-5 w-5 text-slate-500" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="line-clamp-2 text-sm font-black text-white">{selectedListing.title}</p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          {selectedListing.category ?? (locale === 'en' ? 'No category' : 'Kategori yok')}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-[#0a0a0c] px-4 py-5 text-sm text-slate-400">
+                      {selectedStoreId
+                        ? (locale === 'en' ? 'No product selected yet.' : 'Henüz ürün seçilmedi.')
+                        : (locale === 'en' ? 'Select a store first to load products.' : 'Ürünleri yüklemek için önce mağaza seçin.')}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setShowManualProductLink((prev) => !prev)}
+                    className="text-xs font-bold text-indigo-300 underline underline-offset-4 transition hover:text-white cursor-pointer"
+                  >
+                    {locale === 'en' ? 'My product is not in the list' : 'Ürünüm listede yok'}
+                  </button>
+
+                  {showManualProductLink ? (
+                    <div className="space-y-2">
+                      <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-zinc-400">
+                        {locale === 'en' ? 'Etsy Product Link' : 'Ürün Etsy Linki'}
+                      </label>
+                      <div className="relative">
+                        <LinkIcon className="absolute left-4 top-3.5 h-4 w-4 text-zinc-400" />
+                        <input
+                          type="url"
+                          value={productLink}
+                          onChange={(e) => setProductLink(e.target.value)}
+                          placeholder="https://www.etsy.com/listing/..."
+                          className="w-full rounded-2xl border border-zinc-200 py-3.5 pl-10 pr-4 text-sm outline-none transition-all focus:ring-2 focus:ring-indigo-500 glass dark:border-white/10"
+                        />
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="space-y-2">
@@ -1195,6 +1465,126 @@ const OrdersPanel: React.FC = () => {
                   </button>
                 </div>
               </form>
+
+              <AnimatePresence>
+                {productPickerOpen ? (
+                  <div className="fixed inset-0 z-[110] flex items-center justify-center px-3 py-4 sm:px-6">
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+                      onClick={() => setProductPickerOpen(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, y: 20, scale: 0.96 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 20, scale: 0.96 }}
+                      className="relative w-full max-w-4xl max-h-[min(92vh,calc(100dvh-1rem))] overflow-y-auto rounded-[24px] border border-white/10 bg-[#0f1117] p-4 shadow-2xl sm:p-6"
+                    >
+                      <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <h3 className="text-xl font-black text-white">
+                            {locale === 'en' ? 'Select Order Product' : 'Sipariş Ürünü Seç'}
+                          </h3>
+                          <p className="mt-1 text-sm text-slate-400">
+                            {locale === 'en'
+                              ? 'Choose one of the products generated for the selected store.'
+                              : 'Seçili mağaza için üretilen ürünlerden birini seçin.'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setProductPickerOpen(false)}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-300 transition hover:text-white cursor-pointer"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <div className="mb-5 flex flex-col gap-3 sm:flex-row">
+                        <div className="relative flex-1">
+                          <Search className="pointer-events-none absolute left-4 top-3.5 h-4 w-4 text-slate-500" />
+                          <input
+                            value={productPickerSearchInput}
+                            onChange={(event) => setProductPickerSearchInput(event.target.value)}
+                            placeholder={locale === 'en' ? 'Search product title...' : 'Ürün başlığı ara...'}
+                            className="w-full rounded-2xl border border-white/10 bg-[#0a0a0c] py-3.5 pl-10 pr-4 text-sm text-white outline-none transition focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedListing(null);
+                            setProductPickerOpen(false);
+                          }}
+                          className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs font-black uppercase tracking-[0.2em] text-slate-300 transition hover:text-white cursor-pointer"
+                        >
+                          {locale === 'en' ? 'Clear Selection' : 'Seçimi Temizle'}
+                        </button>
+                      </div>
+
+                      {productPickerError ? (
+                        <div className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                          {productPickerError}
+                        </div>
+                      ) : null}
+
+                      {productPickerLoading ? (
+                        <div className="flex min-h-52 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
+                          <Loader2 className="h-6 w-6 animate-spin text-indigo-300" />
+                        </div>
+                      ) : productPickerRows.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-white/10 bg-white/5 px-6 py-12 text-center text-sm text-slate-400">
+                          {locale === 'en' ? 'No matching products found for this store.' : 'Bu mağaza için eşleşen ürün bulunamadı.'}
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          {productPickerRows.map((row) => {
+                            const active = selectedListing?.id === row.id;
+                            return (
+                              <button
+                                key={row.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedListing(row);
+                                  setShowManualProductLink(false);
+                                  setProductLink('');
+                                  setProductPickerOpen(false);
+                                }}
+                                className={`overflow-hidden rounded-[22px] border text-left transition ${
+                                  active
+                                    ? 'border-indigo-400/60 bg-indigo-500/10'
+                                    : 'border-white/10 bg-white/5 hover:border-indigo-400/30'
+                                }`}
+                              >
+                                <div className="aspect-[4/3] overflow-hidden bg-[#0a0a0c]">
+                                  {row.imageUrl ? (
+                                    <img src={row.imageUrl} alt={row.title} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center">
+                                      <Package className="h-8 w-8 text-slate-500" />
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="space-y-2 p-4">
+                                  <p className="line-clamp-2 text-sm font-black text-white">{row.title}</p>
+                                  <div className="flex items-center justify-between gap-2 text-xs">
+                                    <span className="line-clamp-1 text-slate-400">{row.category ?? '-'}</span>
+                                    <span className="rounded-full border border-teal-400/30 bg-teal-500/10 px-2.5 py-1 font-black text-teal-200">
+                                      ${row.price.toFixed(2)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </motion.div>
+                  </div>
+                ) : null}
+              </AnimatePresence>
             </motion.div>
           </div>
         )}

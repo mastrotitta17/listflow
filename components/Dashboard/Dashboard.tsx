@@ -604,7 +604,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <>
-    <div className="flex h-screen overflow-hidden bg-[#0a0a0c]">
+    <div className="flex min-h-screen h-[100dvh] overflow-hidden bg-[#0a0a0c]">
       <Sidebar
         activeSection={activeSection}
         mobileOpen={mobileSidebarOpen}
@@ -654,12 +654,12 @@ const Dashboard: React.FC<DashboardProps> = ({
     </div>
 
       {mfaRequired ? (
-        <div className="fixed inset-0 z-[2147483647] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[2147483647] flex items-center justify-center p-3 sm:p-4">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
           <motion.div
             initial={{ opacity: 0, scale: 0.92, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="relative w-full max-w-md rounded-3xl border border-indigo-400/30 bg-[#101727] p-6 shadow-[0_30px_90px_rgba(5,10,28,0.85)]"
+            className="relative w-full max-w-md max-h-[min(92vh,calc(100dvh-1rem))] overflow-y-auto rounded-[28px] border border-indigo-400/30 bg-[#101727] p-4 shadow-[0_30px_90px_rgba(5,10,28,0.85)] sm:rounded-3xl sm:p-6"
           >
             <div className="mb-4 flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/20 text-indigo-200">
@@ -696,7 +696,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               </p>
             ) : null}
 
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
                 onClick={() => void handleMfaVerify()}
@@ -725,12 +725,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       ) : null}
 
       {!mfaRequired && renewalModalOpen && expiredStores.length > 0 ? (
-        <div className="fixed inset-0 z-[2147483646] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[2147483646] flex items-center justify-center p-3 sm:p-4">
           <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
           <motion.div
             initial={{ opacity: 0, scale: 0.94, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="relative w-full max-w-2xl rounded-3xl border border-red-400/25 bg-[#101727] p-6 shadow-[0_30px_90px_rgba(5,10,28,0.85)]"
+            className="relative w-full max-w-2xl max-h-[min(92vh,calc(100dvh-1rem))] overflow-y-auto rounded-[28px] border border-red-400/25 bg-[#101727] p-4 shadow-[0_30px_90px_rgba(5,10,28,0.85)] sm:rounded-3xl sm:p-6"
           >
             <div className="mb-4">
               <p className="text-sm font-black uppercase tracking-widest text-red-300">

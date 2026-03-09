@@ -1054,7 +1054,7 @@ const PricingPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0c] text-white">
+    <div className="min-h-screen min-h-[100dvh] bg-[#0a0a0c] text-white">
       <nav className="sticky top-0 z-40 px-6 md:px-8 py-5 glass-pro border-b border-indigo-500/10">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           <Link
@@ -1195,7 +1195,7 @@ const PricingPage = () => {
 
       <AnimatePresence>
         {isWizardOpen ? (
-          <div className="fixed inset-0 z-[140] flex items-center justify-center p-3 sm:p-6">
+          <div className="fixed inset-0 z-[140] flex items-center justify-center p-2 sm:p-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1208,9 +1208,9 @@ const PricingPage = () => {
               initial={{ opacity: 0, scale: 0.98, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.98, y: 12 }}
-              className="relative z-[141] h-[94vh] w-full max-w-6xl rounded-[38px] border border-white/10 bg-[#0d1016] shadow-2xl flex flex-col overflow-hidden"
+              className="relative z-[141] flex h-[min(94vh,calc(100dvh-0.5rem))] w-full max-w-6xl flex-col overflow-hidden rounded-[24px] border border-white/10 bg-[#0d1016] shadow-2xl sm:rounded-[38px]"
             >
-              <header className="shrink-0 border-b border-white/10 px-5 sm:px-7 py-4 sm:py-5 flex flex-col gap-4">
+              <header className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-7 sm:py-5 flex flex-col gap-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300 mb-2">{copy.stepsTitle}</p>
@@ -1226,7 +1226,7 @@ const PricingPage = () => {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   {stepItems.map((item) => {
                     const isCurrent = wizardStep === item.step;
                     const isCompleted = wizardStep > item.step;

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n/provider";
 import { toast } from "sonner";
+import { ReferralPanelSkeleton } from "@/components/loading/PageSkeletons";
 
 type Conversion = {
   id: string;
@@ -197,11 +198,7 @@ const ReferralPanel: React.FC = () => {
   const reward10 = data?.rewards.find((r) => r.milestone === 10);
 
   if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-400" />
-      </div>
-    );
+    return <ReferralPanelSkeleton />;
   }
 
   return (
@@ -672,7 +669,7 @@ const ReferralPanel: React.FC = () => {
       {/* ── QR Modal (full-size) ─────────────────────────────────── */}
       <AnimatePresence>
         {qrModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -684,7 +681,7 @@ const ReferralPanel: React.FC = () => {
               initial={{ opacity: 0, scale: 0.88, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.92, y: 10 }}
-              className="relative z-10 rounded-3xl border border-indigo-400/30 bg-[#101727] p-8 shadow-[0_30px_90px_rgba(5,10,28,0.85)] flex flex-col items-center gap-6"
+              className="relative z-10 flex max-h-[min(92vh,calc(100dvh-1rem))] w-full max-w-lg flex-col items-center gap-5 overflow-y-auto rounded-[24px] border border-indigo-400/30 bg-[#101727] p-4 shadow-[0_30px_90px_rgba(5,10,28,0.85)] sm:rounded-3xl sm:p-8"
             >
               {/* Glow */}
               <div className="pointer-events-none absolute inset-0 rounded-3xl overflow-hidden">
@@ -711,7 +708,7 @@ const ReferralPanel: React.FC = () => {
                         <>
                           <QRCodeSVG
                             value={referralUrl}
-                            size={220}
+                            size={180}
                             bgColor="#ffffff"
                             fgColor="#1e1b4b"
                             level="M"
@@ -731,7 +728,7 @@ const ReferralPanel: React.FC = () => {
                   </div>
                 </div>
 
-                <p className="mt-6 text-center font-mono text-sm font-black tracking-[0.4em] text-indigo-300">
+                <p className="mt-6 break-all text-center font-mono text-sm font-black tracking-[0.3em] text-indigo-300 sm:tracking-[0.4em]">
                   {data?.code}
                 </p>
                 <p className="mt-1 text-center text-[11px] text-slate-500">

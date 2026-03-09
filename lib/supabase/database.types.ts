@@ -174,6 +174,10 @@ export type Database = {
           id: string
           ioss: string | null
           label_number: string
+          listing_id: string | null
+          listing_image_url: string | null
+          listing_key: string | null
+          listing_title: string | null
           shipment_error: string | null
           shipment_external_order_id: string | null
           shipment_invoice_url: string | null
@@ -218,6 +222,10 @@ export type Database = {
           id?: string
           ioss?: string | null
           label_number: string
+          listing_id?: string | null
+          listing_image_url?: string | null
+          listing_key?: string | null
+          listing_title?: string | null
           shipment_error?: string | null
           shipment_external_order_id?: string | null
           shipment_invoice_url?: string | null
@@ -262,6 +270,10 @@ export type Database = {
           id?: string
           ioss?: string | null
           label_number?: string
+          listing_id?: string | null
+          listing_image_url?: string | null
+          listing_key?: string | null
+          listing_title?: string | null
           shipment_error?: string | null
           shipment_external_order_id?: string | null
           shipment_invoice_url?: string | null

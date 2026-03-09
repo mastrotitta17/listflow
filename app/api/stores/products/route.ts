@@ -97,8 +97,10 @@ export async function GET(request: NextRequest) {
 
     const url = new URL(request.url);
     const requestedStoreId = (url.searchParams.get("storeId") ?? "").trim();
+    const requestedListingId = (url.searchParams.get("listingId") ?? "").trim();
     const queryText = (url.searchParams.get("q") ?? "").trim();
     const page = toPositiveInt(url.searchParams.get("page"), 1);
+    const pageSize = Math.min(toPositiveInt(url.searchParams.get("pageSize"), PAGE_SIZE), 100);
 
     const stores = await loadOwnedStores(user.id);
     const normalizedStores = stores.map((store) => ({
@@ -120,13 +122,13 @@ export async function GET(request: NextRequest) {
         rows: [],
         total: 0,
         page: 1,
-        pageSize: PAGE_SIZE,
+        pageSize,
         totalPages: 0,
       });
     }
 
-    const from = (page - 1) * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
     let query = supabaseAdmin
       .from("listing")
       .select(
@@ -136,6 +138,10 @@ export async function GET(request: NextRequest) {
       .eq("client_id", selectedStore.id)
       .order("updated_at", { ascending: false })
       .range(from, to);
+
+    if (requestedListingId) {
+      query = query.eq("id", requestedListingId);
+    }
 
     if (queryText) {
       query = query.ilike("title", `%${queryText}%`);
@@ -167,7 +173,7 @@ export async function GET(request: NextRequest) {
     }));
 
     const total = count ?? rows.length;
-    const totalPages = total > 0 ? Math.ceil(total / PAGE_SIZE) : 1;
+    const totalPages = total > 0 ? Math.ceil(total / pageSize) : 1;
 
     return NextResponse.json({
       stores: normalizedStores,
@@ -175,7 +181,7 @@ export async function GET(request: NextRequest) {
       rows,
       total,
       page,
-      pageSize: PAGE_SIZE,
+      pageSize,
       totalPages,
     });
   } catch (error) {

@@ -20,6 +20,10 @@ type OrderRow = {
   sub_product_name?: string | null;
   variant_name?: string | null;
   product_link?: string | null;
+  listing_id?: string | null;
+  listing_key?: string | null;
+  listing_title?: string | null;
+  listing_image_url?: string | null;
   order_date?: string | null;
   shipping_address?: string | null;
   note?: string | null;
@@ -63,6 +67,10 @@ type CreateOrderPayload = {
   subProductName?: unknown;
   variantName?: unknown;
   productLink?: unknown;
+  listingId?: unknown;
+  listingKey?: unknown;
+  listingTitle?: unknown;
+  listingImageUrl?: unknown;
   address?: unknown;
   receiverName?: unknown;
   receiverPhone?: unknown;
@@ -104,12 +112,12 @@ type CreateOrderShipmentState = {
 };
 
 const ORDER_SELECT_CANDIDATES = [
-  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, shipment_status, shipment_error, shipment_provider, shipment_external_order_id, shipment_tracking_number, shipment_label_url, shipment_invoice_url, shipment_response, shipment_last_synced_at, navlungo_status, navlungo_error, navlungo_store_id, navlungo_search_id, navlungo_quote_reference, navlungo_shipment_id, navlungo_shipment_reference, navlungo_tracking_url, navlungo_response, navlungo_last_synced_at, created_at, updated_at",
-  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, shipment_status, shipment_error, shipment_provider, shipment_external_order_id, shipment_tracking_number, shipment_label_url, shipment_invoice_url, shipment_response, shipment_last_synced_at, created_at, updated_at",
-  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, navlungo_status, navlungo_error, navlungo_store_id, navlungo_search_id, navlungo_quote_reference, navlungo_shipment_id, navlungo_shipment_reference, navlungo_tracking_url, navlungo_last_synced_at, created_at, updated_at",
-  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, created_at, updated_at",
-  "id, user_id, category_name, sub_product_name, variant_name, product_link, order_date, shipping_address, note, ioss, label_number, amount_usd, payment_status, created_at, updated_at",
-  "id, user_id, category_name, sub_product_name, product_link, order_date, shipping_address, label_number, amount_usd, payment_status, created_at",
+  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, listing_id, listing_key, listing_title, listing_image_url, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, shipment_status, shipment_error, shipment_provider, shipment_external_order_id, shipment_tracking_number, shipment_label_url, shipment_invoice_url, shipment_response, shipment_last_synced_at, navlungo_status, navlungo_error, navlungo_store_id, navlungo_search_id, navlungo_quote_reference, navlungo_shipment_id, navlungo_shipment_reference, navlungo_tracking_url, navlungo_response, navlungo_last_synced_at, created_at, updated_at",
+  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, listing_id, listing_key, listing_title, listing_image_url, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, shipment_status, shipment_error, shipment_provider, shipment_external_order_id, shipment_tracking_number, shipment_label_url, shipment_invoice_url, shipment_response, shipment_last_synced_at, created_at, updated_at",
+  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, listing_id, listing_key, listing_title, listing_image_url, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, navlungo_status, navlungo_error, navlungo_store_id, navlungo_search_id, navlungo_quote_reference, navlungo_shipment_id, navlungo_shipment_reference, navlungo_tracking_url, navlungo_last_synced_at, created_at, updated_at",
+  "id, user_id, store_id, category_name, sub_product_name, variant_name, product_link, listing_id, listing_key, listing_title, listing_image_url, order_date, shipping_address, receiver_name, receiver_phone, receiver_country_code, receiver_state, receiver_city, receiver_town, receiver_postal_code, note, ioss, label_number, amount_usd, payment_status, created_at, updated_at",
+  "id, user_id, category_name, sub_product_name, variant_name, product_link, listing_id, listing_key, listing_title, listing_image_url, order_date, shipping_address, note, ioss, label_number, amount_usd, payment_status, created_at, updated_at",
+  "id, user_id, category_name, sub_product_name, product_link, listing_id, listing_key, listing_title, listing_image_url, order_date, shipping_address, label_number, amount_usd, payment_status, created_at",
 ] as const;
 
 const ORDER_BY_CANDIDATES = ["created_at", "order_date", "id"] as const;
@@ -225,6 +233,10 @@ const mapOrderRow = (row: OrderRow) => {
     subProductName: row.sub_product_name || "",
     variantName: row.variant_name || undefined,
     productLink: row.product_link || "",
+    listingId: row.listing_id || null,
+    listingKey: row.listing_key || null,
+    listingTitle: row.listing_title || null,
+    listingImageUrl: row.listing_image_url || null,
     category: row.category_name || "",
     date,
     address: row.shipping_address || "",
@@ -428,6 +440,10 @@ export async function POST(request: NextRequest) {
     const subProductName = asTrimmedString(body.subProductName);
     const variantName = asTrimmedString(body.variantName) || null;
     const productLink = asTrimmedString(body.productLink);
+    const listingId = asTrimmedString(body.listingId) || null;
+    const listingKey = asTrimmedString(body.listingKey) || null;
+    const listingTitle = asTrimmedString(body.listingTitle) || null;
+    const listingImageUrl = asTrimmedString(body.listingImageUrl) || null;
     const address = asTrimmedString(body.address);
     const receiverName = asTrimmedString(body.receiverName);
     const receiverPhone = normalizePhoneForStorage(body.receiverPhone);
@@ -470,7 +486,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!category || !subProductName || !productLink || !address || !labelNumber) {
+    const resolvedProductLink = productLink || (listingId ? `listing:${listingId}` : "");
+
+    if (!category || !subProductName || !resolvedProductLink || !address || !labelNumber) {
       return NextResponse.json({ error: "Missing required order fields." }, { status: 400 });
     }
 
@@ -485,55 +503,84 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Order amount must be zero or positive." }, { status: 400 });
     }
 
+    const baseInsertPayload = {
+      user_id: user.id,
+      store_id: storeId,
+      category_name: category,
+      sub_product_name: subProductName,
+      variant_name: variantName,
+      product_link: resolvedProductLink,
+      listing_id: listingId,
+      listing_key: listingKey,
+      listing_title: listingTitle,
+      listing_image_url: listingImageUrl,
+      order_date: date,
+      shipping_address: address,
+      receiver_name: receiverName,
+      receiver_phone: receiverPhone,
+      receiver_country_code: receiverCountryCode,
+      receiver_state: receiverState,
+      receiver_city: receiverCity,
+      receiver_town: receiverTown,
+      receiver_postal_code: receiverPostalCode,
+      note,
+      ioss,
+      label_number: labelNumber,
+      amount_usd: amountUsd,
+      payment_status: "pending",
+      updated_at: new Date().toISOString(),
+    } satisfies Record<string, unknown>;
+
     const payloadCandidates: Array<Record<string, unknown>> = [
+      baseInsertPayload,
       {
-        user_id: user.id,
-        store_id: storeId,
-        category_name: category,
-        sub_product_name: subProductName,
-        variant_name: variantName,
-        product_link: productLink,
-        order_date: date,
-        shipping_address: address,
-        receiver_name: receiverName,
-        receiver_phone: receiverPhone,
-        receiver_country_code: receiverCountryCode,
-        receiver_state: receiverState,
-        receiver_city: receiverCity,
-        receiver_town: receiverTown,
-        receiver_postal_code: receiverPostalCode,
-        note,
-        ioss,
-        label_number: labelNumber,
-        amount_usd: amountUsd,
-        payment_status: "pending",
-        updated_at: new Date().toISOString(),
+        ...baseInsertPayload,
+        store_id: undefined,
       },
       {
-        user_id: user.id,
-        category_name: category,
-        sub_product_name: subProductName,
-        variant_name: variantName,
-        product_link: productLink,
-        order_date: date,
-        shipping_address: address,
-        note,
-        ioss,
-        label_number: labelNumber,
-        amount_usd: amountUsd,
-        payment_status: "pending",
-        updated_at: new Date().toISOString(),
+        ...baseInsertPayload,
+        store_id: undefined,
+        receiver_name: undefined,
+        receiver_phone: undefined,
+        receiver_country_code: undefined,
+        receiver_state: undefined,
+        receiver_city: undefined,
+        receiver_town: undefined,
+        receiver_postal_code: undefined,
+        note: undefined,
+        ioss: undefined,
       },
       {
-        user_id: user.id,
-        category_name: category,
-        sub_product_name: subProductName,
-        product_link: productLink,
-        order_date: date,
-        shipping_address: address,
-        label_number: labelNumber,
-        amount_usd: amountUsd,
-        payment_status: "pending",
+        ...baseInsertPayload,
+        listing_id: undefined,
+        listing_key: undefined,
+        listing_title: undefined,
+        listing_image_url: undefined,
+      },
+      {
+        ...baseInsertPayload,
+        store_id: undefined,
+        listing_id: undefined,
+        listing_key: undefined,
+        listing_title: undefined,
+        listing_image_url: undefined,
+      },
+      {
+        ...baseInsertPayload,
+        store_id: undefined,
+        receiver_name: undefined,
+        receiver_phone: undefined,
+        receiver_country_code: undefined,
+        receiver_state: undefined,
+        receiver_city: undefined,
+        receiver_town: undefined,
+        receiver_postal_code: undefined,
+        note: undefined,
+        ioss: undefined,
+        listing_id: undefined,
+        listing_key: undefined,
+        listing_title: undefined,
+        listing_image_url: undefined,
       },
     ];
 

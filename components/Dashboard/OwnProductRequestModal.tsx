@@ -113,7 +113,7 @@ export default function OwnProductRequestModal({ shop, open, onOpenChange }: Pro
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl border border-white/10 bg-[#10131a] text-white">
         <DialogHeader>
-          <DialogTitle>{isEnglish ? "Your Product" : "Senin Ürünün"}</DialogTitle>
+          <DialogTitle className="text-xl sm:text-2xl">{isEnglish ? "Your Product" : "Senin Ürünün"}</DialogTitle>
           <DialogDescription className="text-slate-400">
             {isEnglish
               ? "Upload a reference product. We will send the image, title, description, price and store context to the AI production flow."
@@ -121,8 +121,8 @@ export default function OwnProductRequestModal({ shop, open, onOpenChange }: Pro
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5">
-          <div className="rounded-2xl border border-white/10 bg-white/3 p-4">
+        <div className="space-y-4 sm:space-y-5">
+          <div className="rounded-2xl border border-white/10 bg-white/3 p-3 sm:p-4">
             <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
               {isEnglish ? "Selected Store" : "Seçili Mağaza"}
             </p>
@@ -136,16 +136,16 @@ export default function OwnProductRequestModal({ shop, open, onOpenChange }: Pro
             </div>
           </div>
 
-          <div className="grid gap-5 md:grid-cols-[1.1fr_1fr]">
+          <div className="grid gap-4 md:grid-cols-[1.1fr_1fr] md:gap-5">
             <div className="space-y-3">
               <label className="block text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
                 {isEnglish ? "Product Image" : "Ürün Görseli"}
               </label>
-              <div className="rounded-2xl border border-dashed border-white/15 bg-[#0b0f16] p-4">
+              <div className="rounded-2xl border border-dashed border-white/15 bg-[#0b0f16] p-3 sm:p-4">
                 {imagePreviewUrl ? (
-                  <img src={imagePreviewUrl} alt="" className="h-72 w-full rounded-xl object-cover" />
+                  <img src={imagePreviewUrl} alt="" className="h-56 w-full rounded-xl object-cover sm:h-72" />
                 ) : (
-                  <div className="flex h-72 flex-col items-center justify-center rounded-xl bg-white/5 text-slate-400">
+                  <div className="flex h-52 flex-col items-center justify-center rounded-xl bg-white/5 px-4 text-center text-slate-400 sm:h-72">
                     <UploadCloud className="mb-3 h-9 w-9 text-indigo-300" />
                     <p className="text-sm font-bold">
                       {isEnglish ? "Upload a reference product image" : "Referans ürün görseli yükleyin"}

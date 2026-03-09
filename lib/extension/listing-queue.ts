@@ -713,6 +713,7 @@ const resolveStoreAliasScope = async (userId: string, preferredClientId: string)
   return {
     allAliases,
     preferredAliases: matchedRow ? new Set(getAliasesFromStoreRow(matchedRow)) : null,
+    preferredStoreId: matchedRow ? normalizeString(matchedRow.id) || preferredClientId : preferredClientId,
   };
 };
 
@@ -875,8 +876,11 @@ const updateRowByIdentifier = async (identifier: ListingIdentifier, payload: Row
 
 export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimResult | null> => {
   const preferredClientId = normalizeString(args.preferredClientId);
-  const { allAliases: allStoreAliases, preferredAliases: resolvedPreferredAliases } =
-    await resolveStoreAliasScope(args.userId, preferredClientId);
+  const {
+    allAliases: allStoreAliases,
+    preferredAliases: resolvedPreferredAliases,
+    preferredStoreId,
+  } = await resolveStoreAliasScope(args.userId, preferredClientId);
   let preferredAliases: Set<string> | null = null;
   let storeClaimContext: StoreClaimContext | null = null;
 
@@ -887,7 +891,7 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
 
     // Mağaza seçildiyse claim yalnızca seçili mağazanın tüm alias kapsamı içinde yapılır.
     preferredAliases = resolvedPreferredAliases ?? new Set([preferredClientId]);
-    storeClaimContext = await loadStoreClaimContext(args.userId, preferredClientId);
+    storeClaimContext = await loadStoreClaimContext(args.userId, preferredStoreId);
   }
 
   const allowedClientIds = preferredAliases
@@ -949,14 +953,6 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
     eligibleRows = pickEligibleRows({ strictOwnership: false });
   }
 
-  // Son fallback: Seçili mağazanın alias kapsamına birebir düşen pending kayıtlar varsa,
-  // yalnızca kategori profili aşırı dar kaldığı durumlarda bunları yine seçebil.
-  if (eligibleRows.length === 0 && preferredAliases && storeCategoryProfile) {
-    eligibleRows = pickEligibleRows({ strictOwnership: true, ignoreCategory: true });
-    if (eligibleRows.length === 0) {
-      eligibleRows = pickEligibleRows({ strictOwnership: false, ignoreCategory: true });
-    }
-  }
 
   const recoverStuckProcessingLocks = async () => {
     const candidateRows = rows.filter((row) => {
@@ -1021,12 +1017,6 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
     if (eligibleRows.length === 0 && preferredAliases) {
       eligibleRows = pickEligibleRows({ strictOwnership: false });
     }
-    if (eligibleRows.length === 0 && preferredAliases && storeCategoryProfile) {
-      eligibleRows = pickEligibleRows({ strictOwnership: true, ignoreCategory: true });
-      if (eligibleRows.length === 0) {
-        eligibleRows = pickEligibleRows({ strictOwnership: false, ignoreCategory: true });
-      }
-    }
   }
 
   if (eligibleRows.length === 0) {
@@ -1035,12 +1025,6 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
       eligibleRows = pickEligibleRows({ strictOwnership: true });
       if (eligibleRows.length === 0 && preferredAliases) {
         eligibleRows = pickEligibleRows({ strictOwnership: false });
-      }
-      if (eligibleRows.length === 0 && preferredAliases && storeCategoryProfile) {
-        eligibleRows = pickEligibleRows({ strictOwnership: true, ignoreCategory: true });
-        if (eligibleRows.length === 0) {
-          eligibleRows = pickEligibleRows({ strictOwnership: false, ignoreCategory: true });
-        }
       }
     }
   }

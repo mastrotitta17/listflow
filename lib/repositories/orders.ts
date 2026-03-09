@@ -22,6 +22,10 @@ export type CreateOrderInput = {
   subProductName: string;
   variantName?: string | null;
   productLink: string;
+  listingId?: string | null;
+  listingKey?: string | null;
+  listingTitle?: string | null;
+  listingImageUrl?: string | null;
   date: string;
   address: string;
   receiverName: string;

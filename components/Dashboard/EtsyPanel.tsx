@@ -25,6 +25,7 @@ import { openCrispChat } from "@/lib/crisp";
 import type { Shop } from "@/types";
 import { toast } from "sonner";
 import OwnProductRequestModal from "@/components/Dashboard/OwnProductRequestModal";
+import { EtsyPanelSkeleton } from "@/components/loading/PageSkeletons";
 
 type BillingPlan = "standard" | "pro" | "turbo";
 type BillingInterval = "month" | "year";
@@ -119,7 +120,7 @@ type StoreCurrency = "USD" | "TRY";
 const EtsyPanel: React.FC = () => {
   const { shops, setShops } = useStore();
   const { t, locale } = useI18n();
-  const { categories } = useCategoriesRepository(locale);
+  const { categories, loading: categoriesLoading } = useCategoriesRepository(locale);
   const [showConnect, setShowConnect] = useState(false);
   const [phone, setPhone] = useState("");
   const [shopName, setShopName] = useState("");
@@ -136,6 +137,7 @@ const EtsyPanel: React.FC = () => {
   const [isDeletingStoreId, setIsDeletingStoreId] = useState<string | null>(null);
   const [isCancelingStoreSubscriptionId, setIsCancelingStoreSubscriptionId] = useState<string | null>(null);
   const [nowTs, setNowTs] = useState<number>(Date.now());
+  const [storesBooting, setStoresBooting] = useState(true);
   const [planPricing, setPlanPricing] =
     useState<Record<BillingPlan, { month: number; year: number; discount: number }>>(DEFAULT_PLAN_PRICING);
 
@@ -446,6 +448,10 @@ const EtsyPanel: React.FC = () => {
       } catch {
         if (mounted) {
           setShops([]);
+        }
+      } finally {
+        if (mounted) {
+          setStoresBooting(false);
         }
       }
     };
@@ -871,6 +877,10 @@ const EtsyPanel: React.FC = () => {
     }
   };
 
+  if (categoriesLoading || storesBooting) {
+    return <EtsyPanelSkeleton />;
+  }
+
   return (
     <div className="w-full p-5 h-full overflow-y-auto custom-scrollbar">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
@@ -1069,7 +1079,7 @@ const EtsyPanel: React.FC = () => {
 
       <AnimatePresence>
         {deleteTargetShop && (
-          <div className="fixed inset-0 z-120 flex items-center justify-center px-6">
+          <div className="fixed inset-0 z-120 flex items-center justify-center px-3 py-4 sm:px-6 sm:py-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1085,7 +1095,7 @@ const EtsyPanel: React.FC = () => {
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="relative w-full max-w-lg p-8 rounded-4xl glass-card-pro border border-white/10 shadow-2xl"
+              className="relative w-full max-w-lg max-h-[min(92vh,calc(100dvh-1rem))] overflow-y-auto rounded-[28px] glass-card-pro border border-white/10 p-4 shadow-2xl sm:rounded-4xl sm:p-8"
             >
               {(() => {
                 const isBlockedBySubscription =
@@ -1116,7 +1126,7 @@ const EtsyPanel: React.FC = () => {
                 {deleteTargetShop.name}
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row">
                 <button
                   onClick={() => setDeleteTargetShop(null)}
                   disabled={isBusy}
@@ -1168,7 +1178,7 @@ const EtsyPanel: React.FC = () => {
 
       <AnimatePresence>
         {activationModal && (
-          <div className="fixed inset-0 z-125 flex items-center justify-center px-6">
+          <div className="fixed inset-0 z-125 flex items-center justify-center px-3 py-4 sm:px-6 sm:py-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1180,7 +1190,7 @@ const EtsyPanel: React.FC = () => {
               initial={{ opacity: 0, scale: 0.92, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.92, y: 20 }}
-              className="relative w-full max-w-5xl rounded-4xl glass-card-pro border border-white/10 p-8 shadow-2xl max-h-[90vh] overflow-y-auto"
+              className="relative w-full max-w-5xl max-h-[min(92vh,calc(100dvh-1rem))] overflow-y-auto rounded-[28px] glass-card-pro border border-white/10 p-4 shadow-2xl sm:rounded-4xl sm:p-8"
             >
               <h3 className="text-2xl font-black text-white mb-1">{t("etsy.activateModalTitle")}</h3>
               <p className="text-slate-300 text-sm mb-5">{t("etsy.activateModalSubtitle")}</p>
@@ -1188,7 +1198,7 @@ const EtsyPanel: React.FC = () => {
                 {activationModal.shop.name}
               </p>
 
-              <div className="mb-5 flex gap-2">
+              <div className="mb-5 flex flex-col gap-2 sm:flex-row">
                 <button
                   type="button"
                   onClick={() => setActivationModal((prev) => (prev ? { ...prev, interval: "month" } : prev))}
@@ -1273,7 +1283,7 @@ const EtsyPanel: React.FC = () => {
                 })}
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row">
                 <button
                   type="button"
                   onClick={() => setActivationModal(null)}
@@ -1299,7 +1309,7 @@ const EtsyPanel: React.FC = () => {
 
       <AnimatePresence>
         {showConnect && (
-          <div className="fixed inset-0 z-100 flex items-center justify-center px-6">
+          <div className="fixed inset-0 z-100 flex items-center justify-center px-3 py-4 sm:px-6 sm:py-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1311,10 +1321,10 @@ const EtsyPanel: React.FC = () => {
               initial={{ opacity: 0, y: 50, scale: 0.9 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 50, scale: 0.9 }}
-              className="relative w-full max-w-xl p-10 rounded-[48px] glass-card-pro border border-white/10 shadow-2xl"
+              className="relative w-full max-w-xl max-h-[min(92vh,calc(100dvh-1rem))] overflow-y-auto rounded-[28px] glass-card-pro border border-white/10 p-4 shadow-2xl sm:rounded-[48px] sm:p-10"
             >
               <div className="text-center mb-10">
-                <div className="w-20 h-20 bg-indigo-600 rounded-[28px] flex items-center justify-center mx-auto mb-6 shadow-2xl border border-indigo-400/30">
+                <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-[24px] border border-indigo-400/30 bg-indigo-600 shadow-2xl sm:h-20 sm:w-20 sm:rounded-[28px]">
                   <Store className="text-white w-10 h-10" />
                 </div>
                 <h2 className="text-3xl font-black text-white tracking-tight mb-2">Mağaza Kaydı</h2>
