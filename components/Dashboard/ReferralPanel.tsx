@@ -236,8 +236,8 @@ const ReferralPanel: React.FC = () => {
                 </h1>
                 <p className="mt-2 text-sm text-slate-400 max-w-lg">
                   {isEn
-                    ? "Get 5 friends to open a store subscription and earn 20% off your next store. Reach 10 and get $250 cash!"
-                    : "5 arkadaşın mağaza aboneliği açsın, bir sonraki mağazanda %20 indirim kazan. 10 kişiye ulaşırsan $250 nakit sana!"}
+                    ? "Get 5 friends to activate their first Pro or Turbo store and earn 20% off your next store. Reach 10 and get $250 cash."
+                    : "5 arkadaşın ilk Pro veya Turbo mağazasını aktive etsin, bir sonraki mağazanda %20 indirim kazan. 10 kişiye ulaştığında $250 nakit kazanırsın."}
                 </p>
               </div>
               {/* Stats pills */}
@@ -324,8 +324,8 @@ const ReferralPanel: React.FC = () => {
 
               <p className="text-[11px] text-slate-500 leading-relaxed">
                 {isEn
-                  ? "Share this link with friends. When they sign up and activate a store subscription, your milestone count advances."
-                  : "Bu linki arkadaşlarınla paylaş. Kayıt olup mağaza aboneliği açtıklarında ilerleme sayacın artar."}
+                  ? "Share this link with friends. Your milestone advances only when they activate their first store on a Pro or Turbo plan."
+                  : "Bu linki arkadaşlarınla paylaş. İlerlemen yalnızca ilk mağazalarını Pro veya Turbo planla aktive ettiklerinde artar."}
               </p>
             </div>
 
@@ -544,8 +544,8 @@ const ReferralPanel: React.FC = () => {
                   icon: Users,
                   title: isEn ? "Friends Sign Up" : "Arkadaşın Kayıt Olur",
                   desc: isEn
-                    ? "Your friend registers with your link and opens a store subscription."
-                    : "Arkadaşın linkinden kayıt olur ve bir mağaza aboneliği açar.",
+                    ? "Your friend registers with your link and activates their first store on a Pro or Turbo plan."
+                    : "Arkadaşın linkinden kayıt olur ve ilk mağazasını Pro veya Turbo planla aktive eder.",
                   color: "text-cyan-400",
                   bg: "bg-cyan-500/10 border-cyan-500/20",
                 },
@@ -624,8 +624,8 @@ const ReferralPanel: React.FC = () => {
               {pending > 0 && (
                 <p className="mt-3 text-[11px] text-slate-500 text-center">
                   {isEn
-                    ? `${pending} referral(s) are pending — they need to activate a store subscription to qualify.`
-                    : `${pending} referral bekliyor — nitelikli sayılmaları için mağaza aboneliği aktif etmeleri gerekiyor.`}
+                    ? `${pending} referral(s) are pending — they need to activate their first store on a Pro or Turbo plan to qualify.`
+                    : `${pending} referral bekliyor — nitelikli sayılmaları için ilk mağazalarını Pro veya Turbo planla aktive etmeleri gerekiyor.`}
                 </p>
               )}
             </motion.div>

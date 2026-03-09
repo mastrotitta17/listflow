@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { getStripeClientForMode } from "@/lib/stripe/client";
+import { qualifyReferralConversion } from "@/lib/referral/qualify";
 
 export const runtime = "nodejs";
 
@@ -115,6 +115,8 @@ export async function POST(request: NextRequest) {
       action: "track_signup" | "qualify";
       referralCode?: string;
       referredUserId?: string;
+      storeId?: string;
+      plan?: string;
     };
 
     if (body.action === "track_signup") {
@@ -169,110 +171,19 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.action === "qualify") {
-      // Called when a referred user makes their first active subscription
-      const { referredUserId } = body;
+      const { referredUserId, storeId, plan } = body;
 
       if (!referredUserId) {
         return NextResponse.json({ error: "Missing referredUserId" }, { status: 400 });
       }
 
-      // Find the pending conversion for this user
-      const { data: conversion } = await supabaseAdmin
-        .from("referral_conversions")
-        .select("id, referrer_user_id, status")
-        .eq("referred_user_id", referredUserId)
-        .eq("status", "pending")
-        .maybeSingle<{ id: string; referrer_user_id: string; status: string }>();
+      const result = await qualifyReferralConversion({
+        referredUserId,
+        storeId: storeId ?? null,
+        plan,
+      });
 
-      if (!conversion) {
-        return NextResponse.json({ ok: true, no_conversion: true });
-      }
-
-      // Mark as qualified
-      await supabaseAdmin
-        .from("referral_conversions")
-        .update({
-          status: "qualified",
-          subscribed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", conversion.id);
-
-      // Count qualified conversions for this referrer
-      const { count: qualifiedCount } = await supabaseAdmin
-        .from("referral_conversions")
-        .select("id", { count: "exact", head: true })
-        .eq("referrer_user_id", conversion.referrer_user_id)
-        .eq("status", "qualified");
-
-      const total = qualifiedCount ?? 0;
-
-      // Check milestones and issue rewards if needed
-      const milestones = [
-        { count: 5, type: "discount_20pct" as const },
-        { count: 10, type: "cash_250" as const },
-      ];
-
-      for (const milestone of milestones) {
-        if (total >= milestone.count) {
-          // Check if reward already issued
-          const { data: existingReward } = await supabaseAdmin
-            .from("referral_rewards")
-            .select("id")
-            .eq("user_id", conversion.referrer_user_id)
-            .eq("milestone", milestone.count)
-            .maybeSingle<{ id: string }>();
-
-          if (!existingReward) {
-            if (milestone.type === "discount_20pct") {
-              // Create Stripe coupon + promo code for 20% off
-              try {
-                const stripe = getStripeClientForMode();
-                const coupon = await stripe.coupons.create({
-                  percent_off: 20,
-                  duration: "once",
-                  name: `Referral Reward - 20% off`,
-                  metadata: { referrer_user_id: conversion.referrer_user_id, milestone: "5" },
-                });
-
-                const promoCode = await stripe.promotionCodes.create({
-                  promotion: { type: "coupon", coupon: coupon.id },
-                  max_redemptions: 1,
-                  metadata: { referrer_user_id: conversion.referrer_user_id, milestone: "5" },
-                });
-
-                await supabaseAdmin.from("referral_rewards").insert({
-                  user_id: conversion.referrer_user_id,
-                  reward_type: milestone.type,
-                  milestone: milestone.count,
-                  stripe_coupon_id: coupon.id,
-                  stripe_promotion_code_id: promoCode.id,
-                  promo_code: promoCode.code,
-                  status: "issued",
-                });
-              } catch {
-                // Still record the reward even if Stripe fails
-                await supabaseAdmin.from("referral_rewards").insert({
-                  user_id: conversion.referrer_user_id,
-                  reward_type: milestone.type,
-                  milestone: milestone.count,
-                  status: "pending",
-                });
-              }
-            } else {
-              // $250 cash reward — record it, process manually
-              await supabaseAdmin.from("referral_rewards").insert({
-                user_id: conversion.referrer_user_id,
-                reward_type: milestone.type,
-                milestone: milestone.count,
-                status: "pending",
-              });
-            }
-          }
-        }
-      }
-
-      return NextResponse.json({ ok: true, qualifiedCount: total });
+      return NextResponse.json(result);
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
