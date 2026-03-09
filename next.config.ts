@@ -88,6 +88,10 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: 'cdn.listflow.pro'
       },
+      {
+        protocol: 'https',
+        hostname: 'pub-b9db5786e8af4a9b8f542561b9fc5298.r2.dev'
+      },
     ]
   },
 };

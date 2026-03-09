@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { normalizePublicAssetUrls } from "@/lib/assets/public-url";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { loadCatalogFallbackMap } from "@/lib/catalog/fallback";
 
@@ -231,7 +232,7 @@ export async function GET(request: NextRequest) {
             product.category_id === categoryId
         )
         .map((product) => {
-          const images = (product.image_urls || product.images || []).slice(0, 2);
+          const images = normalizePublicAssetUrls((product.image_urls || product.images || []).slice(0, 2));
           const cost = Number(product.cost ?? 0);
           const salePrice = Number(product.sale_price ?? 0);
           const variations = normalizeVariations(product.variations, product.id, salePrice);

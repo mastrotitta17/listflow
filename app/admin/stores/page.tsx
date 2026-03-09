@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { normalizePublicAssetUrl } from "@/lib/assets/public-url";
 import { sanitizePhoneInput } from "@/lib/phone";
 import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { toast } from "sonner";
@@ -230,6 +231,7 @@ const collectListingImages = (row: ListingDetailRow) => {
     new Set(
       candidates
         .map((candidate) => asText(candidate))
+        .map((candidate) => normalizePublicAssetUrl(candidate) ?? "")
         .filter((candidate) => candidate.startsWith("http://") || candidate.startsWith("https://") || candidate.startsWith("data:image/"))
     )
   );

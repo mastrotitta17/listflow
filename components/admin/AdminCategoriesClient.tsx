@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { normalizePublicAssetUrls } from "@/lib/assets/public-url";
 import { toast } from "sonner";
 
 type VariationDraft = {
@@ -226,7 +227,7 @@ const normalizeCategoryRow = (row: Record<string, unknown>): CategoryRow => ({
 });
 
 const normalizeProductRow = (row: Record<string, unknown>): ProductRow => {
-  const imageUrls = normalizeStringArray(row.image_urls ?? row.images).slice(0, 2);
+  const imageUrls = normalizePublicAssetUrls(normalizeStringArray(row.image_urls ?? row.images).slice(0, 2));
   const variations = Array.isArray(row.variations) ? row.variations : [];
 
   return {

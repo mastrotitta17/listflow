@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
+import { normalizePublicAssetUrl } from "@/lib/assets/public-url";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -148,7 +149,7 @@ export async function GET(request: NextRequest) {
       key: row.key ?? null,
       title: row.title ?? "Untitled",
       description: row.description ?? "",
-      imageUrl: row.image_1_url ?? null,
+      imageUrl: normalizePublicAssetUrl(row.image_1_url) ?? null,
       price: Number.isFinite(row.price ?? NaN) ? row.price : 0,
       quantity: row.quantity ?? 0,
       status: row.status ?? "pending",
