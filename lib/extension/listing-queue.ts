@@ -902,7 +902,7 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
   const targetedRows = preferredAliases ? await loadRowsForPreferredClientIds(preferredAliases) : [];
   const rows = targetedRows.length > 0 ? targetedRows : await loadAllListingRows();
 
-  const pickEligibleRows = (options: { strictOwnership: boolean }) =>
+  const pickEligibleRows = (options: { strictOwnership: boolean; ignoreCategory?: boolean }) =>
     rows
       .filter((row) => {
         if (preferredAliases) {
@@ -919,6 +919,10 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
         return rowBelongsToUser(row, { userId: args.userId, allowedClientIds });
       })
       .filter((row) => {
+        if (options.ignoreCategory) {
+          return true;
+        }
+
         if (!storeCategoryProfile) {
           return true;
         }
@@ -943,6 +947,15 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
   // Fallback: Seçili mağazaya göre client_id eşleşen kayıtlar, ownership alanları eksikse de yakala.
   if (eligibleRows.length === 0 && preferredAliases) {
     eligibleRows = pickEligibleRows({ strictOwnership: false });
+  }
+
+  // Son fallback: Seçili mağazanın alias kapsamına birebir düşen pending kayıtlar varsa,
+  // yalnızca kategori profili aşırı dar kaldığı durumlarda bunları yine seçebil.
+  if (eligibleRows.length === 0 && preferredAliases && storeCategoryProfile) {
+    eligibleRows = pickEligibleRows({ strictOwnership: true, ignoreCategory: true });
+    if (eligibleRows.length === 0) {
+      eligibleRows = pickEligibleRows({ strictOwnership: false, ignoreCategory: true });
+    }
   }
 
   const recoverStuckProcessingLocks = async () => {
@@ -1008,6 +1021,12 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
     if (eligibleRows.length === 0 && preferredAliases) {
       eligibleRows = pickEligibleRows({ strictOwnership: false });
     }
+    if (eligibleRows.length === 0 && preferredAliases && storeCategoryProfile) {
+      eligibleRows = pickEligibleRows({ strictOwnership: true, ignoreCategory: true });
+      if (eligibleRows.length === 0) {
+        eligibleRows = pickEligibleRows({ strictOwnership: false, ignoreCategory: true });
+      }
+    }
   }
 
   if (eligibleRows.length === 0) {
@@ -1016,6 +1035,12 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
       eligibleRows = pickEligibleRows({ strictOwnership: true });
       if (eligibleRows.length === 0 && preferredAliases) {
         eligibleRows = pickEligibleRows({ strictOwnership: false });
+      }
+      if (eligibleRows.length === 0 && preferredAliases && storeCategoryProfile) {
+        eligibleRows = pickEligibleRows({ strictOwnership: true, ignoreCategory: true });
+        if (eligibleRows.length === 0) {
+          eligibleRows = pickEligibleRows({ strictOwnership: false, ignoreCategory: true });
+        }
       }
     }
   }
