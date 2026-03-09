@@ -547,6 +547,7 @@ type StoreAliasRow = {
   id?: string | null;
   shop_id?: string | null;
   store_id?: string | null;
+  store_name?: string | null;
 };
 
 type StoreClaimRow = StoreAliasRow & {
@@ -596,31 +597,33 @@ const isRecoverableStoreError = (error: QueryError | null | undefined) => {
   );
 };
 
-const loadRowsForPreferredClientId = async (preferredClientId: string) => {
-  const client = normalizeString(preferredClientId);
-  if (!client) return [];
+const loadRowsForPreferredClientIds = async (preferredClientIds: Iterable<string>) => {
+  const aliases = Array.from(new Set(Array.from(preferredClientIds).map((value) => normalizeString(value)).filter(Boolean)));
+  if (aliases.length === 0) return [];
 
   const collected: RowRecord[] = [];
   const candidates = ["client_id", "store_id"] as const;
-  for (const column of candidates) {
-    let from = 0;
-    const pageSize = 800;
-    for (;;) {
-      const to = from + pageSize - 1;
-      const query = await supabaseAdmin.from("listing").select("*").eq(column, client).range(from, to);
-      if (query.error) {
-        if (isMissingColumnError(query.error, column) || isMissingTableError(query.error)) {
-          break;
+  for (const alias of aliases) {
+    for (const column of candidates) {
+      let from = 0;
+      const pageSize = 800;
+      for (;;) {
+        const to = from + pageSize - 1;
+        const query = await supabaseAdmin.from("listing").select("*").eq(column, alias).range(from, to);
+        if (query.error) {
+          if (isMissingColumnError(query.error, column) || isMissingTableError(query.error)) {
+            break;
+          }
+          throw new Error(query.error.message || "listing preferred client query failed");
         }
-        throw new Error(query.error.message || "listing preferred client query failed");
-      }
 
-      const page = ((query.data ?? []) as RowRecord[]) ?? [];
-      if (page.length === 0) break;
-      collected.push(...page);
-      if (page.length < pageSize) break;
-      from += pageSize;
-      if (from > 10000) break;
+        const page = ((query.data ?? []) as RowRecord[]) ?? [];
+        if (page.length === 0) break;
+        collected.push(...page);
+        if (page.length < pageSize) break;
+        from += pageSize;
+        if (from > 10000) break;
+      }
     }
   }
 
@@ -638,12 +641,26 @@ const loadRowsForPreferredClientId = async (preferredClientId: string) => {
 };
 
 const getAliasesFromStoreRow = (row: StoreAliasRow) => {
-  const aliases = [normalizeString(row.id), normalizeString(row.shop_id), normalizeString(row.store_id)].filter(Boolean);
+  const aliases = [
+    normalizeString(row.id),
+    normalizeString(row.shop_id),
+    normalizeString(row.store_id),
+    normalizeString(row.store_name),
+  ].filter(Boolean);
   return Array.from(new Set(aliases));
 };
 
 const loadStoreAliasRowsByUser = async (userId: string): Promise<StoreAliasRow[]> => {
-  const candidates = ["id,shop_id,store_id", "id,shop_id", "id,store_id", "id"] as const;
+  const candidates = [
+    "id,shop_id,store_id,store_name",
+    "id,shop_id,store_name",
+    "id,store_id,store_name",
+    "id,store_name",
+    "id,shop_id,store_id",
+    "id,shop_id",
+    "id,store_id",
+    "id",
+  ] as const;
   let lastError: QueryError | null = null;
 
   for (const select of candidates) {
@@ -676,6 +693,27 @@ const loadStoreAliasesByUser = async (userId: string) => {
   }
 
   return aliases;
+};
+
+const resolveStoreAliasScope = async (userId: string, preferredClientId: string) => {
+  const rows = await loadStoreAliasRowsByUser(userId);
+  const allAliases = new Set<string>();
+  let matchedRow: StoreAliasRow | null = null;
+
+  for (const row of rows) {
+    const aliases = getAliasesFromStoreRow(row);
+    for (const alias of aliases) {
+      allAliases.add(alias);
+    }
+    if (!matchedRow && aliases.includes(preferredClientId)) {
+      matchedRow = row;
+    }
+  }
+
+  return {
+    allAliases,
+    preferredAliases: matchedRow ? new Set(getAliasesFromStoreRow(matchedRow)) : null,
+  };
 };
 
 const loadProductMatchCandidates = async (): Promise<ProductMatchCandidate[]> => {
@@ -837,7 +875,8 @@ const updateRowByIdentifier = async (identifier: ListingIdentifier, payload: Row
 
 export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimResult | null> => {
   const preferredClientId = normalizeString(args.preferredClientId);
-  const allStoreAliases = await loadStoreAliasesByUser(args.userId);
+  const { allAliases: allStoreAliases, preferredAliases: resolvedPreferredAliases } =
+    await resolveStoreAliasScope(args.userId, preferredClientId);
   let preferredAliases: Set<string> | null = null;
   let storeClaimContext: StoreClaimContext | null = null;
 
@@ -846,8 +885,8 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
       return null;
     }
 
-    // Mağaza seçildiyse claim yalnızca seçili mağazanın exact client_id değeriyle yapılır.
-    preferredAliases = new Set([preferredClientId]);
+    // Mağaza seçildiyse claim yalnızca seçili mağazanın tüm alias kapsamı içinde yapılır.
+    preferredAliases = resolvedPreferredAliases ?? new Set([preferredClientId]);
     storeClaimContext = await loadStoreClaimContext(args.userId, preferredClientId);
   }
 
@@ -860,7 +899,7 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
         product: storeClaimContext.product,
       })
     : null;
-  const targetedRows = preferredClientId ? await loadRowsForPreferredClientId(preferredClientId) : [];
+  const targetedRows = preferredAliases ? await loadRowsForPreferredClientIds(preferredAliases) : [];
   const rows = targetedRows.length > 0 ? targetedRows : await loadAllListingRows();
 
   const pickEligibleRows = (options: { strictOwnership: boolean }) =>
