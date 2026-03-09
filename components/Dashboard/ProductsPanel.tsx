@@ -100,8 +100,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const images = row.images.length > 0 ? row.images : row.imageUrl ? [row.imageUrl] : [];
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
-  const lastPointerXRef = useRef<number | null>(null);
-  const lastSwitchAtRef = useRef(0);
+  const hoverZoneRef = useRef<"left" | "center" | "right">("center");
 
   useEffect(() => {
     setActiveImageIndex(0);
@@ -129,26 +128,36 @@ const ProductCard: React.FC<ProductCardProps> = ({
         return;
       }
 
-      const now = Date.now();
-      const clientX = event.clientX;
-      const lastX = lastPointerXRef.current;
-      lastPointerXRef.current = clientX;
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const relativeX = event.clientX - bounds.left;
+      const ratio = bounds.width > 0 ? relativeX / bounds.width : 0.5;
 
-      if (lastX === null) {
+      let nextZone: "left" | "center" | "right" = "center";
+      if (ratio <= 0.32) {
+        nextZone = "left";
+      } else if (ratio >= 0.68) {
+        nextZone = "right";
+      }
+
+      if (nextZone === hoverZoneRef.current) {
         return;
       }
 
-      if (now - lastSwitchAtRef.current < 180) {
+      const previousZone = hoverZoneRef.current;
+      hoverZoneRef.current = nextZone;
+
+      if (nextZone === "center") {
         return;
       }
 
-      const delta = clientX - lastX;
-      if (Math.abs(delta) < 28) {
+      if (previousZone === "center") {
+        moveToImage(nextZone === "right" ? "next" : "prev");
         return;
       }
 
-      moveToImage(delta > 0 ? "next" : "prev");
-      lastSwitchAtRef.current = now;
+      if (previousZone !== nextZone) {
+        moveToImage(nextZone === "right" ? "next" : "prev");
+      }
     },
     [images.length, moveToImage]
   );
@@ -159,11 +168,11 @@ const ProductCard: React.FC<ProductCardProps> = ({
         className="group relative aspect-[4/3.5] overflow-hidden bg-[#0b1020]"
         onMouseEnter={() => {
           setIsHovered(true);
-          lastPointerXRef.current = null;
+          hoverZoneRef.current = "center";
         }}
         onMouseLeave={() => {
           setIsHovered(false);
-          lastPointerXRef.current = null;
+          hoverZoneRef.current = "center";
         }}
         onMouseMove={handleMouseMove}
       >
