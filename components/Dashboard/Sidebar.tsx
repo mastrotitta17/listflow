@@ -453,7 +453,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 8, scale: 0.98 }}
                 transition={{ duration: 0.18, ease: "easeOut" }}
-                className="absolute inset-x-0 bottom-full mb-3 overflow-hidden rounded-[22px] border border-white/10 bg-[#0d1322]/96 p-3 shadow-[0_22px_60px_rgba(2,6,23,0.75)] backdrop-blur-xl"
+                className="absolute inset-x-0 bottom-full mb-3 overflow-hidden rounded-[22px] border border-white/10 bg-[#0d1322]/96 p-3 shadow-[0_22px_60px_rgba(2,6,23,0.75)] backdrop-blur-xl z-[9999]"
               >
                 <div className="mb-3 rounded-[18px] border border-white/8 bg-white/[0.03] p-3">
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
