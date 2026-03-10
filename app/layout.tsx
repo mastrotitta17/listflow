@@ -4,6 +4,7 @@ import { cookies, headers } from "next/headers";
 import { detectLocale } from "@/lib/i18n/detect-locale";
 import { I18nProvider } from "@/lib/i18n/provider";
 import MobileAppBridge from "@/components/MobileAppBridge";
+import AuthSessionKeeper from "@/components/AuthSessionKeeper";
 import QueryProvider from "@/components/providers/QueryProvider";
 import { Toaster } from "@/components/ui/sonner";
 import RuntimeErrorNoiseFilter from "@/components/RuntimeErrorNoiseFilter";
@@ -46,6 +47,7 @@ export default async function RootLayout({
         <I18nProvider locale={locale}>
           <QueryProvider>
             <RuntimeErrorNoiseFilter />
+            <AuthSessionKeeper />
             <MobileAppBridge />
             {children}
             <SpeedInsights />

@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 export const ACCESS_TOKEN_COOKIE = "lf_access_token";
 export const REFRESH_TOKEN_COOKIE = "lf_refresh_token";
 
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 const baseCookieOptions = {
   httpOnly: true,
