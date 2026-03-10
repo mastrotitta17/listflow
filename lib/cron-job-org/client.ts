@@ -187,6 +187,53 @@ const isMissingPgCronFunctionError = (error: { message?: string } | null | undef
   return message.includes("function") && message.includes("does not exist");
 };
 
+const isSchemaCacheFunctionMismatchError = (error: { message?: string } | null | undefined) => {
+  const message = (error?.message ?? "").toLowerCase();
+  return message.includes("could not find the function") && message.includes("schema cache");
+};
+
+const shouldFallbackToLegacyPgCronRpc = (error: { message?: string } | null | undefined) =>
+  isMissingPgCronFunctionError(error) || isSchemaCacheFunctionMismatchError(error);
+
+const callSyncPgCronSchedulerRpc = async (enabled: boolean) => {
+  const schedulerBaseUrl = resolveSchedulerBaseUrl();
+  const cronSecret = serverEnv.CRON_SECRET;
+
+  const preferred = await supabaseAdmin.rpc("sync_listflow_pg_cron_scheduler", {
+    p_scheduler_base_url: schedulerBaseUrl,
+    p_cron_secret: cronSecret,
+    p_enabled: enabled,
+  });
+
+  if (!preferred.error) {
+    return preferred;
+  }
+
+  if (!shouldFallbackToLegacyPgCronRpc(preferred.error)) {
+    return preferred;
+  }
+
+  const legacy = await supabaseAdmin.rpc("sync_listflow_pg_cron_scheduler", {
+    p_cron_secret: cronSecret,
+    p_enabled: enabled,
+    p_scheduler_base_url: schedulerBaseUrl,
+  });
+
+  if (!legacy.error) {
+    return legacy;
+  }
+
+  if (!shouldFallbackToLegacyPgCronRpc(legacy.error)) {
+    return legacy;
+  }
+
+  return await supabaseAdmin.rpc("sync_listflow_pg_cron_scheduler_impl", {
+    p_scheduler_base_url: schedulerBaseUrl,
+    p_cron_secret: cronSecret,
+    p_enabled: enabled,
+  });
+};
+
 export const describeCronJobOrgExecutionStatus = (status: number | null | undefined): CronJobOrgExecutionStatus => {
   if (status === null || status === undefined || status === 0) {
     return {
@@ -264,11 +311,7 @@ export const ensureSchedulerCronJob = async (): Promise<SchedulerCronSyncResult>
   syncSchedulerCronJobLifecycle();
 
 export const deleteSchedulerCronJob = async (): Promise<SchedulerCronSyncResult> => {
-  const { data, error } = await supabaseAdmin.rpc("sync_listflow_pg_cron_scheduler", {
-    p_scheduler_base_url: resolveSchedulerBaseUrl(),
-    p_cron_secret: serverEnv.CRON_SECRET,
-    p_enabled: false,
-  });
+  const { data, error } = await callSyncPgCronSchedulerRpc(false);
 
   if (error) {
     return {
@@ -283,11 +326,7 @@ export const deleteSchedulerCronJob = async (): Promise<SchedulerCronSyncResult>
 };
 
 export const syncSchedulerCronJobLifecycle = async (_options?: { force?: boolean }): Promise<SchedulerCronSyncResult> => {
-  const { data, error } = await supabaseAdmin.rpc("sync_listflow_pg_cron_scheduler", {
-    p_scheduler_base_url: resolveSchedulerBaseUrl(),
-    p_cron_secret: serverEnv.CRON_SECRET,
-    p_enabled: true,
-  });
+  const { data, error } = await callSyncPgCronSchedulerRpc(true);
 
   if (error) {
     return {

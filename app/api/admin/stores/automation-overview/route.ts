@@ -1430,7 +1430,9 @@ export async function GET(request: NextRequest) {
       const nextTriggerAt =
         usesPerStoreDirectCron && directCronPresent
           ? directCronSnapshot?.nextTriggerAt ?? scheduleState.nextTriggerAt
-          : scheduleState.nextTriggerAt;
+          : directCronPresent
+            ? scheduleState.nextTriggerAt
+            : null;
 
       return {
         storeId: store.id,
