@@ -13,7 +13,7 @@ import {
 } from "@/lib/settings/subscriptions";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
-import { loadDirectAutomationCronJobs, syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
+import { loadSchedulerMasterState, syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -131,8 +131,7 @@ const normalizeStoreCurrency = (value: string | null | undefined): "USD" | "TRY"
   return null;
 };
 
-const isDirectAutomationMode = () =>
-  (process.env.AUTOMATION_DISPATCH_MODE?.trim().toLowerCase() || "direct") === "direct";
+const isDirectAutomationMode = () => true;
 
 const toValidDate = (value: string | null | undefined) => {
   if (!value) {
@@ -937,25 +936,20 @@ const loadDirectCronHealthByStoreId = async (storeIds: string[]) => {
   }
 
   try {
-    const rows = await loadDirectAutomationCronJobs();
-    const allowed = new Set(storeIds);
+    const schedulerState = await loadSchedulerMasterState();
+    const masterSchedulerPresent = Boolean(
+      schedulerState?.enabled && schedulerState.active && schedulerState.jobId
+    );
 
-    for (const row of rows) {
-      const storeId = typeof row.storeId === "string" ? row.storeId : null;
-      if (!storeId || !allowed.has(storeId)) {
-        continue;
-      }
+    if (!masterSchedulerPresent) {
+      return map;
+    }
 
-      if (row.enabled === false) {
-        continue;
-      }
-
-      if (!map.has(storeId)) {
-        map.set(storeId, {
-          directCronPresent: true,
-          directCronJobId: row.jobId ?? null,
-        });
-      }
+    for (const storeId of storeIds) {
+      map.set(storeId, {
+        directCronPresent: true,
+        directCronJobId: schedulerState?.jobId ?? null,
+      });
     }
   } catch {
     return map;

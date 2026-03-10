@@ -914,7 +914,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     let cronSync: SchedulerCronSyncResult = {
       ok: true,
       status: "noop",
-      message: "Direct cron kullanılmıyor.",
+      message: "Supabase pg_cron master scheduler kullanılıyor.",
     };
     let directCronVerification:
       | {
@@ -961,7 +961,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           });
 
           if (!verifiedJob) {
-            cronWarning = `Direct cron doğrulaması tamamlanamadı. ${targetWebhook.name} için cron-job.org kaydı henüz görünmüyor.`;
+            cronWarning = `Master scheduler doğrulaması tamamlanamadı. ${targetWebhook.name} için pg_cron tetik kaydı henüz görünmüyor.`;
             await persistCronVerificationLog({
               storeId: store.id,
               webhookConfigId: targetWebhook.id,
@@ -996,8 +996,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         } catch (error) {
           cronWarning =
             error instanceof Error
-              ? `Direct cron doğrulaması tamamlanamadı: ${error.message}`
-              : "Direct cron doğrulaması tamamlanamadı.";
+              ? `Master scheduler doğrulaması tamamlanamadı: ${error.message}`
+              : "Master scheduler doğrulaması tamamlanamadı.";
           await persistCronVerificationLog({
             storeId: store.id,
             webhookConfigId: targetWebhook.id,

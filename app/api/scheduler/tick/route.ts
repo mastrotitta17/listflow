@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isPerStoreDirectCronEnabled, syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
+import { syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
 import { serverEnv } from "@/lib/env/server";
 import { runSchedulerTick } from "@/lib/scheduler/engine";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -63,9 +63,6 @@ const isAuthorized = (request: NextRequest) => {
   return providedTokens.some((token) => token === serverEnv.CRON_SECRET);
 };
 
-const isDirectAutomationMode = () =>
-  (process.env.AUTOMATION_DISPATCH_MODE?.trim().toLowerCase() || "direct") === "direct";
-
 const isMissingColumnError = (error: { message?: string } | null | undefined, columnName: string) => {
   if (!error) {
     return false;
@@ -91,8 +88,8 @@ const detectSource = (request: NextRequest) => {
 
   const ua = (request.headers.get("user-agent") ?? "").toLowerCase();
 
-  if (ua.includes("cron-job.org")) {
-    return "cron-job.org";
+  if (ua.includes("pg_cron")) {
+    return "pg_cron";
   }
 
   if (ua.includes("vercel")) {
@@ -226,19 +223,8 @@ const runTick = async (request: NextRequest) => {
   }
 
   try {
-    const usePerStoreDirectCron = isDirectAutomationMode() && isPerStoreDirectCronEnabled();
     const lifecycleSummary = await syncSchedulerCronJobLifecycle();
-    const summary = usePerStoreDirectCron
-      ? {
-          total: 0,
-          triggered: 0,
-          skipped: 0,
-          failed: 0,
-          reasonBreakdown: {
-            direct_mode_enabled: 1,
-          },
-        }
-      : await runSchedulerTick();
+    const summary = await runSchedulerTick();
     let cronTestSummary: Awaited<ReturnType<typeof runCronTestTick>> | null = null;
     let cronTestError: string | null = null;
 

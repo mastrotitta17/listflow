@@ -416,7 +416,7 @@ export default function AdminWebhookConsolePage() {
     const payload = (await response.json().catch(() => ({}))) as DirectCronListResponse;
 
     if (!response.ok) {
-      throw new Error(payload.error || "Direct cron job listesi yüklenemedi.");
+      throw new Error(payload.error || "Master scheduler bilgisi yüklenemedi.");
     }
 
     if (payload.rateLimited) {
@@ -1506,7 +1506,7 @@ export default function AdminWebhookConsolePage() {
               <TabsTrigger value="console">Console</TabsTrigger>
               <TabsTrigger value="transitions">Geçiş Logları</TabsTrigger>
               <TabsTrigger value="scheduler">Zamanlayıcı</TabsTrigger>
-              <TabsTrigger value="direct-cron">Direct Cron Jobs</TabsTrigger>
+              <TabsTrigger value="direct-cron">Master Scheduler</TabsTrigger>
               <TabsTrigger value="cron">Cron Tick</TabsTrigger>
             </TabsList>
 
@@ -1626,7 +1626,7 @@ export default function AdminWebhookConsolePage() {
               <DataTable
                 columns={directCronColumns}
                 data={directCronJobs}
-                searchPlaceholder="Direct cron job ara..."
+                searchPlaceholder="Master scheduler ara..."
                 pageSize={10}
               />
             </TabsContent>

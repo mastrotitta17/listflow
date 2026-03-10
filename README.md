@@ -35,7 +35,7 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
-## Scheduler (cron-job.org)
+## Scheduler (Supabase pg_cron)
 
 Listflow automation scheduler endpoint:
 
@@ -48,11 +48,12 @@ Listflow automation scheduler endpoint:
 - `NEXT_PUBLIC_SITE_URL=https://listflow.pro` (Google OAuth redirect base)
 - `APP_URL=https://listflow.pro`
 - `CRON_SCHEDULER_BASE_URL=https://listflow.pro`
-- `CRON_JOB_ORG_API_KEY=<cron-job.org api key>` (opsiyonel, `CRON_SECRET` fallback'i var)
+- `CRON_SECRET=<scheduler secret>`
+- `CRON_SCHEDULER_BASE_URL=https://listflow.pro` (opsiyonel; yoksa `APP_URL` kullanılır)
 
-### Automatic cron-job.org sync
+### Automatic pg_cron sync
 
-Webhook Console üzerinden webhook create/update/delete işlemlerinde sistem cron-job.org job kaydını otomatik create/update/delete eder.
+Webhook Console üzerinden webhook create/update/delete işlemlerinde sistem Supabase `pg_cron` master scheduler kaydını otomatik create/update eder.
 
 - Target URL: `https://listflow.pro/api/scheduler/tick`
 - Method: `POST`

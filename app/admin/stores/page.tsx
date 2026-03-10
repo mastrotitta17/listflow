@@ -29,7 +29,7 @@ type LastTrigger = {
   triggerType: string | null;
   responseStatus: number | null;
   responseStatusLabel?: string | null;
-  responseStatusSource?: "http" | "cron-job.org" | null;
+  responseStatusSource?: "http" | "scheduler" | null;
   errorMessage: string | null;
   createdAt: string | null;
   webhookConfigId: string | null;
@@ -877,8 +877,8 @@ function StoresAutomationTable({
                         {trigger.triggerType || "scheduled"} / {trigger.status || "-"}
                       </Badge>
                       <p className="text-xs text-slate-500">
-                        {trigger.responseStatusSource === "cron-job.org"
-                          ? `${trigger.responseStatusLabel ?? "cron-job.org"} - ${formatDate(trigger.createdAt)}`
+                        {trigger.responseStatusSource === "scheduler"
+                          ? `${trigger.responseStatusLabel ?? "master scheduler"} - ${formatDate(trigger.createdAt)}`
                           : `${trigger.responseStatusLabel ?? `HTTP ${trigger.responseStatus ?? "-"}`} - ${formatDate(trigger.createdAt)}`}
                       </p>
                       {triggerWebhookName ? <p className="text-xs text-slate-400">{triggerWebhookName}</p> : null}
@@ -906,8 +906,8 @@ function StoresAutomationTable({
                     />
                     <p className="text-xs text-slate-500">
                       {item.directCronPresent
-                        ? `cron scheduler aktif${item.directCronJobId ? ` (#${item.directCronJobId})` : ""}`
-                        : "cron scheduler beklemede"}
+                        ? `pg_cron master scheduler aktif${item.directCronJobId ? ` (#${item.directCronJobId})` : ""}`
+                        : "pg_cron master scheduler beklemede"}
                     </p>
                   </div>
                 </TableCell>

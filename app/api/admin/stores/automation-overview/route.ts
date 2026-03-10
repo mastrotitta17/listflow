@@ -11,6 +11,7 @@ import {
   isDirectAutomationMode,
   isPerStoreDirectCronEnabled,
   loadDirectAutomationCronJobs,
+  loadSchedulerMasterState,
   syncSchedulerCronJobLifecycle,
 } from "@/lib/cron-job-org/client";
 import {
@@ -1237,6 +1238,10 @@ export async function GET(request: NextRequest) {
       loadListingCounts(storeIds),
     ]);
     const directCronByStoreId = await loadDirectCronByStoreId(storeIds);
+    const schedulerMasterState = await loadSchedulerMasterState().catch(() => null);
+    const masterSchedulerPresent = Boolean(
+      schedulerMasterState?.enabled && schedulerMasterState.active && schedulerMasterState.jobId
+    );
     const cronLifecycleSnapshot = await cronLifecycleSnapshotPromise;
 
     const userIds = Array.from(new Set(stores.map((store) => store.user_id)));
@@ -1401,11 +1406,11 @@ export async function GET(request: NextRequest) {
               status: directCronStatus.state,
               triggerType: "auto_switch",
               responseStatus: directCronSnapshot.lastStatus,
-              responseStatusLabel: `cron-job.org ${directCronStatus.label}${
+              responseStatusLabel: `master scheduler ${directCronStatus.label}${
                 directCronSnapshot.lastStatus !== null ? ` (${directCronSnapshot.lastStatus})` : ""
               }`,
-              responseStatusSource: "cron-job.org",
-              errorMessage: directCronStatus.state === "failed" ? `cron-job.org ${directCronStatus.label}` : null,
+              responseStatusSource: "scheduler",
+              errorMessage: directCronStatus.state === "failed" ? `master scheduler ${directCronStatus.label}` : null,
               createdAt: directCronSnapshot.lastExecutionAt,
               webhookConfigId: directCronSnapshot.webhookConfigId,
             }
@@ -1417,7 +1422,7 @@ export async function GET(request: NextRequest) {
       const usesPerStoreDirectCron = isDirectAutomationMode() && isPerStoreDirectCronEnabled();
       const directCronPresent = usesPerStoreDirectCron
         ? Boolean(directCronSnapshot?.verifiedJobId)
-        : Boolean(activeSubscription?.id && activeWebhookConfigId);
+        : Boolean(masterSchedulerPresent && activeSubscription?.id && activeWebhookConfigId);
       const cadenceHours =
         usesPerStoreDirectCron && directCronPresent
           ? directCronSnapshot?.cadenceHours ?? scheduleState.cadenceHours
@@ -1456,7 +1461,9 @@ export async function GET(request: NextRequest) {
         cadenceHours,
         nextTriggerAt,
         directCronPresent,
-        directCronJobId: directCronSnapshot?.verifiedJobId ?? null,
+        directCronJobId: usesPerStoreDirectCron
+          ? directCronSnapshot?.verifiedJobId ?? null
+          : schedulerMasterState?.jobId ?? null,
         lastCronSyncAt: cronLifecycleSnapshot.lastCronSyncAt,
         lastCronSyncStatus: cronLifecycleSnapshot.lastCronSyncStatus,
         lastCronSyncMessage: cronLifecycleSnapshot.lastCronSyncMessage,
@@ -1466,22 +1473,20 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    if (isDirectAutomationMode() && isPerStoreDirectCronEnabled()) {
-      const missingDirectCronRows = rows.filter((row) => {
-        return Boolean(row.subscriptionId && row.activeWebhookConfigId && row.directCronPresent !== true);
-      });
+    const missingSchedulerRows = rows.filter((row) => {
+      return Boolean(row.subscriptionId && row.activeWebhookConfigId && row.directCronPresent !== true);
+    });
 
-      if (missingDirectCronRows.length > 0) {
-        for (const row of missingDirectCronRows.slice(0, 10)) {
-          await insertCronDirectJobVerifyLog({
-            storeId: row.storeId,
-            webhookConfigId: row.activeWebhookConfigId,
-            message: "Eligible direct automation cron job bulunamadi. Lifecycle reconcile tetiklendi.",
-          });
-        }
-
-        await syncSchedulerCronJobLifecycle().catch(() => null);
+    if (missingSchedulerRows.length > 0) {
+      for (const row of missingSchedulerRows.slice(0, 10)) {
+        await insertCronDirectJobVerifyLog({
+          storeId: row.storeId,
+          webhookConfigId: row.activeWebhookConfigId,
+          message: "Master scheduler eksik görünüyor. pg_cron lifecycle reconcile tetiklendi.",
+        });
       }
+
+      await syncSchedulerCronJobLifecycle().catch(() => null);
     }
 
     return NextResponse.json({

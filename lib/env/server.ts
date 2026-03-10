@@ -105,8 +105,6 @@ export const serverEnv = {
   NEXT_PUBLIC_SUPABASE_ANON_KEY: readRequiredServerEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
   SUPABASE_SERVICE_ROLE_KEY: readRequiredServerEnv("SUPABASE_SERVICE_ROLE_KEY"),
   CRON_SECRET: readRequiredServerEnv("CRON_SECRET"),
-  CRON_JOB_ORG_API_KEY: readOptionalServerEnv("CRON_JOB_ORG_API_KEY"),
-  CRON_JOB_ORG_JOB_ID: readOptionalServerEnv("CRON_JOB_ORG_JOB_ID"),
   CRON_SCHEDULER_BASE_URL: readOptionalServerEnv("CRON_SCHEDULER_BASE_URL"),
   EXPO_PUSH_ACCESS_TOKEN: readOptionalServerEnv("EXPO_PUSH_ACCESS_TOKEN"),
   get STRIPE_MODE() {
