@@ -27,10 +27,15 @@ type ListingRow = {
   price: number | null;
   quantity: number | null;
   status: string | null;
+  listing_status?: string | null;
   tags: string[] | null;
   category: string | null;
   created_at: string;
   updated_at: string;
+  etsy_listing_id?: string | null;
+  etsy_listing_url?: string | null;
+  etsy_store_link?: string | null;
+  publish_proof?: string | null;
 };
 
 const PAGE_SIZE = 18;
@@ -91,6 +96,29 @@ const toPositiveInt = (value: string | null, fallback: number) => {
   }
 
   return Math.floor(parsed);
+};
+
+const toTrimmed = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+const resolveProductStatus = (row: ListingRow) => {
+  const rawStatus = toTrimmed(row.status ?? row.listing_status ?? "") || "pending";
+  const normalized = rawStatus.toLowerCase();
+  const hasPublishRefs = Boolean(
+    toTrimmed(row.etsy_listing_id) ||
+      toTrimmed(row.etsy_listing_url) ||
+      toTrimmed(row.etsy_store_link) ||
+      toTrimmed(row.publish_proof)
+  );
+
+  if (hasPublishRefs) {
+    return "completed";
+  }
+
+  if (["done", "published", "uploaded", "success", "complete", "completed"].includes(normalized)) {
+    return "completed";
+  }
+
+  return rawStatus;
 };
 
 const loadOwnedStores = async (userId: string) => {
@@ -170,7 +198,7 @@ export async function GET(request: NextRequest) {
     let query = supabaseAdmin
       .from("listing")
       .select(
-        "id,key,title,description,image_1_url,image_2_url,image_3_url,price,quantity,status,tags,category,created_at,updated_at",
+        "id,key,title,description,image_1_url,image_2_url,image_3_url,price,quantity,status,listing_status,tags,category,created_at,updated_at,etsy_listing_id,etsy_listing_url,etsy_store_link,publish_proof",
         { count: "exact" }
       )
       .eq("client_id", selectedStore.id)
@@ -203,7 +231,7 @@ export async function GET(request: NextRequest) {
       ].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value) === index),
       price: Number.isFinite(row.price ?? NaN) ? row.price : 0,
       quantity: row.quantity ?? 0,
-      status: row.status ?? "pending",
+      status: resolveProductStatus(row),
       tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0) : [],
       category: row.category ?? null,
       createdAt: row.created_at,
