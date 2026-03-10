@@ -139,7 +139,7 @@ export const enMessages = {
     noStoresTitle: "No store yet",
     noStoresDescription: "Create a store from Etsy Automation first to see products here.",
     emptyTitle: "No product in this store yet",
-    emptyDescription: "Products will appear here once they are written to the listing table for this store.",
+    emptyDescription: "Products for this store will appear here when they arrive.",
     statusLabel: "Status",
     createdLabel: "Created",
     updatedLabel: "Updated",

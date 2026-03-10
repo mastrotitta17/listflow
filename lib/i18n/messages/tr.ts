@@ -139,7 +139,7 @@ export const trMessages = {
     noStoresTitle: "Henüz mağaza yok",
     noStoresDescription: "Ürünleri görebilmek için önce Etsy otomasyon bölümünden bir mağaza oluşturun.",
     emptyTitle: "Bu mağazada henüz ürün yok",
-    emptyDescription: "Bu mağaza için listing tablosuna ürün düştüğünde burada görünecek.",
+    emptyDescription: "Bu mağaza için ürünler geldiğinde burada görünecek.",
     statusLabel: "Durum",
     createdLabel: "Oluşturuldu",
     updatedLabel: "Güncellendi",
