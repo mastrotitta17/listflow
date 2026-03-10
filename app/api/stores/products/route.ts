@@ -34,6 +34,44 @@ type ListingRow = {
 };
 
 const PAGE_SIZE = 18;
+const PUBLIC_R2_ORIGIN = "https://pub-b9db5786e8af4a9b8f542561b9fc5298.r2.dev";
+const PRODUCT_CDN_ORIGIN = "https://cdn.listflow.pro";
+
+const normalizeProductAssetPath = (pathname: string) => {
+  if (!pathname) {
+    return "/jobs";
+  }
+
+  if (pathname === "/job") {
+    return "/jobs";
+  }
+
+  if (pathname.startsWith("/job/")) {
+    return pathname.replace(/^\/job\//, "/jobs/");
+  }
+
+  return pathname;
+};
+
+const normalizeProductImageUrl = (value: string | null | undefined) => {
+  const normalized = normalizePublicAssetUrl(value);
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const url = new URL(normalized);
+    const publicOrigin = new URL(PUBLIC_R2_ORIGIN);
+
+    if (url.origin !== publicOrigin.origin) {
+      return normalized;
+    }
+
+    return `${PRODUCT_CDN_ORIGIN}${normalizeProductAssetPath(url.pathname)}${url.search}`;
+  } catch {
+    return normalized;
+  }
+};
 
 const getAccessToken = (request: NextRequest) => request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
 
@@ -157,11 +195,11 @@ export async function GET(request: NextRequest) {
       key: row.key ?? null,
       title: row.title ?? "Untitled",
       description: row.description ?? "",
-      imageUrl: normalizePublicAssetUrl(row.image_1_url) ?? null,
+      imageUrl: normalizeProductImageUrl(row.image_1_url) ?? null,
       images: [
-        normalizePublicAssetUrl(row.image_1_url) ?? null,
-        normalizePublicAssetUrl(row.image_2_url) ?? null,
-        normalizePublicAssetUrl(row.image_3_url) ?? null,
+        normalizeProductImageUrl(row.image_1_url) ?? null,
+        normalizeProductImageUrl(row.image_2_url) ?? null,
+        normalizeProductImageUrl(row.image_3_url) ?? null,
       ].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value) === index),
       price: Number.isFinite(row.price ?? NaN) ? row.price : 0,
       quantity: row.quantity ?? 0,

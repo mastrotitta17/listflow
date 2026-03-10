@@ -54,6 +54,42 @@ type ProductsResponse = {
 };
 
 const DRAFT_STATUSES = ["draft", "pending", "queued"];
+const PRODUCT_CDN_ORIGIN = "https://cdn.listflow.pro";
+const PRODUCT_PUBLIC_R2_ORIGIN = "https://pub-b9db5786e8af4a9b8f542561b9fc5298.r2.dev";
+
+const normalizeProductAssetPath = (pathname: string) => {
+  if (!pathname) {
+    return "/jobs";
+  }
+
+  if (pathname === "/job") {
+    return "/jobs";
+  }
+
+  if (pathname.startsWith("/job/")) {
+    return pathname.replace(/^\/job\//, "/jobs/");
+  }
+
+  return pathname;
+};
+
+const toProductImageFallbackUrl = (value: string | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value);
+    const cdnOrigin = new URL(PRODUCT_CDN_ORIGIN);
+    if (parsed.origin !== cdnOrigin.origin) {
+      return null;
+    }
+
+    return `${PRODUCT_PUBLIC_R2_ORIGIN}${normalizeProductAssetPath(parsed.pathname)}${parsed.search}`;
+  } catch {
+    return null;
+  }
+};
 
 const statusTone = (value: string) => {
   const normalized = value.trim().toLowerCase();
@@ -104,11 +140,22 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const images = row.images.length > 0 ? row.images : row.imageUrl ? [row.imageUrl] : [];
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
+  const [imageOverrides, setImageOverrides] = useState<Record<number, string | null>>({});
   const hoverZoneRef = useRef<"left" | "center" | "right">("center");
 
   useEffect(() => {
     setActiveImageIndex(0);
+    setImageOverrides({});
   }, [row.id]);
+
+  const resolvedImages = useMemo(
+    () =>
+      images.map((image, index) => {
+        const override = imageOverrides[index];
+        return override === undefined ? image : override;
+      }),
+    [imageOverrides, images]
+  );
 
   const moveToImage = useCallback(
     (direction: "next" | "prev") => {
@@ -180,12 +227,29 @@ const ProductCard: React.FC<ProductCardProps> = ({
         }}
         onMouseMove={handleMouseMove}
       >
-        {images.length > 0 ? (
+        {resolvedImages.length > 0 && resolvedImages[activeImageIndex] ? (
           <img
-            src={images[activeImageIndex]}
+            src={resolvedImages[activeImageIndex] ?? undefined}
             alt={row.title}
             className="h-full w-full object-cover transition duration-300"
             loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={() => {
+              const currentSource = resolvedImages[activeImageIndex];
+              const fallbackUrl = toProductImageFallbackUrl(currentSource);
+
+              setImageOverrides((current) => {
+                const existingOverride = current[activeImageIndex];
+                if (!fallbackUrl || existingOverride === null || fallbackUrl === currentSource) {
+                  return { ...current, [activeImageIndex]: null };
+                }
+
+                return {
+                  ...current,
+                  [activeImageIndex]: fallbackUrl,
+                };
+              });
+            }}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,#312e81_0%,#0b1020_55%,#06070c_100%)]">
@@ -200,11 +264,11 @@ const ProductCard: React.FC<ProductCardProps> = ({
           </span>
         </div>
 
-        {images.length > 1 ? (
+        {resolvedImages.filter(Boolean).length > 1 ? (
           <div
             className={`absolute inset-x-0 bottom-3 flex items-center justify-center gap-1.5 transition duration-200 ${isHovered ? "opacity-100" : "opacity-0"}`}
           >
-            {images.map((_, index) => (
+            {resolvedImages.map((_, index) => (
               <button
                 key={`${row.id}-image-${index}`}
                 type="button"
