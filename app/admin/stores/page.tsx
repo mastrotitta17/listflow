@@ -383,7 +383,16 @@ const formatCountdown = (targetIso: string | null | undefined, nowMs: number) =>
 
   const diffMs = targetMs - nowMs;
   if (diffMs <= 0) {
-    return "Şimdi";
+    const overdueMs = nowMs - targetMs;
+    if (overdueMs < 90_000) {
+      return "Tetikleniyor...";
+    }
+    const overdueMins = Math.floor(overdueMs / 60_000);
+    const overdueHours = Math.floor(overdueMins / 60);
+    if (overdueHours >= 1) {
+      return `Gecikmiş (${overdueHours}s ${overdueMins % 60}dk)`;
+    }
+    return `Gecikmiş (${overdueMins}dk)`;
   }
 
   const totalSeconds = Math.floor(diffMs / 1000);
@@ -439,9 +448,12 @@ function NextTriggerCountdown({
     );
   }
 
+  const countdown = formatCountdown(targetIso, nowMs);
+  const isOverdue = Boolean(targetIso && new Date(targetIso).getTime() < nowMs);
+
   return (
     <div className="space-y-1">
-      <p className="text-sm font-black text-white">{formatCountdown(targetIso, nowMs)}</p>
+      <p className={`text-sm font-black ${isOverdue ? "text-red-400" : "text-white"}`}>{countdown}</p>
       <p className="text-xs text-slate-500">
         {targetIso ? formatDate(targetIso) : "-"} {cadenceHours ? `(her ${cadenceHours} saat)` : ""}
       </p>

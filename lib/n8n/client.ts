@@ -53,16 +53,25 @@ export const dispatchN8nTrigger = async ({
   const safeHeaders = normalizeHeaders(headers);
   const finalMethod = method.toUpperCase() === "GET" ? "GET" : "POST";
 
-  const response = await fetch(targetUrl, {
-    method: finalMethod,
-    headers: {
-      ...(finalMethod === "POST" ? { "Content-Type": "application/json" } : {}),
-      ...safeHeaders,
-      "x-listflow-idempotency-key": idempotencyKey,
-      "x-listflow-triggered-at": triggeredAt,
-    },
-    body: finalMethod === "POST" ? body : undefined,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+  let response: Response;
+  try {
+    response = await fetch(targetUrl, {
+      method: finalMethod,
+      headers: {
+        ...(finalMethod === "POST" ? { "Content-Type": "application/json" } : {}),
+        ...safeHeaders,
+        "x-listflow-idempotency-key": idempotencyKey,
+        "x-listflow-triggered-at": triggeredAt,
+      },
+      body: finalMethod === "POST" ? body : undefined,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const text = await response.text();
 

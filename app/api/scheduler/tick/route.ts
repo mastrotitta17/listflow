@@ -6,6 +6,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { runCronTestTick } from "@/lib/webhooks/cron-test";
 
 export const runtime = "nodejs";
+export const maxDuration = 60; // Vercel Pro: max 60s, Enterprise: daha yüksek ayarlanabilir
 
 const getBearerToken = (authHeader: string | null) => {
   if (!authHeader) {

@@ -74,6 +74,9 @@ type SchedulerJobResult = {
 
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_BACKOFF_MINUTES = [1, 2, 4, 8, 16] as const;
+// "processing" durumundaki job bu süreden uzun süredir güncellenmemişse (Vercel timeout vb.)
+// stale kabul edilip "failed" olarak işaretlenir ve retry mekanizmasına girer.
+const STALE_PROCESSING_MS = 5 * 60 * 1000; // 5 dakika
 
 const isUniqueViolation = (error: { code?: string; message?: string } | null | undefined) => {
   if (!error) {
@@ -1234,7 +1237,8 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
 
       const existingStatus = (slotJob?.status ?? "").toLowerCase();
 
-      if (slotJob && ["processing", "success"].includes(existingStatus)) {
+      // "success" = bu slot zaten tetiklendi, bir sonraki aralığa kadar bekle
+      if (slotJob && existingStatus === "success") {
         markSkipped(summary, "not_due_yet");
         continue;
       }
@@ -1242,8 +1246,33 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
       const nowIso = new Date().toISOString();
       let currentRetryCount = slotJob?.retry_count ?? 0;
       let schedulerJobId: string | null = null;
+      let effectiveStatus = existingStatus;
 
-      if (slotJob && existingStatus === "failed") {
+      // "processing" stuck detection: Vercel timeout veya başka bir nedenle job
+      // "processing" durumunda takılı kalmış olabilir. 5 dakikadan uzunsa "failed" yap.
+      if (slotJob && existingStatus === "processing") {
+        const jobAgeMs = nowMs - getJobTimestamp(slotJob);
+        if (jobAgeMs < STALE_PROCESSING_MS) {
+          markSkipped(summary, "not_due_yet");
+          continue;
+        }
+        // Stale processing → "failed" olarak işaretle, retry mekanizması devralır
+        try {
+          await updateSchedulerJobWithFallback(slotJob.id, {
+            status: "failed",
+            runAt: nowIso,
+            retryCount: currentRetryCount + 1,
+            errorMessage: `Processing timeout (${Math.floor(jobAgeMs / 60000)}dk), yeniden deneniyor.`,
+          });
+          currentRetryCount = currentRetryCount + 1;
+          effectiveStatus = "failed";
+        } catch {
+          markSkipped(summary, "not_due_yet");
+          continue;
+        }
+      }
+
+      if (slotJob && effectiveStatus === "failed") {
         const lastAttemptMs = getJobTimestamp(slotJob);
         const retryDelayMinutes = getRetryDelayMinutes(currentRetryCount);
         const nextRetryAtMs = lastAttemptMs + retryDelayMinutes * 60 * 1000;
@@ -1260,7 +1289,7 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
         });
 
         schedulerJobId = slotJob.id;
-      } else if (slotJob && existingStatus === "skipped") {
+      } else if (slotJob && effectiveStatus === "skipped") {
         await updateSchedulerJobWithFallback(slotJob.id, {
           status: "processing",
           runAt: nowIso,
