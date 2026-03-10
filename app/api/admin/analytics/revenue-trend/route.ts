@@ -379,14 +379,52 @@ export async function GET(request: NextRequest) {
     const dbRecords = await loadRecurringPaymentsFromDb(firstMonthDate.toISOString());
     const stripe = await loadRecurringPaymentsFromStripe(mode, firstMonthUnix);
 
+    // Stripe'dan gelen invoice ID seti — hangi faturaların hangi mode'a ait olduğunu bilmek için.
+    // Bu set sayesinde DB kayıtlarını mode'a göre filtreleyebiliriz.
+    const stripeInvoiceIdSet = new Set(
+      stripe.records
+        .map((r) => r.stripe_invoice_id)
+        .filter((id): id is string => Boolean(id))
+    );
+
+    // DB kayıtlarını önce stripe_invoice_id bazında deduplikasyon yap
+    // (aynı fatura webhook + manuel kayıt gibi iki kez girmiş olabilir).
+    const dedupedDbRecords = (() => {
+      const seen = new Set<string>();
+      return dbRecords.filter((record) => {
+        if (!record.stripe_invoice_id) {
+          // invoice_id olmayan kayıtlar: sadece mode="all" iken dahil et
+          return mode === "all";
+        }
+        if (seen.has(record.stripe_invoice_id)) {
+          return false;
+        }
+        seen.add(record.stripe_invoice_id);
+        return true;
+      });
+    })();
+
+    // Mode filtresi: mode="live" veya "test" ise yalnızca o Stripe hesabına ait
+    // invoice_id'si olan DB kayıtları dahil edilir.
+    // mode="all" ise tüm DB kayıtları (invoice_id olanlar + olmayanlar) dahil edilir.
+    const modeFilteredDbRecords =
+      mode === "all"
+        ? dedupedDbRecords
+        : dedupedDbRecords.filter(
+            (record) =>
+              Boolean(record.stripe_invoice_id) &&
+              stripeInvoiceIdSet.has(record.stripe_invoice_id as string)
+          );
+
     const dbInvoiceIds = new Set(
-      dbRecords
+      modeFilteredDbRecords
         .map((record) => record.stripe_invoice_id)
         .filter((value): value is string => Boolean(value))
     );
 
+    // Birleştirme: DB kayıtları öncelikli, Stripe'dan gelenler deduplication sonrası eklenir.
     const mergedRecords = [
-      ...dbRecords,
+      ...modeFilteredDbRecords,
       ...stripe.records.filter((record) => !(record.stripe_invoice_id && dbInvoiceIds.has(record.stripe_invoice_id))),
     ];
 
