@@ -3,7 +3,8 @@ import type { Metadata } from "next";
 export const SITE_NAME = "Listflow";
 export const SITE_DOMAIN = "listflow.pro";
 export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://listflow.pro").replace(/\/+$/, "");
-export const DEFAULT_OG_IMAGE = "/og-image.webp";
+export const DEFAULT_OG_IMAGE = "/og-image.jpg";
+export const DEFAULT_OG_IMAGE_WEBP = "/og-image.webp";
 
 const DEFAULT_TITLE = "AI-Powered Etsy Automation Platform";
 const DEFAULT_DESCRIPTION =
@@ -75,6 +76,7 @@ export const buildMetadata = ({
           width: 1200,
           height: 630,
           alt: `${SITE_NAME} Open Graph Image`,
+          type: "image/jpeg",
         },
       ],
     },
@@ -142,9 +144,11 @@ export const rootMetadata: Metadata = {
     images: [
       {
         url: absoluteUrl(DEFAULT_OG_IMAGE),
+        secureUrl: absoluteUrl(DEFAULT_OG_IMAGE),
         width: 1200,
         height: 630,
         alt: `${SITE_NAME} Open Graph Image`,
+        type: "image/jpeg",
       },
     ],
   },

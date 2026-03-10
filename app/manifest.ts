@@ -22,9 +22,9 @@ export default function manifest(): MetadataRoute.Manifest {
         type: "image/x-icon",
       },
       {
-        src: "/og-image.webp",
+        src: "/og-image.jpg",
         sizes: "1200x630",
-        type: "image/webp",
+        type: "image/jpeg",
         purpose: "any",
       },
     ],
