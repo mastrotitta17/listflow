@@ -46,6 +46,7 @@ type PgCronSchedulerState = {
   configured: boolean;
   enabled: boolean;
   schedulerBaseUrl: string | null;
+  hasVercelBypassSecret: boolean;
   jobId: number | null;
   active: boolean;
   schedule: string | null;
@@ -168,6 +169,7 @@ const parseSchedulerState = (payload: unknown): PgCronSchedulerState => {
     configured: raw.configured === true,
     enabled: raw.enabled === true,
     schedulerBaseUrl: getNullableString("schedulerBaseUrl"),
+    hasVercelBypassSecret: raw.hasVercelBypassSecret === true,
     jobId: getNullableNumber("jobId"),
     active: raw.active === true,
     schedule: getNullableString("schedule"),
@@ -180,6 +182,12 @@ const parseSchedulerState = (payload: unknown): PgCronSchedulerState => {
     lastRequestQueuedAt: getNullableString("lastRequestQueuedAt"),
     lastSyncedAt: getNullableString("lastSyncedAt"),
   };
+};
+
+const syncPgCronVercelBypassSecret = async () => {
+  return await supabaseAdmin.rpc("set_listflow_pg_cron_vercel_bypass_secret", {
+    p_vercel_bypass_secret: serverEnv.VERCEL_AUTOMATION_BYPASS_SECRET ?? null,
+  });
 };
 
 const isMissingPgCronFunctionError = (error: { message?: string } | null | undefined) => {
@@ -334,6 +342,16 @@ export const syncSchedulerCronJobLifecycle = async (_options?: { force?: boolean
       status: "error",
       message: "Supabase pg_cron scheduler senkronu başarısız.",
       details: error.message,
+    };
+  }
+
+  const bypassSync = await syncPgCronVercelBypassSecret();
+  if (bypassSync.error && !isMissingPgCronFunctionError(bypassSync.error)) {
+    return {
+      ok: false,
+      status: "error",
+      message: "Supabase pg_cron Vercel bypass secret senkronu başarısız.",
+      details: bypassSync.error.message,
     };
   }
 

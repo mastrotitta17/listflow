@@ -106,6 +106,7 @@ export const serverEnv = {
   SUPABASE_SERVICE_ROLE_KEY: readRequiredServerEnv("SUPABASE_SERVICE_ROLE_KEY"),
   CRON_SECRET: readRequiredServerEnv("CRON_SECRET"),
   CRON_SCHEDULER_BASE_URL: readOptionalServerEnv("CRON_SCHEDULER_BASE_URL"),
+  VERCEL_AUTOMATION_BYPASS_SECRET: readOptionalServerEnv("VERCEL_AUTOMATION_BYPASS_SECRET"),
   EXPO_PUSH_ACCESS_TOKEN: readOptionalServerEnv("EXPO_PUSH_ACCESS_TOKEN"),
   get STRIPE_MODE() {
     return resolveStripeMode();
