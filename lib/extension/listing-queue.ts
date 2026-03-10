@@ -910,8 +910,15 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
     rows
       .filter((row) => {
         if (preferredAliases) {
-          const rowClientId = readClientId(row);
-          if (!rowClientId || !preferredAliases.has(rowClientId)) {
+          // readClientId, client_id → clientId → store_id sırasıyla okur.
+          // Ama bir listing store_id sorgusundan gelmişse client_id farklı olabilir.
+          // Bu yüzden her iki alan da ayrı ayrı kontrol edilmeli.
+          const rowClientId = readFirstString(row, ["client_id", "clientId"]);
+          const rowStoreId = readFirstString(row, ["store_id"]);
+          const matchesAlias =
+            (rowClientId && preferredAliases.has(rowClientId)) ||
+            (rowStoreId && preferredAliases.has(rowStoreId));
+          if (!matchesAlias) {
             return false;
           }
         }

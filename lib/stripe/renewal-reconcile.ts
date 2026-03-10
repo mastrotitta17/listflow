@@ -136,7 +136,8 @@ const loadCandidateRows = async (activeMode: StripeMode) => {
       .limit(1000);
 
     if (candidate.hasStripeMode) {
-      query = query.eq("stripe_mode", activeMode);
+      // Legacy rows may have null stripe_mode. Include them for one-way healing.
+      query = query.or(`stripe_mode.eq.${activeMode},stripe_mode.is.null`);
     }
 
     const attempt = await query;
