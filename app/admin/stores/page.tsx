@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowRightLeft, ArrowUp, ArrowUpDown, Check, Copy, Loader2, Pencil, Plus } from "lucide-react";
+import { ArrowDown, ArrowRightLeft, ArrowUp, ArrowUpDown, Check, Copy, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DatePicker } from "@/components/ui/date-picker";
 import {
@@ -585,11 +586,13 @@ type StoresAutomationTableProps = {
   switchingStoreId: string | null;
   copiedStoreId: string | null;
   savingStoreEdit: boolean;
+  deletingStoreIds: Set<string>;
   onCopyStoreId: (storeId: string) => void;
   onOpenListingViewer: (store: AutomationOverviewRow) => void;
   onOpenEditStoreModal: (store: AutomationOverviewRow) => void;
   onRunSwitch: (store: AutomationTableRow) => void;
   onSelectWebhook: (storeId: string, webhookConfigId: string) => void;
+  onDeleteStores: (storeIds: string[]) => void;
 };
 
 function StoresAutomationTable({
@@ -598,11 +601,13 @@ function StoresAutomationTable({
   switchingStoreId,
   copiedStoreId,
   savingStoreEdit,
+  deletingStoreIds,
   onCopyStoreId,
   onOpenListingViewer,
   onOpenEditStoreModal,
   onRunSwitch,
   onSelectWebhook,
+  onDeleteStores,
 }: StoresAutomationTableProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -611,6 +616,8 @@ function StoresAutomationTable({
   const [sortKey, setSortKey] = useState<StoreTableSortKey>("storeName");
   const [sortDirection, setSortDirection] = useState<StoreTableSortDirection>("asc");
   const [page, setPage] = useState(1);
+  const [selectedStoreIds, setSelectedStoreIds] = useState<Set<string>>(new Set());
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: "single" | "bulk"; storeIds: string[] } | null>(null);
 
   const statusOptions = useMemo(() => {
     return Array.from(new Set(rows.map((row) => row.storeStatus).filter(Boolean))).sort((a, b) =>
@@ -785,9 +792,53 @@ function StoresAutomationTable({
         </p>
       </div>
 
+      {selectedStoreIds.size > 0 && (
+        <div className="mb-2 flex items-center gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2">
+          <span className="text-sm font-black text-red-300">{selectedStoreIds.size} mağaza seçildi</span>
+          <Button
+            size="sm"
+            variant="destructive"
+            className="cursor-pointer h-7 gap-1.5 text-xs font-black"
+            onClick={() => setDeleteConfirm({ type: "bulk", storeIds: Array.from(selectedStoreIds) })}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Seçilenleri Sil
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="cursor-pointer h-7 text-xs text-slate-400 hover:text-white"
+            onClick={() => setSelectedStoreIds(new Set())}
+          >
+            Seçimi Temizle
+          </Button>
+        </div>
+      )}
+
       <Table className="min-w-[1280px]">
         <TableHeader>
           <TableRow>
+            <TableHead className="w-10">
+              <Checkbox
+                checked={paginatedRows.length > 0 && paginatedRows.every((r) => selectedStoreIds.has(r.storeId))}
+                onCheckedChange={(checked) => {
+                  if (checked) {
+                    setSelectedStoreIds((prev) => {
+                      const next = new Set(prev);
+                      paginatedRows.forEach((r) => next.add(r.storeId));
+                      return next;
+                    });
+                  } else {
+                    setSelectedStoreIds((prev) => {
+                      const next = new Set(prev);
+                      paginatedRows.forEach((r) => next.delete(r.storeId));
+                      return next;
+                    });
+                  }
+                }}
+                aria-label="Tümünü seç"
+              />
+            </TableHead>
             {SORTABLE_HEADERS.map((header) => (
               <TableHead key={header.key}>
                 <button
@@ -807,7 +858,7 @@ function StoresAutomationTable({
         <TableBody>
           {paginatedRows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={10} className="py-10 text-center text-slate-500">
+              <TableCell colSpan={11} className="py-10 text-center text-slate-500">
                 Kayıt bulunamadı.
               </TableCell>
             </TableRow>
@@ -823,7 +874,21 @@ function StoresAutomationTable({
               !item.canSwitch || !item.selectedWebhookConfigId || switchingStoreId === item.storeId;
 
             return (
-              <TableRow key={item.storeId}>
+              <TableRow key={item.storeId} className={selectedStoreIds.has(item.storeId) ? "bg-indigo-500/5" : undefined}>
+                <TableCell className="w-10">
+                  <Checkbox
+                    checked={selectedStoreIds.has(item.storeId)}
+                    onCheckedChange={(checked) => {
+                      setSelectedStoreIds((prev) => {
+                        const next = new Set(prev);
+                        if (checked) next.add(item.storeId);
+                        else next.delete(item.storeId);
+                        return next;
+                      });
+                    }}
+                    aria-label={`${item.storeName} seç`}
+                  />
+                </TableCell>
                 <TableCell>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
@@ -970,6 +1035,21 @@ function StoresAutomationTable({
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        onClick={() => setDeleteConfirm({ type: "single", storeIds: [item.storeId] })}
+                        disabled={deletingStoreIds.has(item.storeId)}
+                        title="Mağazayı sil"
+                        aria-label="Mağazayı sil"
+                      >
+                        {deletingStoreIds.has(item.storeId) ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </Button>
                     </div>
                     {selectedWebhook ? (
                       <p className="max-w-[220px] truncate text-xs text-slate-400" title={selectedWebhook.name}>
@@ -1018,6 +1098,60 @@ function StoresAutomationTable({
           </Button>
         </div>
       </div>
+
+      {/* Silme Onay Modalı */}
+      <Dialog
+        open={deleteConfirm !== null}
+        onOpenChange={(open) => { if (!open) setDeleteConfirm(null); }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-400 flex items-center gap-2">
+              <Trash2 className="h-5 w-5" />
+              {deleteConfirm?.type === "bulk"
+                ? `${deleteConfirm.storeIds.length} Mağazayı Sil`
+                : "Mağazayı Sil"}
+            </DialogTitle>
+            <DialogDescription>
+              {deleteConfirm?.type === "bulk" ? (
+                <>
+                  <span className="font-black text-white">{deleteConfirm.storeIds.length} mağaza</span>
+                  {" "}kalıcı olarak silinecek. Bu işlem geri alınamaz.
+                </>
+              ) : (
+                <>
+                  Bu mağaza kalıcı olarak silinecek.{" "}
+                  <span className="font-black text-white">Bu işlem geri alınamaz.</span>
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              className="cursor-pointer"
+              onClick={() => setDeleteConfirm(null)}
+            >
+              İptal
+            </Button>
+            <Button
+              variant="destructive"
+              className="cursor-pointer"
+              onClick={() => {
+                if (!deleteConfirm) return;
+                onDeleteStores(deleteConfirm.storeIds);
+                if (deleteConfirm.type === "bulk") {
+                  setSelectedStoreIds(new Set());
+                }
+                setDeleteConfirm(null);
+              }}
+            >
+              <Trash2 className="h-4 w-4 mr-1" />
+              Evet, Sil
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1095,6 +1229,7 @@ export default function AdminStoresPage() {
   const [listingViewerRows, setListingViewerRows] = useState<ListingDetailRow[]>([]);
   const [listingViewerTotal, setListingViewerTotal] = useState(0);
   const [listingViewerLoading, setListingViewerLoading] = useState(false);
+  const [deletingStoreIds, setDeletingStoreIds] = useState<Set<string>>(new Set());
 
   const webhookMap = useMemo(() => new Map(webhookOptions.map((item) => [item.id, item])), [webhookOptions]);
   const selectedParentCategory = useMemo(
@@ -1739,6 +1874,31 @@ export default function AdminStoresPage() {
     });
   }, [rows, selectedWebhookByStore, webhookOptions]);
 
+  const handleDeleteStores = useCallback(async (storeIds: string[]) => {
+    setDeletingStoreIds(new Set(storeIds));
+    try {
+      const results = await Promise.allSettled(
+        storeIds.map((id) =>
+          fetch(`/api/admin/stores/${encodeURIComponent(id)}`, { method: "DELETE" })
+        )
+      );
+      const failed = results.filter(
+        (r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)
+      );
+      if (failed.length === 0) {
+        toast.success(storeIds.length === 1 ? "Mağaza silindi." : `${storeIds.length} mağaza silindi.`);
+        setRows((prev) => prev.filter((r) => !storeIds.includes(r.storeId)));
+      } else {
+        toast.error(`${failed.length} mağaza silinemedi. Sayfa yenileniyor...`);
+        window.location.reload();
+      }
+    } catch {
+      toast.error("Silme işlemi başarısız.");
+    } finally {
+      setDeletingStoreIds(new Set());
+    }
+  }, []);
+
   const handleCopyStoreId = useCallback(async (storeId: string) => {
     try {
       await navigator.clipboard.writeText(storeId);
@@ -1826,6 +1986,8 @@ export default function AdminStoresPage() {
                     [storeId]: webhookConfigId,
                   }))
                 }
+                deletingStoreIds={deletingStoreIds}
+                onDeleteStores={(ids) => void handleDeleteStores(ids)}
               />
             </div>
           )}
