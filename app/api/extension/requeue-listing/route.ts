@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserFromAccessToken } from "@/lib/auth/admin";
-import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
+import { resolveExtensionUser } from "@/lib/extension/api-auth";
 import { requeueListingForUser } from "@/lib/extension/listing-queue";
 
 export const runtime = "nodejs";
@@ -13,17 +12,11 @@ type RequeueBody = {
 };
 
 const toTrimmed = (value: unknown) => (typeof value === "string" ? value.trim() : "");
-const getAccessToken = (request: NextRequest) => request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
 
 export async function POST(request: NextRequest) {
   try {
-    const accessToken = getAccessToken(request);
-    if (!accessToken) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await getUserFromAccessToken(accessToken);
-    if (!user) {
+    const auth = await resolveExtensionUser(request);
+    if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -35,20 +28,17 @@ export async function POST(request: NextRequest) {
     if (!storeId || (!listingId && !listingKey)) {
       return NextResponse.json({ error: "store_id ve listing_id/listing_key zorunludur." }, { status: 400 });
     }
-    const requeued = await requeueListingForUser({
-      userId: user.id,
+
+    const row = await requeueListingForUser({
+      userId: auth.user.id,
       targetClientId: storeId,
       listingId: listingId || null,
       listingKey: listingKey || null,
-      reason: "dashboard_products_manual_requeue",
+      reason: "extension_panel_manual_requeue",
     });
 
     return NextResponse.json(
-      {
-        ok: true,
-        row: requeued,
-        message: "Ürün tekrar sıraya alındı.",
-      },
+      { ok: true, row },
       {
         headers: {
           "cache-control": "no-store",
@@ -56,7 +46,7 @@ export async function POST(request: NextRequest) {
       }
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Ürün tekrar sıraya alınamadı.";
+    const message = error instanceof Error ? error.message : "Could not requeue listing";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

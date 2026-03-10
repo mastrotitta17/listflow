@@ -1610,9 +1610,25 @@ export const resetFailedListingForUser = async (args: {
   }
 
   const status = normalizeStatus(listing.status ?? listing.listing_status);
-  // "failed" ya da "processing" kabul et: reportJobToApi network hatası alırsa listing
-  // "processing" kalabilir; extension job hatası aldığına göre reset güvenlidir.
-  if (status !== "failed" && status !== "processing") return { reset: false, reason: "invalid_status" };
+  // Network/report drift durumunda row "pending"/"queued"/"draft" olarak kalabiliyor.
+  // Auto/manual retry bu state'lerde de güvenlidir; completed/published proof olan row'lar
+  // zaten hasRowCompletionProof ile pending sayılmadığı için burada tekrar claim edilmez.
+  const retryableStatuses = new Set([
+    "",
+    "pending",
+    "queued",
+    "ready",
+    "new",
+    "draft",
+    "todo",
+    "failed",
+    "processing",
+    "error",
+    "aborted",
+    "cancelled",
+    "canceled",
+  ]);
+  if (!retryableStatuses.has(status)) return { reset: false, reason: "invalid_status" };
 
   const nowIso = new Date().toISOString();
   const payload: RowRecord = {};
@@ -1634,6 +1650,82 @@ export const resetFailedListingForUser = async (args: {
     reason: args.reason ?? null,
   });
   return { reset: true, reason: null };
+};
+
+export const requeueListingForUser = async (args: {
+  userId: string;
+  listingId?: string | null;
+  listingKey?: string | null;
+  targetClientId?: string | null;
+  reason?: string | null;
+}): Promise<{ reset: boolean; reason: string | null }> => {
+  const listingId = normalizeString(args.listingId);
+  const listingKey = normalizeString(args.listingKey);
+  const targetClientId = normalizeString(args.targetClientId);
+  if ((!listingId && !listingKey) || !args.userId) return { reset: false, reason: "invalid_request" };
+
+  const identifier: ListingIdentifier = listingId
+    ? { column: "id", value: listingId }
+    : { column: "key", value: listingKey };
+  const listing = await loadListingByIdentifier(identifier);
+  if (!listing) return { reset: false, reason: "listing_not_found" };
+
+  const allStoreAliases = await loadStoreAliasesByUser(args.userId);
+  const belongs = rowBelongsToUser(listing, { userId: args.userId, allowedClientIds: allStoreAliases });
+  if (!belongs) return { reset: false, reason: "not_owner" };
+
+  if (targetClientId) {
+    const { preferredAliases } = await resolveStoreAliasScope(args.userId, targetClientId);
+    if (!preferredAliases) {
+      return { reset: false, reason: "store_not_found" };
+    }
+    const rowClientId = readClientId(listing);
+    if (rowClientId && !preferredAliases.has(rowClientId)) {
+      return { reset: false, reason: "store_mismatch" };
+    }
+  }
+
+  const status = normalizeStatus(listing.status ?? listing.listing_status);
+  const requeueableStatuses = new Set([
+    "",
+    "pending",
+    "queued",
+    "ready",
+    "new",
+    "draft",
+    "todo",
+    "failed",
+    "processing",
+    "error",
+    "aborted",
+    "cancelled",
+    "canceled",
+  ]);
+  if (!requeueableStatuses.has(status)) return { reset: false, reason: "invalid_status" };
+
+  const nowIso = new Date().toISOString();
+  const payload: RowRecord = {};
+  const statusField = inferStatusFieldName(listing);
+  if (statusField) payload[statusField] = "pending";
+  if (targetClientId && Object.prototype.hasOwnProperty.call(listing, "client_id")) {
+    payload.client_id = targetClientId;
+  }
+  addIfPresent(listing, "updated_at", nowIso, payload);
+  addIfPresent(listing, "processed_at", null, payload);
+  addIfPresent(listing, "completed_at", null, payload);
+  addIfPresent(listing, "claimed_at", null, payload);
+  addIfPresent(listing, "claimed_by_user_id", null, payload);
+  addIfPresent(listing, "claimed_by", null, payload);
+  addIfPresent(listing, "error", null, payload);
+  addIfPresent(listing, "last_error", null, payload);
+  addIfPresent(listing, "etsy_listing_id", null, payload);
+  addIfPresent(listing, "etsy_listing_url", null, payload);
+  addIfPresent(listing, "etsy_store_link", null, payload);
+  addIfPresent(listing, "publish_proof", null, payload);
+  addIfPresent(listing, "manual_requeue_requested_at", nowIso, payload);
+
+  await updateRowByIdentifier(identifier, payload);
+  return { reset: true, reason: normalizeString(args.reason) || null };
 };
 
 export const resetFailedListingForClient = async (args: {
@@ -1662,7 +1754,22 @@ export const resetFailedListingForClient = async (args: {
   }
 
   const status = normalizeStatus(listing.status ?? listing.listing_status);
-  if (status !== "failed" && status !== "processing") return { reset: false, reason: "invalid_status" };
+  const retryableStatuses = new Set([
+    "",
+    "pending",
+    "queued",
+    "ready",
+    "new",
+    "draft",
+    "todo",
+    "failed",
+    "processing",
+    "error",
+    "aborted",
+    "cancelled",
+    "canceled",
+  ]);
+  if (!retryableStatuses.has(status)) return { reset: false, reason: "invalid_status" };
 
   const nowIso = new Date().toISOString();
   const payload: RowRecord = {};
@@ -1683,6 +1790,66 @@ export const resetFailedListingForClient = async (args: {
     reason: args.reason ?? null,
   });
   return { reset: true, reason: null };
+};
+
+export const requeueListingForClient = async (args: {
+  clientId: string;
+  listingId?: string | null;
+  listingKey?: string | null;
+  reason?: string | null;
+}): Promise<{ reset: boolean; reason: string | null }> => {
+  const clientId = normalizeString(args.clientId);
+  const listingId = normalizeString(args.listingId);
+  const listingKey = normalizeString(args.listingKey);
+  if ((!listingId && !listingKey) || !clientId) return { reset: false, reason: "invalid_request" };
+
+  const identifier: ListingIdentifier = listingId
+    ? { column: "id", value: listingId }
+    : { column: "key", value: listingKey };
+  const listing = await loadListingByIdentifier(identifier);
+  if (!listing) return { reset: false, reason: "listing_not_found" };
+
+  const rowClientId = readClientId(listing);
+  if (rowClientId && rowClientId !== clientId) return { reset: false, reason: "client_mismatch" };
+
+  const status = normalizeStatus(listing.status ?? listing.listing_status);
+  const requeueableStatuses = new Set([
+    "",
+    "pending",
+    "queued",
+    "ready",
+    "new",
+    "draft",
+    "todo",
+    "failed",
+    "processing",
+    "error",
+    "aborted",
+    "cancelled",
+    "canceled",
+  ]);
+  if (!requeueableStatuses.has(status)) return { reset: false, reason: "invalid_status" };
+
+  const nowIso = new Date().toISOString();
+  const payload: RowRecord = {};
+  const statusField = inferStatusFieldName(listing);
+  if (statusField) payload[statusField] = "pending";
+  addIfPresent(listing, "updated_at", nowIso, payload);
+  addIfPresent(listing, "processed_at", null, payload);
+  addIfPresent(listing, "completed_at", null, payload);
+  addIfPresent(listing, "claimed_at", null, payload);
+  addIfPresent(listing, "claimed_by_user_id", null, payload);
+  addIfPresent(listing, "claimed_by", null, payload);
+  addIfPresent(listing, "error", null, payload);
+  addIfPresent(listing, "last_error", null, payload);
+  addIfPresent(listing, "etsy_listing_id", null, payload);
+  addIfPresent(listing, "etsy_listing_url", null, payload);
+  addIfPresent(listing, "etsy_store_link", null, payload);
+  addIfPresent(listing, "publish_proof", null, payload);
+  addIfPresent(listing, "manual_requeue_requested_at", nowIso, payload);
+
+  await updateRowByIdentifier(identifier, payload);
+  return { reset: true, reason: normalizeString(args.reason) || null };
 };
 
 export const applyGuestListingJobReport = async (args: GuestReportArgs) => {
