@@ -29,6 +29,7 @@ type ListingAdminRow = Record<string, unknown> & {
   listing_status?: string | null;
   derived_status?: string;
   derived_client_id?: string;
+  derived_store_name?: string | null;
   derived_listing_url?: string;
   is_uploaded?: boolean;
   etsy_listing_id?: string | null;
@@ -516,7 +517,7 @@ export default function AdminListingsPage() {
         header: "Mağaza / Client ID",
         cell: ({ row }) => {
           const clientId = toText(row.original.derived_client_id);
-          const storeName = clientId ? storeNameByClientId[clientId] : "";
+          const storeName = toText(row.original.derived_store_name) || (clientId ? storeNameByClientId[clientId] : "");
           return <span className="text-xs">{storeName || clientId || "-"}</span>;
         },
       },
@@ -717,14 +718,14 @@ export default function AdminListingsPage() {
                 <Input
                   value={clientFilter}
                   onChange={(event) => setClientFilter(event.target.value)}
-                  placeholder="Store/Client ID filtrele"
+                  placeholder="Mağaza adı veya Client ID filtrele"
                   className="h-9 min-w-[12rem] w-56 shrink-0"
                 />
 
                 <Input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="ID, başlık, Etsy ID ara"
+                  placeholder="Mağaza adı, ID, başlık, Etsy ID ara"
                   className="h-9 min-w-[15rem] w-72 shrink-0"
                 />
 

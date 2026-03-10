@@ -6,6 +6,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type ListingRow = Record<string, unknown>;
+type StoreLookupRow = {
+  id: string;
+  store_name?: string | null;
+};
 
 const toTrimmed = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
@@ -14,6 +18,41 @@ const normalizeStatus = (row: ListingRow) =>
 
 const getClientId = (row: ListingRow) =>
   toTrimmed(row.client_id || row.store_id || row.clientId || "");
+
+const loadStoreNameById = async (clientIds: string[]) => {
+  const normalizedIds = Array.from(
+    new Set(
+      clientIds
+        .map((value) => value.trim())
+        .filter(Boolean)
+    )
+  );
+  const map = new Map<string, string>();
+
+  if (normalizedIds.length === 0) {
+    return map;
+  }
+
+  const chunkSize = 500;
+  for (let index = 0; index < normalizedIds.length; index += chunkSize) {
+    const chunk = normalizedIds.slice(index, index + chunkSize);
+    const query = await supabaseAdmin.from("stores").select("id, store_name").in("id", chunk);
+
+    if (query.error) {
+      continue;
+    }
+
+    for (const row of ((query.data ?? []) as StoreLookupRow[])) {
+      const id = toTrimmed(row.id);
+      const storeName = toTrimmed(row.store_name);
+      if (id && storeName) {
+        map.set(id, storeName);
+      }
+    }
+  }
+
+  return map;
+};
 
 const parseDateMs = (value: unknown) => {
   const text = toTrimmed(value);
@@ -79,6 +118,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: loaded.error }, { status: 500 });
   }
 
+  const storeNameByClientId = await loadStoreNameById(loaded.rows.map((row) => getClientId(row)));
+
   const sorted = loaded.rows.sort((a, b) => {
     const aMs = parseDateMs(a.updated_at) ?? parseDateMs(a.created_at) ?? 0;
     const bMs = parseDateMs(b.updated_at) ?? parseDateMs(b.created_at) ?? 0;
@@ -86,6 +127,9 @@ export async function GET(request: NextRequest) {
   });
 
   const filtered = sorted.filter((row) => {
+    const clientId = getClientId(row);
+    const derivedStoreName = storeNameByClientId.get(clientId) || "";
+
     if (statusFilter && statusFilter !== "all") {
       const rowStatus = normalizeStatus(row);
       if (statusFilter === "uploaded") {
@@ -98,8 +142,10 @@ export async function GET(request: NextRequest) {
     }
 
     if (clientFilter) {
-      const clientId = getClientId(row);
-      if (clientId !== clientFilter) {
+      const normalizedFilter = clientFilter.toLowerCase();
+      const clientIdMatches = clientId.toLowerCase().includes(normalizedFilter);
+      const storeNameMatches = derivedStoreName.toLowerCase().includes(normalizedFilter);
+      if (!clientIdMatches && !storeNameMatches) {
         return false;
       }
     }
@@ -108,7 +154,8 @@ export async function GET(request: NextRequest) {
       const blob = [
         toTrimmed(row.id),
         toTrimmed(row.key),
-        getClientId(row),
+        clientId,
+        derivedStoreName,
         toTrimmed(row.title),
         toTrimmed(row.etsy_listing_id),
         getListingProofUrl(row),
@@ -130,6 +177,7 @@ export async function GET(request: NextRequest) {
     derived_status: normalizeStatus(row) || "-",
     is_uploaded: isUploaded(row),
     derived_client_id: getClientId(row),
+    derived_store_name: storeNameByClientId.get(getClientId(row)) || null,
     derived_listing_url: getListingProofUrl(row),
   }));
 
