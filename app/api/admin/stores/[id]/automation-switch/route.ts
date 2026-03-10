@@ -6,6 +6,8 @@ import {
   findStrictDirectAutomationCronJob,
   isDirectAutomationMode,
   isPerStoreDirectCronEnabled,
+  loadSchedulerMasterState,
+  syncSchedulerCronJobLifecycle,
   type SchedulerCronSyncResult,
 } from "@/lib/cron-job-org/client";
 import { dispatchN8nTrigger } from "@/lib/n8n/client";
@@ -124,6 +126,32 @@ const normalizeWebhookCurrency = (value: string | null | undefined) => {
   }
 
   return null;
+};
+
+const toUnixSeconds = (value: string | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) {
+    return null;
+  }
+
+  return Math.floor(timestamp / 1000);
+};
+
+const mapPgCronStatusCode = (value: string | null | undefined) => {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "succeeded" || normalized === "success") {
+    return 1;
+  }
+
+  return 2;
 };
 
 const isUniqueViolation = (error: { message?: string; code?: string } | null | undefined) => {
@@ -1007,6 +1035,59 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             nextExecutionUnix: null,
             lastExecutionUnix: null,
             lastStatus: null,
+            createdBy: admin.user.id,
+          });
+        }
+      }
+    } else {
+      cronSync = await syncSchedulerCronJobLifecycle({ force: true });
+
+      if (!cronSync.ok) {
+        cronWarning = cronSync.details ?? cronSync.message;
+        await persistCronVerificationLog({
+          storeId: store.id,
+          webhookConfigId: targetWebhook.id,
+          webhookName: targetWebhook.name,
+          schedulerMessage: cronWarning,
+          verifiedJobId: null,
+          nextExecutionUnix: null,
+          lastExecutionUnix: null,
+          lastStatus: null,
+          createdBy: admin.user.id,
+        });
+      } else {
+        const schedulerState = await loadSchedulerMasterState().catch(() => null);
+
+        if (!schedulerState?.jobId || schedulerState.active !== true) {
+          cronWarning = "Supabase pg_cron master scheduler henüz aktif görünmüyor.";
+          await persistCronVerificationLog({
+            storeId: store.id,
+            webhookConfigId: targetWebhook.id,
+            webhookName: targetWebhook.name,
+            schedulerMessage: cronWarning,
+            verifiedJobId: null,
+            nextExecutionUnix: null,
+            lastExecutionUnix: null,
+            lastStatus: null,
+            createdBy: admin.user.id,
+          });
+        } else {
+          directCronVerification = {
+            jobId: schedulerState.jobId,
+            nextExecution: null,
+            lastExecution: toUnixSeconds(schedulerState.lastRunStartedAt),
+            lastStatus: mapPgCronStatusCode(schedulerState.lastRunStatus),
+          };
+
+          await persistCronVerificationLog({
+            storeId: store.id,
+            webhookConfigId: targetWebhook.id,
+            webhookName: targetWebhook.name,
+            schedulerMessage: cronSync.message,
+            verifiedJobId: schedulerState.jobId,
+            nextExecutionUnix: null,
+            lastExecutionUnix: toUnixSeconds(schedulerState.lastRunStartedAt),
+            lastStatus: mapPgCronStatusCode(schedulerState.lastRunStatus),
             createdBy: admin.user.id,
           });
         }
