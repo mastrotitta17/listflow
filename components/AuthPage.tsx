@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useStore } from "../store";
 import { View } from "../types";
@@ -106,6 +106,9 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
   const [mfaCode, setMfaCode] = useState("");
   const [mfaVerifying, setMfaVerifying] = useState(false);
   const [mfaHintEmail, setMfaHintEmail] = useState("");
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
+  const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -178,6 +181,23 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
 
     toast.error(error.message);
   }, [error]);
+
+  useEffect(() => {
+    if (searchParams?.get("reset") !== "success") {
+      return;
+    }
+
+    setError({
+      message: t("auth.resetPasswordSuccess"),
+      type: "success",
+    });
+
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("reset");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, [searchParams, t]);
 
   // Capture ?ref=CODE from URL into localStorage so it survives page transitions
   useEffect(() => {
@@ -429,6 +449,43 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
       const message = err instanceof Error ? err.message : t("auth.genericError");
       setError({ message, type: "error" });
       setGoogleLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const normalizedEmail = forgotPasswordEmail.trim().toLowerCase();
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setError({ message: t("auth.validationEmail"), type: "error" });
+      return;
+    }
+
+    setForgotPasswordLoading(true);
+    setError(null);
+
+    try {
+      const redirectTo = buildOAuthRedirectTo(
+        `/auth/callback?next=${encodeURIComponent("/reset-password")}`
+      );
+
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+        redirectTo,
+      });
+
+      if (resetError) {
+        throw resetError;
+      }
+
+      setForgotPasswordOpen(false);
+      setForgotPasswordEmail("");
+      setError({
+        message: t("auth.resetLinkSent"),
+        type: "success",
+      });
+    } catch (forgotError) {
+      const message = forgotError instanceof Error ? forgotError.message : t("auth.genericError");
+      setError({ message, type: "error" });
+    } finally {
+      setForgotPasswordLoading(false);
     }
   };
 
@@ -728,6 +785,20 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
                       placeholder="••••••••"
                     />
                   </div>
+                  {isLogin ? (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setForgotPasswordEmail(email.trim());
+                          setForgotPasswordOpen(true);
+                        }}
+                        className="text-[11px] font-black uppercase tracking-[0.16em] text-indigo-300 transition-colors hover:text-white cursor-pointer"
+                      >
+                        {t("auth.forgotPassword")}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
 
                 <button
@@ -765,6 +836,67 @@ const AuthPage: React.FC<AuthPageProps> = ({ standalone = false }) => {
           )}
         </div>
       </motion.div>
+
+      <AnimatePresence>
+        {forgotPasswordOpen ? (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center px-4 py-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/70 backdrop-blur-lg"
+              onClick={() => !forgotPasswordLoading && setForgotPasswordOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 18, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 18, scale: 0.96 }}
+              className="relative z-10 w-full max-w-md rounded-[28px] border border-white/15 bg-[#0d111b]/95 p-6 shadow-[0_25px_80px_rgba(5,10,25,0.75)] backdrop-blur-xl"
+            >
+              <h3 className="text-xl font-black tracking-tight text-white">{t("auth.forgotPasswordTitle")}</h3>
+              <p className="mt-2 text-sm font-semibold text-slate-400">
+                {t("auth.forgotPasswordDescription")}
+              </p>
+
+              <div className="mt-5 space-y-2">
+                <label className="ml-1 block text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                  {t("auth.email")}
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-4 top-3.5 h-5 w-5 text-slate-500" />
+                  <input
+                    type="email"
+                    value={forgotPasswordEmail}
+                    onChange={(event) => setForgotPasswordEmail(event.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-white/5 py-3.5 pl-12 pr-4 text-sm font-semibold text-white outline-none ring-indigo-500/40 transition-all placeholder:text-slate-500 focus:ring-2"
+                    placeholder="ornek@mail.com"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => setForgotPasswordOpen(false)}
+                  disabled={forgotPasswordLoading}
+                  className="flex-1 rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-xs font-black uppercase tracking-[0.16em] text-slate-300 transition-all hover:text-white disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                >
+                  {locale === "en" ? "Cancel" : "Vazgeç"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleForgotPassword()}
+                  disabled={forgotPasswordLoading}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-xs font-black uppercase tracking-[0.16em] text-white transition-all hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                >
+                  {forgotPasswordLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {t("auth.sendResetLink")}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 };

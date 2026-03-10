@@ -128,6 +128,20 @@ Aktif zincir:
    - sonra tekrar `GET label`
 11. Takip / label / response bilgileri order satırına yazılır.
 
+## 8.1 Sabit Paketleme Kuralı
+Bu projede Navlungo’ya gönderilen tüm gönderiler sabit profil ile çıkar:
+- Paket tipi: `envelope`
+- Ağırlık: `0.1 kg`
+
+Bu iki alan runtime’da sabitlenmiştir. Env içindeki eski değerler fallback amaçlı korunabilir ancak aktif davranış:
+- `type = envelope`
+- `weight = 0.1`
+
+Amaç:
+- tüm QA/prod akışını tek paket standardında test etmek
+- koli/zarf karışıklığını kaldırmak
+- sipariş oluşturma akışını deterministik tutmak
+
 ## 9. Gönderici Profili
 Gönderici bilgileri her zaman sabittir.
 Kullanıcıya veya mağazaya göre değişmez.
@@ -239,3 +253,20 @@ Sebep:
 - `https://github.com/Navlungo/public-api-docs/blob/main/store.md`
 - `https://github.com/Navlungo/public-api-docs/blob/main/cargoTracking.md`
 - `https://github.com/Navlungo/public-api-docs/blob/main/shipment.md`
+
+## 14. QA Başlangıç Checklist'i
+Navlungo ekibinin gönderdiği `client_id` ve `client_secret` geldikten sonra sırayla:
+
+1. `NAVLUNGO_ENV=qa` olacak şekilde env'leri doldur.
+2. `NAVLUNGO_CLIENT_ID` ve `NAVLUNGO_CLIENT_SECRET` değerlerini gerçek `.env` / Vercel env içine yaz.
+3. `NAVLUNGO_OAUTH_STATE_SECRET` için rastgele güçlü bir secret üret.
+4. `qa.navlungo.com` üzerinde bir test kullanıcı hesabı oluştur.
+5. Oluşturduğun test kullanıcı e-postasını Navlungo ekibine gönder ve hesabı doğrulamalarını iste.
+6. Admin panelden `Navlungo'yu Bağla` akışını çalıştır.
+7. Ortak QA hesabıyla authorize ol.
+8. Sonra tam akışı test et:
+   - Store oluşturma
+   - Quote alma
+   - Siparişi gönderime çevirme
+   - Etiket oluşturma
+9. Bu akış başarılı olunca aynı callback modeli prod için tekrarlanır.

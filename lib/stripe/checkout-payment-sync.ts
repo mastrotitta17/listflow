@@ -611,6 +611,7 @@ const startShipmentForPaidOrder = async (args: { orderId: string; userId: string
       receiverCity: order.receiver_city ?? null,
       receiverTown: order.receiver_town ?? null,
       receiverPostalCode: order.receiver_postal_code ?? null,
+      ioss: order.ioss ?? null,
       labelNumber: order.label_number ?? "",
       amountUsd: Number(order.amount_usd ?? 0),
       currency: storeCurrency,

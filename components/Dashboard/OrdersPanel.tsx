@@ -28,6 +28,7 @@ import { useI18n } from '@/lib/i18n/provider';
 import { normalizePhoneForStorage, sanitizePhoneInput } from '@/lib/phone';
 import { useCategoriesRepository } from '@/lib/repositories/categories';
 import { useOrdersRepository } from '@/lib/repositories/orders';
+import { requiresIossForCountry } from '@/lib/shipping/ioss';
 import { toast } from 'sonner';
 import { Select } from '@/components/ui/select';
 import { OrdersPanelSkeleton } from '@/components/loading/PageSkeletons';
@@ -313,6 +314,13 @@ const OrdersPanel: React.FC = () => {
   const currentCategory = useMemo(() => categories.find((category) => category.id === selectedCatId), [categories, selectedCatId]);
   const currentSubProduct = useMemo(() => currentCategory?.subProducts.find((subProduct) => subProduct.id === selectedSubId), [currentCategory, selectedSubId]);
   const currentVariation = useMemo(() => currentSubProduct?.variations?.find((variation) => variation.id === selectedVarId), [currentSubProduct, selectedVarId]);
+  const shouldShowIossField = useMemo(() => requiresIossForCountry(receiverCountryCode), [receiverCountryCode]);
+
+  useEffect(() => {
+    if (!shouldShowIossField && ioss) {
+      setIoss('');
+    }
+  }, [ioss, shouldShowIossField]);
 
   const loadStoreOptions = useCallback(async () => {
     setStoreOptionsLoading(true);
@@ -1407,21 +1415,38 @@ const OrdersPanel: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">IOSS / UK VAT (Varsa)</label>
-                    <div className="relative">
-                      <FileText className="absolute left-4 top-3.5 w-4 h-4 text-zinc-400" />
-                      <input
-                        value={ioss}
-                        onChange={(e) => setIoss(e.target.value)}
-                        type="text"
-                        placeholder="IOSS-1234..."
-                        className="w-full pl-10 pr-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
-                      />
+                  {shouldShowIossField ? (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
+                        {locale === 'en' ? 'IOSS Number (If Required)' : 'IOSS Numarası (Gerekliyse)'}
+                      </label>
+                      <div className="relative">
+                        <FileText className="absolute left-4 top-3.5 w-4 h-4 text-zinc-400" />
+                        <input
+                          value={ioss}
+                          onChange={(e) => setIoss(e.target.value)}
+                          type="text"
+                          placeholder="IOSS-1234..."
+                          className="w-full pl-10 pr-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                        />
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
+                        {locale === 'en' ? 'Tax / Compliance' : 'Vergi / Uyum'}
+                      </label>
+                      <div className="flex min-h-[54px] items-center rounded-2xl border border-dashed border-white/10 bg-white/5 px-4 text-[11px] text-slate-400">
+                        {locale === 'en'
+                          ? 'IOSS is requested only for eligible destination countries.'
+                          : 'IOSS yalnızca gerekli hedef ülkeler seçildiğinde istenir.'}
+                      </div>
+                    </div>
+                  )}
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Sipariş Notu / Açıklama</label>
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
+                      {locale === 'en' ? 'Order Note / Description' : 'Sipariş Notu / Açıklama'}
+                    </label>
                     <input
                       value={note}
                       onChange={(e) => setNote(e.target.value)}

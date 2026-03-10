@@ -35,6 +35,7 @@ export type StartNavlungoShipmentInput = {
   labelNumber: string;
   amountUsd: number;
   currency?: string | null;
+  ioss?: string | null;
 };
 
 export type NavlungoShipmentDispatchResult =
@@ -371,8 +372,8 @@ const buildQuotePayload = (args: {
   receiverPhone: string;
 }) => {
   const hsCode = readEnv("NAVLUNGO_DEFAULT_HS_CODE") ?? "491199";
-  const packageType = readEnv("NAVLUNGO_DEFAULT_PACKAGE_TYPE") ?? "box";
-  const packageWeight = readNumberEnv("NAVLUNGO_DEFAULT_PACKAGE_WEIGHT_KG", 0.5);
+  const packageType = "envelope";
+  const packageWeight = 0.1;
   const packageWidth = readNumberEnv("NAVLUNGO_DEFAULT_PACKAGE_WIDTH_CM", 20);
   const packageLength = readNumberEnv("NAVLUNGO_DEFAULT_PACKAGE_LENGTH_CM", 30);
   const packageHeight = readNumberEnv("NAVLUNGO_DEFAULT_PACKAGE_HEIGHT_CM", 5);
@@ -572,7 +573,12 @@ export const startNavlungoShipmentForOrder = async (
         cargoLabels: shipResponse.cargoLabels ?? [],
         chargeableWeight: shipResponse.chargeableWeight ?? null,
         senderProfileFixed: true,
+        fixedPackageProfile: {
+          type: "envelope",
+          weightKg: 0.1,
+        },
         storeProvisioned,
+        iossProvided: Boolean((input.ioss ?? "").trim()),
         labelAttempts: labelArtifacts.attempts,
       },
       message: "Navlungo shipment started successfully.",
