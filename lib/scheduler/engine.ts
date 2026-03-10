@@ -10,6 +10,7 @@ import {
   resolveProductCandidateForCategory,
   type ProductMatchCandidate,
 } from "@/lib/stores/product-resolution";
+import { buildStoreAliasIndex } from "@/lib/subscriptions/store-resolution";
 import { isUuid } from "@/lib/utils/uuid";
 
 type StoreCurrency = "USD" | "TRY";
@@ -192,6 +193,24 @@ const getSubscriptionStoreId = (subscription: SubscriptionRow) => {
   }
 
   return null;
+};
+
+const loadStoreAliasReferences = async (userIds: string[]) => {
+  if (!userIds.length) {
+    return [] as Array<{ id: string; user_id: string | null; store_name: string | null }>;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("stores")
+    .select("id, user_id, store_name")
+    .in("user_id", userIds)
+    .limit(5000);
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []) as Array<{ id: string; user_id: string | null; store_name: string | null }>;
 };
 
 const isSubscriptionEligible = (subscription: SubscriptionRow, nowMs: number) => {
@@ -1053,13 +1072,28 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
     reasonBreakdown: {},
   };
 
-  const storeIds = Array.from(
-    new Set(
-      subscriptions
-        .map((subscription) => getSubscriptionStoreId(subscription))
-        .filter((storeId): storeId is string => Boolean(storeId))
-    )
+  const subscriptionUserIds = Array.from(
+    new Set(subscriptions.map((subscription) => (subscription.user_id ?? "").trim()).filter(Boolean))
   );
+  const storeAliasReferences = await loadStoreAliasReferences(subscriptionUserIds);
+  const storeAliasIndex = buildStoreAliasIndex(storeAliasReferences);
+  const resolvedStoreIdBySubscriptionId = new Map<string, string>();
+
+  for (const subscription of subscriptions) {
+    const resolvedStoreId =
+      getSubscriptionStoreId(subscription) ??
+      storeAliasIndex.resolve({
+        user_id: subscription.user_id,
+        store_id: subscription.store_id ?? null,
+        shop_id: subscription.shop_id ?? null,
+      });
+
+    if (resolvedStoreId) {
+      resolvedStoreIdBySubscriptionId.set(subscription.id, resolvedStoreId);
+    }
+  }
+
+  const storeIds = Array.from(new Set(Array.from(resolvedStoreIdBySubscriptionId.values())));
 
   const [{ rows: storeRows }, schedulerJobs] = await Promise.all([
     loadStores(storeIds),
@@ -1155,10 +1189,10 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
         continue;
       }
 
-      const storeId = getSubscriptionStoreId(subscription);
+      const storeId = resolvedStoreIdBySubscriptionId.get(subscription.id) ?? null;
 
       if (!storeId) {
-        markSkipped(summary, "subscription_inactive_or_expired");
+        markSkipped(summary, "subscription_store_unresolved");
         continue;
       }
 

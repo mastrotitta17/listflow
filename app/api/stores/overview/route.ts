@@ -11,6 +11,7 @@ import {
   summarizeStoreSubscriptions,
   type SettingsSubscriptionRow,
 } from "@/lib/settings/subscriptions";
+import { buildStoreAliasIndex } from "@/lib/subscriptions/store-resolution";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 import { loadSchedulerMasterState, syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
@@ -998,11 +999,26 @@ export async function GET(request: NextRequest) {
     const subscriptions = await loadSubscriptions(user.id);
     const subscriptionIds = subscriptions.map((row) => row.id);
     const storeIds = stores.map((store) => store.id);
+    const storeAliasIndex = buildStoreAliasIndex(
+      stores.map((store) => ({
+        id: store.id,
+        user_id: store.user_id,
+        store_name: store.store_name,
+      }))
+    );
     const cronLifecycleSnapshotPromise = loadLatestCronLifecycleSnapshot();
     const activeSubscriptionStoreIds = new Set(
       subscriptions
         .filter((row) => isSubscriptionActive(row))
-        .map((row) => row.store_id ?? (row.shop_id && isUuid(row.shop_id) ? row.shop_id : null))
+        .map((row) =>
+          row.store_id ??
+          (row.shop_id && isUuid(row.shop_id) ? row.shop_id : null) ??
+          storeAliasIndex.resolve({
+            user_id: row.user_id,
+            store_id: row.store_id ?? null,
+            shop_id: row.shop_id ?? null,
+          })
+        )
         .filter((value): value is string => Boolean(value))
     );
 
@@ -1068,7 +1084,14 @@ export async function GET(request: NextRequest) {
     const rows = stores.map((store) => {
       const matchedSubscriptions = subscriptions
         .filter((row) => {
-          const storeId = row.store_id ?? (row.shop_id && isUuid(row.shop_id) ? row.shop_id : null);
+          const storeId =
+            row.store_id ??
+            (row.shop_id && isUuid(row.shop_id) ? row.shop_id : null) ??
+            storeAliasIndex.resolve({
+              user_id: row.user_id,
+              store_id: row.store_id ?? null,
+              shop_id: row.shop_id ?? null,
+            });
           return storeId === store.id;
         })
         .sort((a, b) => {

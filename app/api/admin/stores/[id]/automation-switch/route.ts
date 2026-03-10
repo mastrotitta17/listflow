@@ -370,6 +370,38 @@ const loadActiveSubscriptionForStore = async (storeId: string) => {
   return fallback.data;
 };
 
+const ensureSubscriptionStoreBinding = async (args: {
+  subscriptionId: string;
+  storeId: string;
+  nowIso: string;
+}) => {
+  const payloads: Array<Record<string, unknown>> = [
+    { store_id: args.storeId, shop_id: args.storeId, updated_at: args.nowIso },
+    { store_id: args.storeId, shop_id: args.storeId },
+    { store_id: args.storeId, updated_at: args.nowIso },
+    { store_id: args.storeId },
+    { shop_id: args.storeId, updated_at: args.nowIso },
+    { shop_id: args.storeId },
+  ];
+
+  let lastError: string | null = null;
+
+  for (const payload of payloads) {
+    const attempt = await supabaseAdmin.from("subscriptions").update(payload).eq("id", args.subscriptionId);
+    if (!attempt.error) {
+      return { error: null as string | null };
+    }
+
+    if (!isMissingAnyColumnError(attempt.error, ["store_id", "shop_id", "updated_at"])) {
+      return { error: attempt.error.message };
+    }
+
+    lastError = attempt.error.message;
+  }
+
+  return { error: lastError };
+};
+
 const loadWebhookConfig = async (id: string) => {
   const candidates = [
     "id, name, target_url, method, headers, enabled, scope, product_id, currency",
@@ -889,6 +921,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     const nowIso = new Date().toISOString();
+    const subscriptionBindingRepair = await ensureSubscriptionStoreBinding({
+      subscriptionId: activeSubscription.id,
+      storeId: store.id,
+      nowIso,
+    });
+
+    if (subscriptionBindingRepair.error && !isMissingAnyColumnError({ message: subscriptionBindingRepair.error }, ["store_id", "shop_id", "updated_at"])) {
+      return NextResponse.json({ error: subscriptionBindingRepair.error }, { status: 500 });
+    }
+
     const transitionInsert = await supabaseAdmin
       .from("store_automation_transitions")
       .insert({

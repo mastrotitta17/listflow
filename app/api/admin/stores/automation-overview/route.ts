@@ -19,6 +19,7 @@ import {
   resolveProductCandidateForCategory,
   type ProductMatchCandidate,
 } from "@/lib/stores/product-resolution";
+import { buildStoreAliasIndex } from "@/lib/subscriptions/store-resolution";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 import { loadWebhookConfigProductMap } from "@/lib/webhooks/config-product-map";
@@ -1286,8 +1287,23 @@ export async function GET(request: NextRequest) {
     const activeWebhookIds = new Set(webhooks.map((webhook) => webhook.id));
     const nowMs = Date.now();
 
+    const storeAliasIndex = buildStoreAliasIndex(
+      stores.map((store) => ({
+        id: store.id,
+        user_id: store.user_id,
+        store_name: store.store_name,
+      }))
+    );
+
     for (const subscription of subscriptions) {
-      const resolvedStoreId = subscription.store_id ?? (subscription.shop_id && isUuid(subscription.shop_id) ? subscription.shop_id : null);
+      const resolvedStoreId =
+        subscription.store_id ??
+        (subscription.shop_id && isUuid(subscription.shop_id) ? subscription.shop_id : null) ??
+        storeAliasIndex.resolve({
+          user_id: subscription.user_id,
+          store_id: subscription.store_id ?? null,
+          shop_id: subscription.shop_id ?? null,
+        });
       if (!resolvedStoreId) {
         continue;
       }
