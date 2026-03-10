@@ -13,7 +13,7 @@ type AdminLayoutShellProps = {
 };
 
 export default function AdminLayoutShell({ items, children }: AdminLayoutShellProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
