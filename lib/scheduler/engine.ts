@@ -1196,6 +1196,12 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
         continue;
       }
 
+      const storeExists = storesById.has(storeId);
+      if (!storeExists) {
+        markSkipped(summary, "subscription_store_missing");
+        continue;
+      }
+
       const intervalHours = getPlanWindowHours(subscription.plan);
       const intervalMs = intervalHours * 60 * 60 * 1000;
       const subscriptionJobs = jobsBySubscriptionId.get(subscription.id) ?? [];
