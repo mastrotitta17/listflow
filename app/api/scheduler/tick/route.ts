@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
 import { serverEnv } from "@/lib/env/server";
 import { runSchedulerTick } from "@/lib/scheduler/engine";
+import { runStripeRenewalReconcileTick } from "@/lib/stripe/renewal-reconcile";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { runCronTestTick } from "@/lib/webhooks/cron-test";
 
@@ -226,8 +227,16 @@ const runTick = async (request: NextRequest) => {
   try {
     const lifecycleSummary = await syncSchedulerCronJobLifecycle();
     const summary = await runSchedulerTick();
+    let stripeReconcileSummary: Awaited<ReturnType<typeof runStripeRenewalReconcileTick>> | null = null;
+    let stripeReconcileError: string | null = null;
     let cronTestSummary: Awaited<ReturnType<typeof runCronTestTick>> | null = null;
     let cronTestError: string | null = null;
+
+    try {
+      stripeReconcileSummary = await runStripeRenewalReconcileTick();
+    } catch (error) {
+      stripeReconcileError = error instanceof Error ? error.message : "Stripe renewal reconcile failed";
+    }
 
     try {
       cronTestSummary = await runCronTestTick();
@@ -239,6 +248,10 @@ const runTick = async (request: NextRequest) => {
       success: true,
       summary,
       lifecycle: lifecycleSummary,
+      stripeRenewalReconcile: {
+        summary: stripeReconcileSummary,
+        error: stripeReconcileError,
+      },
       cronTests: {
         summary: cronTestSummary,
         error: cronTestError,

@@ -87,7 +87,10 @@ export async function POST(request: NextRequest) {
       (latestSubscription ? await resolveStripeBillingIntervalForSubscription(latestSubscription) : null) ?? "month";
 
     const stripeMode = resolveStripeModeForRequest(request);
-    const priceId = await resolveCheckoutPriceId(plan, billingInterval, { mode: stripeMode });
+    const priceId = await resolveCheckoutPriceId(plan, billingInterval, {
+      mode: stripeMode,
+      currency: "usd",
+    });
     if (!priceId) {
       return NextResponse.json({ error: "Renewal price could not be resolved." }, { status: 400 });
     }
@@ -107,6 +110,7 @@ export async function POST(request: NextRequest) {
           storeId,
           plan,
           billingInterval,
+          billingCurrency: "usd",
           renewal: "true",
           stripeMode,
         },
@@ -117,6 +121,7 @@ export async function POST(request: NextRequest) {
         storeId,
         plan,
         billingInterval,
+        billingCurrency: "usd",
         renewal: "true",
         stripeMode,
       },

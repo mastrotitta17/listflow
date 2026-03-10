@@ -9,6 +9,7 @@ import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeStoreNameInput } from "@/lib/stores/name";
 import { resolveCheckoutPriceId } from "@/lib/stripe/plans";
 import { getActiveStripeMode, getStripeClientForMode, resolveStripeMode, type StripeMode } from "@/lib/stripe/client";
+import { syncProfileSubscriptionState } from "@/lib/subscription/profile-sync";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 import { loadWebhookConfigProductMap } from "@/lib/webhooks/config-product-map";
@@ -34,6 +35,8 @@ type SubscriptionRow = {
   user_id: string | null;
   store_id?: string | null;
   shop_id?: string | null;
+  stripe_mode?: string | null;
+  stripe_customer_id?: string | null;
   plan?: string | null;
   status?: string | null;
   stripe_subscription_id?: string | null;
@@ -233,7 +236,13 @@ type ActiveWebhookCandidate = {
 };
 
 const loadActiveAutomationWebhookCandidates = async (): Promise<ActiveWebhookCandidate[]> => {
-  const candidates = [
+  const candidates: Array<{
+    select: string;
+    hasScope: boolean;
+    hasEnabled: boolean;
+    hasProduct: boolean;
+    hasCurrency: boolean;
+  }> = [
     { select: "id,target_url,scope,enabled,product_id,currency", hasScope: true, hasEnabled: true, hasProduct: true, hasCurrency: true },
     { select: "id,target_url,scope,enabled,product_id", hasScope: true, hasEnabled: true, hasProduct: true, hasCurrency: false },
     { select: "id,target_url,scope,enabled,currency", hasScope: true, hasEnabled: true, hasProduct: false, hasCurrency: true },
@@ -247,7 +256,7 @@ const loadActiveAutomationWebhookCandidates = async (): Promise<ActiveWebhookCan
     { select: "id,target_url,scope,currency", hasScope: true, hasEnabled: false, hasProduct: false, hasCurrency: true },
     { select: "id,target_url,scope", hasScope: true, hasEnabled: false, hasProduct: false, hasCurrency: false },
     { select: "id,target_url", hasScope: false, hasEnabled: false, hasProduct: false, hasCurrency: false },
-  ] as const;
+  ];
 
   for (const candidate of candidates) {
     const query = await supabaseAdmin.from("webhook_configs").select(candidate.select).limit(5000);
@@ -514,6 +523,14 @@ const tryProfilePhoneSync = async (userId: string, phone: string) => {
   }
 };
 
+const toIsoDateFromUnix = (value: number | null | undefined) => {
+  if (!value || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return new Date(value * 1000).toISOString();
+};
+
 const insertStore = async (payload: {
   id: string;
   userId: string;
@@ -586,34 +603,53 @@ const countUserStores = async (userId: string) => {
 };
 
 const loadSubscriptionsForUser = async (userId: string): Promise<SubscriptionRow[]> => {
-  const withStoreId = await supabaseAdmin
-    .from("subscriptions")
-    .select("id, user_id, store_id, shop_id, plan, status, stripe_subscription_id, updated_at, created_at")
-    .eq("user_id", userId)
-    .order("updated_at", { ascending: false });
+  const candidates = [
+    {
+      select: "id, user_id, store_id, shop_id, stripe_mode, plan, status, stripe_subscription_id, updated_at, created_at",
+      hasStoreId: true,
+      hasStripeMode: true,
+    },
+    {
+      select: "id, user_id, shop_id, stripe_mode, plan, status, stripe_subscription_id, updated_at, created_at",
+      hasStoreId: false,
+      hasStripeMode: true,
+    },
+    {
+      select: "id, user_id, store_id, shop_id, plan, status, stripe_subscription_id, updated_at, created_at",
+      hasStoreId: true,
+      hasStripeMode: false,
+    },
+    {
+      select: "id, user_id, shop_id, plan, status, stripe_subscription_id, updated_at, created_at",
+      hasStoreId: false,
+      hasStripeMode: false,
+    },
+  ] as const;
 
-  if (!withStoreId.error) {
-    return (withStoreId.data ?? []) as SubscriptionRow[];
+  let lastError: string | null = null;
+
+  for (const candidate of candidates) {
+    const attempt = await supabaseAdmin
+      .from("subscriptions")
+      .select(candidate.select)
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false });
+
+    if (!attempt.error) {
+      return (((attempt.data ?? []) as unknown) as SubscriptionRow[]).map((row) => ({
+        ...row,
+        stripe_mode: candidate.hasStripeMode ? row.stripe_mode ?? null : null,
+        store_id: candidate.hasStoreId ? row.store_id ?? null : row.shop_id && isUuid(row.shop_id) ? row.shop_id : null,
+      }));
+    }
+
+    lastError = attempt.error.message;
+    if (!isRecoverableColumnError(attempt.error, ["store_id", "stripe_mode"])) {
+      throw new Error(attempt.error.message);
+    }
   }
 
-  if (!isMissingColumnError(withStoreId.error, "store_id")) {
-    throw new Error(withStoreId.error.message);
-  }
-
-  const fallback = await supabaseAdmin
-    .from("subscriptions")
-    .select("id, user_id, shop_id, plan, status, stripe_subscription_id, updated_at, created_at")
-    .eq("user_id", userId)
-    .order("updated_at", { ascending: false });
-
-  if (fallback.error) {
-    throw new Error(fallback.error.message);
-  }
-
-  return ((fallback.data ?? []) as SubscriptionRow[]).map((row) => ({
-    ...row,
-    store_id: row.shop_id && isUuid(row.shop_id) ? row.shop_id : null,
-  }));
+  throw new Error(lastError ?? "subscriptions could not be loaded");
 };
 
 const getStoreReference = (row: SubscriptionRow) => {
@@ -635,30 +671,231 @@ const isActiveLikeStatus = (status: string | null | undefined) => {
   return normalized === "active" || normalized === "trialing";
 };
 
-const chooseLegacyTargetSubscription = (rows: SubscriptionRow[], preferredStripeSubscriptionId: string | null) => {
+const chooseLegacyTargetSubscription = (
+  rows: SubscriptionRow[],
+  preferredStripeSubscriptionId: string | null,
+  preferredStripeMode: StripeMode
+) => {
+  const modeFiltered = rows.filter((row) => {
+    if (!row.stripe_mode) {
+      return true;
+    }
+    return row.stripe_mode === preferredStripeMode;
+  });
+  const candidates = modeFiltered.length ? modeFiltered : rows;
+
   if (preferredStripeSubscriptionId) {
-    const exact = rows.find((row) => row.stripe_subscription_id === preferredStripeSubscriptionId) ?? null;
+    const exact = candidates.find((row) => row.stripe_subscription_id === preferredStripeSubscriptionId) ?? null;
     if (exact) {
       return exact;
     }
   }
 
-  const unboundActive = rows.find((row) => isSubscriptionUnbound(row) && isActiveLikeStatus(row.status));
+  const unboundActive = candidates.find((row) => isSubscriptionUnbound(row) && isActiveLikeStatus(row.status));
   if (unboundActive) {
     return unboundActive;
   }
 
-  const unboundAny = rows.find((row) => isSubscriptionUnbound(row));
+  const unboundAny = candidates.find((row) => isSubscriptionUnbound(row));
   if (unboundAny) {
     return unboundAny;
   }
 
-  const activeAny = rows.find((row) => isActiveLikeStatus(row.status));
+  const activeAny = candidates.find((row) => isActiveLikeStatus(row.status));
   if (activeAny) {
     return activeAny;
   }
 
-  return rows[0] ?? null;
+  return candidates[0] ?? null;
+};
+
+const findSubscriptionRowByField = async (
+  field: "stripe_subscription_id" | "stripe_customer_id",
+  value: string
+): Promise<SubscriptionRow | null> => {
+  const normalizedValue = asTrimmedString(value);
+  if (!normalizedValue) {
+    return null;
+  }
+
+  const candidates = [
+    {
+      select:
+        "id, user_id, store_id, shop_id, stripe_mode, stripe_customer_id, plan, status, stripe_subscription_id, updated_at, created_at",
+      hasStoreId: true,
+      hasStripeMode: true,
+      hasStripeCustomer: true,
+    },
+    {
+      select:
+        "id, user_id, shop_id, stripe_mode, stripe_customer_id, plan, status, stripe_subscription_id, updated_at, created_at",
+      hasStoreId: false,
+      hasStripeMode: true,
+      hasStripeCustomer: true,
+    },
+    {
+      select:
+        "id, user_id, store_id, shop_id, stripe_customer_id, plan, status, stripe_subscription_id, updated_at, created_at",
+      hasStoreId: true,
+      hasStripeMode: false,
+      hasStripeCustomer: true,
+    },
+    {
+      select:
+        "id, user_id, shop_id, stripe_customer_id, plan, status, stripe_subscription_id, updated_at, created_at",
+      hasStoreId: false,
+      hasStripeMode: false,
+      hasStripeCustomer: true,
+    },
+    {
+      select: "id, user_id, store_id, shop_id, plan, status, stripe_subscription_id, updated_at, created_at",
+      hasStoreId: true,
+      hasStripeMode: false,
+      hasStripeCustomer: false,
+    },
+    {
+      select: "id, user_id, shop_id, plan, status, stripe_subscription_id, updated_at, created_at",
+      hasStoreId: false,
+      hasStripeMode: false,
+      hasStripeCustomer: false,
+    },
+  ] as const;
+
+  let lastError: string | null = null;
+
+  for (const candidate of candidates) {
+    const table = supabaseAdmin.from("subscriptions") as any;
+    const baseQuery = table
+      .select(candidate.select)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    const attempt =
+      field === "stripe_subscription_id"
+        ? await baseQuery.eq("stripe_subscription_id", normalizedValue).maybeSingle()
+        : await baseQuery.eq("stripe_customer_id", normalizedValue).maybeSingle();
+
+    if (!attempt.error) {
+      if (!attempt.data) {
+        return null;
+      }
+      const row = attempt.data;
+      return {
+        ...row,
+        stripe_mode: candidate.hasStripeMode ? row.stripe_mode ?? null : null,
+        stripe_customer_id: candidate.hasStripeCustomer ? row.stripe_customer_id ?? null : null,
+        store_id: candidate.hasStoreId ? row.store_id ?? null : row.shop_id && isUuid(row.shop_id) ? row.shop_id : null,
+      };
+    }
+
+    lastError = attempt.error.message;
+    if (!isRecoverableColumnError(attempt.error, ["store_id", "stripe_mode", "stripe_customer_id"])) {
+      throw new Error(attempt.error.message);
+    }
+  }
+
+  if (lastError) {
+    throw new Error(lastError);
+  }
+
+  return null;
+};
+
+const claimSubscriptionForLegacyUser = async (args: {
+  subscriptionId: string;
+  userId: string;
+  stripeMode: StripeMode;
+}) => {
+  const nowIso = new Date().toISOString();
+  const payloads: Array<Record<string, string>> = [
+    { user_id: args.userId, stripe_mode: args.stripeMode, updated_at: nowIso },
+    { user_id: args.userId, stripe_mode: args.stripeMode },
+    { user_id: args.userId, updated_at: nowIso },
+    { user_id: args.userId },
+  ];
+
+  let lastError: string | null = null;
+
+  for (const payload of payloads) {
+    const result = await supabaseAdmin
+      .from("subscriptions")
+      .update(payload)
+      .eq("id", args.subscriptionId)
+      .select("id")
+      .maybeSingle<{ id: string }>();
+    const updateError = result.error;
+
+    if (!updateError) {
+      if (result.data?.id) {
+        return true;
+      }
+      lastError = "Subscription row not found.";
+      continue;
+    }
+
+    if (isRecoverableColumnError(updateError, ["stripe_mode", "updated_at"])) {
+      lastError = updateError.message;
+      continue;
+    }
+
+    throw new Error(updateError.message);
+  }
+
+  if (lastError) {
+    throw new Error(lastError);
+  }
+
+  return false;
+};
+
+const insertFallbackLegacySubscription = async (args: {
+  userId: string;
+  stripeSubscriptionId: string | null;
+  stripeCustomerId: string | null;
+  stripeMode: StripeMode;
+}) => {
+  if (!args.stripeSubscriptionId && !args.stripeCustomerId) {
+    return false;
+  }
+
+  const nowIso = new Date().toISOString();
+  const payload: Record<string, string | null> = {
+    user_id: args.userId,
+    shop_id: null,
+    store_id: null,
+    plan: "pro",
+    status: "active",
+    stripe_customer_id: args.stripeCustomerId,
+    stripe_subscription_id: args.stripeSubscriptionId,
+    stripe_mode: args.stripeMode,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
+  const optionalKeys = new Set(["store_id", "stripe_customer_id", "stripe_mode", "created_at", "updated_at"]);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const result = await supabaseAdmin
+      .from("subscriptions")
+      .insert(payload)
+      .select("id")
+      .maybeSingle<{ id: string }>();
+
+    if (!result.error) {
+      return true;
+    }
+
+    const removableKey = Object.keys(payload).find(
+      (key) => optionalKeys.has(key) && isMissingColumnError(result.error, key)
+    );
+    if (removableKey) {
+      delete payload[removableKey];
+      continue;
+    }
+
+    return false;
+  }
+
+  return false;
 };
 
 const updateSubscriptionAsProAndBindStore = async (args: {
@@ -733,6 +970,25 @@ const setStoreAsPro = async (args: { storeId: string; userId: string }) => {
   }
 };
 
+const isStripeCurrencyMismatchError = (error: unknown) => {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const directMessage =
+    typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : "";
+  const raw = (error as { raw?: { message?: unknown } }).raw;
+  const rawMessage = raw && typeof raw.message === "string" ? raw.message : "";
+  const message = `${directMessage} ${rawMessage}`.toLowerCase();
+
+  return (
+    (message.includes("only supports") && message.includes("currency")) ||
+    message.includes("expected currency")
+  );
+};
+
 const updateStripeSubscriptionToPro = async (args: {
   stripeSubscriptionId: string | null;
   mode: StripeMode;
@@ -750,7 +1006,6 @@ const updateStripeSubscriptionToPro = async (args: {
 
   const item = subscription.items.data[0];
   const currentInterval = item?.price?.recurring?.interval;
-  const currentCurrency = item?.price?.currency ?? null;
 
   if (!item || (currentInterval !== "month" && currentInterval !== "year")) {
     throw new Error("Stripe subscription interval could not be resolved.");
@@ -758,44 +1013,213 @@ const updateStripeSubscriptionToPro = async (args: {
 
   const targetPriceId = await resolveCheckoutPriceId("pro", currentInterval, {
     mode: args.mode,
-    currency: currentCurrency,
+    currency: "usd",
   });
+  if (!targetPriceId) {
+    throw new Error("Stripe USD pro fiyatı bulunamadı.");
+  }
   const currentPriceId = item.price?.id ?? null;
+  let finalSubscription = subscription;
 
-  if (currentPriceId !== targetPriceId) {
-    await stripe.subscriptions.update(args.stripeSubscriptionId, {
-      proration_behavior: "none",
-      items: [
-        {
-          id: item.id,
-          price: targetPriceId,
+  try {
+    if (currentPriceId !== targetPriceId) {
+      finalSubscription = await stripe.subscriptions.update(args.stripeSubscriptionId, {
+        proration_behavior: "none",
+        items: [
+          {
+            id: item.id,
+            price: targetPriceId,
+          },
+        ],
+        metadata: {
+          ...subscription.metadata,
+          plan: "pro",
+          billingInterval: currentInterval,
+          billingCurrency: "usd",
+          userId: args.userId,
+          storeId: args.storeId,
+          shopId: args.storeId,
         },
-      ],
+      });
+    } else {
+      finalSubscription = await stripe.subscriptions.update(args.stripeSubscriptionId, {
+        metadata: {
+          ...subscription.metadata,
+          plan: "pro",
+          billingInterval: currentInterval,
+          billingCurrency: "usd",
+          userId: args.userId,
+          storeId: args.storeId,
+          shopId: args.storeId,
+        },
+      });
+    }
+  } catch (error) {
+    if (!isStripeCurrencyMismatchError(error)) {
+      throw error;
+    }
+
+    const existingCustomerId =
+      typeof subscription.customer === "string"
+        ? subscription.customer
+        : subscription.customer?.id ?? null;
+    let existingCustomerEmail: string | null = null;
+
+    if (existingCustomerId) {
+      try {
+        const existingCustomer = await stripe.customers.retrieve(existingCustomerId);
+        if (!("deleted" in existingCustomer && existingCustomer.deleted)) {
+          existingCustomerEmail = existingCustomer.email ?? null;
+        }
+      } catch {
+        // no-op
+      }
+    }
+
+    const replacementCustomer = await stripe.customers.create({
+      email: existingCustomerEmail ?? undefined,
+      metadata: {
+        userId: args.userId,
+        storeId: args.storeId,
+        source: "legacy_onboarding_currency_migration",
+      },
+    });
+
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const periodEndUnix =
+      item.current_period_end ??
+      subscription.trial_end ??
+      null;
+    const replacementTrialEnd =
+      typeof periodEndUnix === "number" && periodEndUnix > nowUnix + 120
+        ? periodEndUnix
+        : undefined;
+
+    finalSubscription = await stripe.subscriptions.create({
+      customer: replacementCustomer.id,
+      collection_method: "charge_automatically",
+      ...(replacementTrialEnd ? { trial_end: replacementTrialEnd } : {}),
+      items: [{ price: targetPriceId, quantity: 1 }],
       metadata: {
         ...subscription.metadata,
         plan: "pro",
         billingInterval: currentInterval,
+        billingCurrency: "usd",
         userId: args.userId,
         storeId: args.storeId,
         shopId: args.storeId,
+        migratedFromSubscriptionId: args.stripeSubscriptionId,
+        migratedAt: new Date().toISOString(),
       },
     });
 
-    return { updated: true as const, currentPriceId, targetPriceId };
+    await stripe.subscriptions.update(args.stripeSubscriptionId, {
+      cancel_at_period_end: true,
+      metadata: {
+        ...subscription.metadata,
+        migratedToSubscriptionId: finalSubscription.id,
+        migratedToCurrency: "usd",
+        migratedAt: new Date().toISOString(),
+      },
+    });
   }
 
-  await stripe.subscriptions.update(args.stripeSubscriptionId, {
-    metadata: {
-      ...subscription.metadata,
-      plan: "pro",
-      billingInterval: currentInterval,
-      userId: args.userId,
-      storeId: args.storeId,
-      shopId: args.storeId,
-    },
-  });
+  const stripeCustomerId =
+    typeof finalSubscription.customer === "string"
+      ? finalSubscription.customer
+      : finalSubscription.customer?.id ?? null;
+  const currentPeriodEndIso = toIsoDateFromUnix(
+    finalSubscription.items.data[0]?.current_period_end ??
+      finalSubscription.trial_end ??
+      null
+  );
 
-  return { updated: true as const, currentPriceId, targetPriceId };
+  return {
+    updated: true as const,
+    currentPriceId,
+    targetPriceId,
+    status: finalSubscription.status,
+    currentPeriodEnd: currentPeriodEndIso,
+    stripeCustomerId,
+    stripeMode: finalSubscription.livemode ? "live" : "test",
+  };
+};
+
+const syncLegacyLinkedSubscriptionRow = async (args: {
+  subscriptionId: string;
+  userId: string;
+  storeId: string;
+  status: string | null;
+  currentPeriodEnd: string | null;
+  stripeCustomerId: string | null;
+  stripeMode: StripeMode;
+}) => {
+  const nowIso = new Date().toISOString();
+  const payloads: Array<Record<string, unknown>> = [
+    {
+      user_id: args.userId,
+      store_id: args.storeId,
+      shop_id: args.storeId,
+      plan: "pro",
+      status: args.status ?? "active",
+      current_period_end: args.currentPeriodEnd,
+      stripe_customer_id: args.stripeCustomerId,
+      stripe_mode: args.stripeMode,
+      updated_at: nowIso,
+    },
+    {
+      user_id: args.userId,
+      store_id: args.storeId,
+      shop_id: args.storeId,
+      plan: "pro",
+      status: args.status ?? "active",
+      current_period_end: args.currentPeriodEnd,
+      stripe_customer_id: args.stripeCustomerId,
+      updated_at: nowIso,
+    },
+    {
+      user_id: args.userId,
+      shop_id: args.storeId,
+      plan: "pro",
+      status: args.status ?? "active",
+      current_period_end: args.currentPeriodEnd,
+      stripe_customer_id: args.stripeCustomerId,
+      updated_at: nowIso,
+    },
+  ];
+
+  for (const payload of payloads) {
+    const result = await supabaseAdmin
+      .from("subscriptions")
+      .update(payload)
+      .eq("id", args.subscriptionId)
+      .eq("user_id", args.userId);
+
+    if (!result.error) {
+      await syncProfileSubscriptionState({
+        userId: args.userId,
+        status: (payload.status as string) ?? null,
+        plan: "pro",
+        stripeCustomerId: args.stripeCustomerId,
+      });
+      return;
+    }
+
+    if (
+      !isRecoverableColumnError(result.error, [
+        "store_id",
+        "shop_id",
+        "plan",
+        "status",
+        "current_period_end",
+        "stripe_customer_id",
+        "stripe_mode",
+        "updated_at",
+      ])
+    ) {
+      throw new Error(result.error.message);
+    }
+  }
 };
 
 const bindLegacyProSubscriptionToStore = async (args: { userId: string; storeId: string }) => {
@@ -814,14 +1238,55 @@ const bindLegacyProSubscriptionToStore = async (args: { userId: string; storeId:
     typeof metadata.legacy_stripe_subscription_id === "string"
       ? metadata.legacy_stripe_subscription_id.trim() || null
       : null;
+  const preferredStripeCustomerId =
+    typeof metadata.legacy_stripe_customer_id === "string"
+      ? metadata.legacy_stripe_customer_id.trim() || null
+      : null;
 
   const stripeMode = resolveStripeMode(
     typeof metadata.legacy_stripe_mode === "string" ? metadata.legacy_stripe_mode : null,
     getActiveStripeMode()
   );
 
-  const subscriptions = await loadSubscriptionsForUser(args.userId);
-  const target = chooseLegacyTargetSubscription(subscriptions, preferredStripeSubscriptionId);
+  let subscriptions = await loadSubscriptionsForUser(args.userId);
+  let target = chooseLegacyTargetSubscription(subscriptions, preferredStripeSubscriptionId, stripeMode);
+
+  if (!target && preferredStripeSubscriptionId) {
+    const located = await findSubscriptionRowByField("stripe_subscription_id", preferredStripeSubscriptionId);
+    if (located?.id) {
+      await claimSubscriptionForLegacyUser({
+        subscriptionId: located.id,
+        userId: args.userId,
+        stripeMode,
+      });
+      subscriptions = await loadSubscriptionsForUser(args.userId);
+      target = chooseLegacyTargetSubscription(subscriptions, preferredStripeSubscriptionId, stripeMode);
+    }
+  }
+
+  if (!target && preferredStripeCustomerId) {
+    const located = await findSubscriptionRowByField("stripe_customer_id", preferredStripeCustomerId);
+    if (located?.id) {
+      await claimSubscriptionForLegacyUser({
+        subscriptionId: located.id,
+        userId: args.userId,
+        stripeMode,
+      });
+      subscriptions = await loadSubscriptionsForUser(args.userId);
+      target = chooseLegacyTargetSubscription(subscriptions, preferredStripeSubscriptionId, stripeMode);
+    }
+  }
+
+  if (!target && (preferredStripeSubscriptionId || preferredStripeCustomerId)) {
+    await insertFallbackLegacySubscription({
+      userId: args.userId,
+      stripeSubscriptionId: preferredStripeSubscriptionId,
+      stripeCustomerId: preferredStripeCustomerId,
+      stripeMode,
+    });
+    subscriptions = await loadSubscriptionsForUser(args.userId);
+    target = chooseLegacyTargetSubscription(subscriptions, preferredStripeSubscriptionId, stripeMode);
+  }
 
   if (!target) {
     throw new Error("Bağlanacak abonelik bulunamadı.");
@@ -844,6 +1309,18 @@ const bindLegacyProSubscriptionToStore = async (args: { userId: string; storeId:
     storeId: args.storeId,
     userId: args.userId,
   });
+
+  if (stripeResult.updated) {
+    await syncLegacyLinkedSubscriptionRow({
+      subscriptionId: target.id,
+      userId: args.userId,
+      storeId: args.storeId,
+      status: typeof stripeResult.status === "string" ? stripeResult.status : "active",
+      currentPeriodEnd: typeof stripeResult.currentPeriodEnd === "string" ? stripeResult.currentPeriodEnd : null,
+      stripeCustomerId: typeof stripeResult.stripeCustomerId === "string" ? stripeResult.stripeCustomerId : null,
+      stripeMode: stripeResult.stripeMode === "test" ? "test" : "live",
+    });
+  }
 
   const nextMetadata: Record<string, unknown> = {
     ...metadata,

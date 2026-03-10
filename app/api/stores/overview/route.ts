@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
+import { serverEnv } from "@/lib/env/server";
 import {
   createScheduledSlotIdempotencyKey,
   extractScheduledSlotDueIso,
@@ -339,34 +340,62 @@ const computeRollingNextAtMs = (anchorIso: string | null | undefined, intervalMs
 const getAccessToken = (request: NextRequest) => request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
 
 const loadSubscriptions = async (userId: string) => {
-  const withStoreId = await supabaseAdmin
-    .from("subscriptions")
-    .select("id, user_id, store_id, shop_id, plan, status, current_period_end, updated_at, created_at")
-    .eq("user_id", userId)
-    .order("updated_at", { ascending: false });
+  const stripeMode = serverEnv.STRIPE_MODE;
+  const candidates = [
+    {
+      select: "id, user_id, store_id, shop_id, plan, status, current_period_end, updated_at, created_at, stripe_mode",
+      hasStoreId: true,
+      hasStripeMode: true,
+    },
+    {
+      select: "id, user_id, shop_id, plan, status, current_period_end, updated_at, created_at, stripe_mode",
+      hasStoreId: false,
+      hasStripeMode: true,
+    },
+    {
+      select: "id, user_id, store_id, shop_id, plan, status, current_period_end, updated_at, created_at",
+      hasStoreId: true,
+      hasStripeMode: false,
+    },
+    {
+      select: "id, user_id, shop_id, plan, status, current_period_end, updated_at, created_at",
+      hasStoreId: false,
+      hasStripeMode: false,
+    },
+  ] as const;
 
-  if (!withStoreId.error) {
-    return (withStoreId.data ?? []) as SubscriptionRow[];
+  let lastError: string | null = null;
+
+  for (const candidate of candidates) {
+    let query = supabaseAdmin
+      .from("subscriptions")
+      .select(candidate.select)
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false });
+
+    if (candidate.hasStripeMode) {
+      query = query.or(`stripe_mode.eq.${stripeMode},stripe_mode.is.null`);
+    }
+
+    const attempt = await query;
+    if (!attempt.error) {
+      return (((attempt.data ?? []) as unknown) as SubscriptionRow[]).map((row) => ({
+        ...row,
+        store_id: candidate.hasStoreId
+          ? row.store_id ?? null
+          : row.shop_id && isUuid(row.shop_id)
+            ? row.shop_id
+            : null,
+      }));
+    }
+
+    lastError = attempt.error.message;
+    if (!isRecoverableColumnError(attempt.error, ["store_id", "stripe_mode"])) {
+      throw new Error(attempt.error.message);
+    }
   }
 
-  if (!isMissingColumnError(withStoreId.error, "store_id")) {
-    throw new Error(withStoreId.error.message);
-  }
-
-  const fallback = await supabaseAdmin
-    .from("subscriptions")
-    .select("id, user_id, shop_id, plan, status, current_period_end, updated_at, created_at")
-    .eq("user_id", userId)
-    .order("updated_at", { ascending: false });
-
-  if (fallback.error) {
-    throw new Error(fallback.error.message);
-  }
-
-  return ((fallback.data ?? []) as SubscriptionRow[]).map((row) => ({
-    ...row,
-    store_id: row.shop_id && isUuid(row.shop_id) ? row.shop_id : null,
-  }));
+  throw new Error(lastError ?? "subscriptions could not be loaded");
 };
 
 const loadSchedulerJobs = async (subscriptionIds: string[]) => {

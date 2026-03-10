@@ -366,17 +366,17 @@ const createDeferredStripeSubscription = async (args: {
   userId: string;
   storeId: string;
   plan: BillingPlan;
-  currency: StoreCurrency;
 }) => {
+  const subscriptionCurrency: StoreCurrency = "USD";
   const priceId = await resolveCheckoutPriceId(args.plan, "month", {
-    currency: args.currency,
+    currency: subscriptionCurrency,
   });
   if (!priceId) {
     throw new Error(`Stripe fiyatı bulunamadı: ${args.plan}/month`);
   }
 
   const email = await resolveUserEmail(args.userId);
-  const stripeCustomerId = await resolveStripeCustomerId(args.userId, email, args.currency);
+  const stripeCustomerId = await resolveStripeCustomerId(args.userId, email, subscriptionCurrency);
   const trialEndUnix = toNextMonthUnix();
 
   const stripe = getStripeClientForMode();
@@ -391,7 +391,7 @@ const createDeferredStripeSubscription = async (args: {
         shopId: args.storeId,
         plan: args.plan,
         billingInterval: "month",
-        billingCurrency: args.currency.toLowerCase(),
+        billingCurrency: subscriptionCurrency.toLowerCase(),
         adminGrant: "true",
       },
     });
@@ -412,7 +412,7 @@ const createDeferredStripeSubscription = async (args: {
         userId: args.userId,
         storeId: args.storeId,
         source: "admin_store_create_currency_retry",
-        preferredCurrency: args.currency.toLowerCase(),
+        preferredCurrency: subscriptionCurrency.toLowerCase(),
       },
     });
 
@@ -736,7 +736,6 @@ export async function POST(request: NextRequest) {
           userId,
           storeId,
           plan: grantPlan,
-          currency,
         });
 
         stripeSubscriptionId = stripeSubscription.stripeSubscriptionId;

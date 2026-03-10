@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { dispatchN8nTrigger } from "@/lib/n8n/client";
+import { serverEnv } from "@/lib/env/server";
 import {
   createScheduledSlotIdempotencyKey,
   extractScheduledSlotDueIso,
@@ -308,34 +309,63 @@ const getRetryDelayMinutes = (retryCount: number) => {
 };
 
 const loadActiveSubscriptions = async () => {
-  const withStoreId = await supabaseAdmin
-    .from("subscriptions")
-    .select("id, user_id, plan, status, current_period_end, store_id, shop_id, updated_at")
-    .in("status", ["active", "trialing"])
-    .limit(1000);
+  const stripeMode = serverEnv.STRIPE_MODE;
+  const candidates = [
+    {
+      select: "id, user_id, plan, status, current_period_end, store_id, shop_id, updated_at, stripe_mode",
+      hasStoreId: true,
+      hasStripeMode: true,
+    },
+    {
+      select: "id, user_id, plan, status, current_period_end, shop_id, updated_at, stripe_mode",
+      hasStoreId: false,
+      hasStripeMode: true,
+    },
+    {
+      select: "id, user_id, plan, status, current_period_end, store_id, shop_id, updated_at",
+      hasStoreId: true,
+      hasStripeMode: false,
+    },
+    {
+      select: "id, user_id, plan, status, current_period_end, shop_id, updated_at",
+      hasStoreId: false,
+      hasStripeMode: false,
+    },
+  ] as const;
 
-  if (!withStoreId.error) {
-    return (withStoreId.data ?? []) as SubscriptionRow[];
+  let lastError: { message?: string } | null = null;
+
+  for (const candidate of candidates) {
+    let query = supabaseAdmin
+      .from("subscriptions")
+      .select(candidate.select)
+      .in("status", ["active", "trialing"])
+      .limit(1000);
+
+    if (candidate.hasStripeMode) {
+      query = query.or(`stripe_mode.eq.${stripeMode},stripe_mode.is.null`);
+    }
+
+    const attempt = await query;
+    if (!attempt.error) {
+      const rows = (((attempt.data ?? []) as unknown) as SubscriptionRow[]).map((row) => ({
+        ...row,
+        store_id: candidate.hasStoreId
+          ? row.store_id ?? null
+          : row.shop_id && isUuid(row.shop_id)
+            ? row.shop_id
+            : null,
+      }));
+      return rows;
+    }
+
+    lastError = attempt.error;
+    if (!isMissingAnyColumnError(attempt.error, ["store_id", "stripe_mode"])) {
+      throw attempt.error;
+    }
   }
 
-  if (!isMissingColumnError(withStoreId.error, "store_id")) {
-    throw withStoreId.error;
-  }
-
-  const fallback = await supabaseAdmin
-    .from("subscriptions")
-    .select("id, user_id, plan, status, current_period_end, shop_id, updated_at")
-    .in("status", ["active", "trialing"])
-    .limit(1000);
-
-  if (fallback.error) {
-    throw fallback.error;
-  }
-
-  return ((fallback.data ?? []) as SubscriptionRow[]).map((row) => ({
-    ...row,
-    store_id: row.shop_id && isUuid(row.shop_id) ? row.shop_id : null,
-  }));
+  throw lastError ?? new Error("subscriptions could not be loaded");
 };
 
 const loadStores = async (storeIds: string[]) => {

@@ -29,6 +29,23 @@ const toPlan = (value: string | null | undefined): BillingPlan | null => {
   return null;
 };
 
+const isStripeCurrencyMismatchError = (error: unknown) => {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const directMessage =
+    typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : "";
+  const raw = (error as { raw?: { message?: unknown } }).raw;
+  const rawMessage = raw && typeof raw.message === "string" ? raw.message : "";
+  const message = `${directMessage} ${rawMessage}`.toLowerCase();
+  return (
+    (message.includes("only supports") && message.includes("currency")) ||
+    message.includes("expected currency")
+  );
+};
+
 export async function POST(request: NextRequest) {
   const admin = await requireAdmin(request);
   if (!admin) return notFoundResponse();
@@ -41,7 +58,7 @@ export async function POST(request: NextRequest) {
 
     const { data, error } = await supabaseAdmin
       .from("subscriptions")
-      .select("id, plan, stripe_subscription_id, status")
+      .select("id, user_id, plan, stripe_subscription_id, status")
       .in("status", ["active", "trialing"])
       .not("stripe_subscription_id", "is", null);
 
@@ -51,6 +68,7 @@ export async function POST(request: NextRequest) {
 
     const rows = (data ?? []) as Array<{
       id: string;
+      user_id?: string | null;
       plan?: string | null;
       stripe_subscription_id?: string | null;
       status?: string | null;
@@ -77,8 +95,6 @@ export async function POST(request: NextRequest) {
         const item = stripeSubscription.items.data[0];
         const currentPrice = item?.price;
         const currentInterval = currentPrice?.recurring?.interval;
-        const currentCurrency = currentPrice?.currency ?? null;
-
         if (!item || !currentPrice || (currentInterval !== "month" && currentInterval !== "year")) {
           skipped.push({ subscriptionId: stripeSubscriptionId, reason: "missing_item_or_interval" });
           continue;
@@ -92,7 +108,7 @@ export async function POST(request: NextRequest) {
 
         const targetPriceId = await resolveCheckoutPriceId(plan, currentInterval, {
           mode,
-          currency: currentCurrency,
+          currency: "usd",
         });
 
         if (targetPriceId === currentPrice.id) {
@@ -105,20 +121,103 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        await stripe.subscriptions.update(stripeSubscriptionId, {
-          proration_behavior: "none",
-          items: [
-            {
-              id: item.id,
-              price: targetPriceId,
+        try {
+          await stripe.subscriptions.update(stripeSubscriptionId, {
+            proration_behavior: "none",
+            items: [
+              {
+                id: item.id,
+                price: targetPriceId,
+              },
+            ],
+            metadata: {
+              ...stripeSubscription.metadata,
+              plan,
+              billingInterval: currentInterval,
+              billingCurrency: "usd",
             },
-          ],
-          metadata: {
-            ...stripeSubscription.metadata,
-            plan,
-            billingInterval: currentInterval,
-          },
-        });
+          });
+        } catch (updateError) {
+          if (!isStripeCurrencyMismatchError(updateError)) {
+            throw updateError;
+          }
+
+          const existingCustomerId =
+            typeof stripeSubscription.customer === "string"
+              ? stripeSubscription.customer
+              : stripeSubscription.customer?.id ?? null;
+          let existingCustomerEmail: string | null = null;
+          if (existingCustomerId) {
+            try {
+              const existingCustomer = await stripe.customers.retrieve(existingCustomerId);
+              if (!("deleted" in existingCustomer && existingCustomer.deleted)) {
+                existingCustomerEmail = existingCustomer.email ?? null;
+              }
+            } catch {
+              // no-op
+            }
+          }
+
+          const replacementCustomer = await stripe.customers.create({
+            email: existingCustomerEmail ?? undefined,
+            metadata: {
+              userId: row.user_id ?? stripeSubscription.metadata?.userId ?? "",
+              storeId:
+                stripeSubscription.metadata?.storeId ??
+                stripeSubscription.metadata?.shopId ??
+                "",
+              source: "admin_rebind_currency_migration",
+            },
+          });
+
+          const nowUnix = Math.floor(Date.now() / 1000);
+          const periodEndUnix = item.current_period_end ?? stripeSubscription.trial_end ?? null;
+          const replacementTrialEnd =
+            typeof periodEndUnix === "number" && periodEndUnix > nowUnix + 120
+              ? periodEndUnix
+              : undefined;
+
+          const newSubscription = await stripe.subscriptions.create({
+            customer: replacementCustomer.id,
+            collection_method: "charge_automatically",
+            ...(replacementTrialEnd ? { trial_end: replacementTrialEnd } : {}),
+            items: [{ price: targetPriceId, quantity: 1 }],
+            metadata: {
+              ...stripeSubscription.metadata,
+              plan,
+              billingInterval: currentInterval,
+              billingCurrency: "usd",
+              migratedFromSubscriptionId: stripeSubscriptionId,
+              migratedAt: new Date().toISOString(),
+            },
+          });
+
+          await stripe.subscriptions.update(stripeSubscriptionId, {
+            cancel_at_period_end: true,
+            metadata: {
+              ...stripeSubscription.metadata,
+              migratedToSubscriptionId: newSubscription.id,
+              migratedToCurrency: "usd",
+              migratedAt: new Date().toISOString(),
+            },
+          });
+
+          await supabaseAdmin
+            .from("subscriptions")
+            .update({
+              stripe_subscription_id: newSubscription.id,
+              stripe_customer_id: replacementCustomer.id,
+              status: newSubscription.status,
+              current_period_end:
+                typeof (newSubscription.items.data[0]?.current_period_end ?? newSubscription.trial_end) === "number"
+                  ? new Date(
+                      (newSubscription.items.data[0]?.current_period_end ?? newSubscription.trial_end ?? 0) * 1000
+                    ).toISOString()
+                  : null,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", row.id);
+        }
 
         updated += 1;
       } catch (error) {

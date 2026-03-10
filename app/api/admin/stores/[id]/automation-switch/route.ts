@@ -11,6 +11,7 @@ import {
   type SchedulerCronSyncResult,
 } from "@/lib/cron-job-org/client";
 import { dispatchN8nTrigger } from "@/lib/n8n/client";
+import { serverEnv } from "@/lib/env/server";
 import { createManualSwitchIdempotencyKey } from "@/lib/scheduler/idempotency";
 import {
   resolveProductCandidateForCategory,
@@ -337,37 +338,61 @@ const updateSchedulerJobWithFallback = async (jobId: string, patch: {
 };
 
 const loadActiveSubscriptionForStore = async (storeId: string) => {
-  const withStoreId = await supabaseAdmin
-    .from("subscriptions")
-    .select("id, plan, status, created_at, current_period_end, store_id")
-    .eq("store_id", storeId)
-    .in("status", ["active", "trialing"])
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<SubscriptionRow>();
+  const stripeMode = serverEnv.STRIPE_MODE;
+  const candidates = [
+    {
+      select: "id, plan, status, created_at, current_period_end, store_id, stripe_mode",
+      filterColumn: "store_id",
+      hasStripeMode: true,
+    },
+    {
+      select: "id, plan, status, created_at, current_period_end, shop_id, stripe_mode",
+      filterColumn: "shop_id",
+      hasStripeMode: true,
+    },
+    {
+      select: "id, plan, status, created_at, current_period_end, store_id",
+      filterColumn: "store_id",
+      hasStripeMode: false,
+    },
+    {
+      select: "id, plan, status, created_at, current_period_end, shop_id",
+      filterColumn: "shop_id",
+      hasStripeMode: false,
+    },
+  ] as const;
 
-  if (!withStoreId.error) {
-    return withStoreId.data;
+  let lastError: string | null = null;
+
+  for (const candidate of candidates) {
+    let query = supabaseAdmin
+      .from("subscriptions")
+      .select(candidate.select)
+      .eq(candidate.filterColumn, storeId)
+      .in("status", ["active", "trialing"])
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (candidate.hasStripeMode) {
+      query = query.or(`stripe_mode.eq.${stripeMode},stripe_mode.is.null`);
+    }
+
+    const attempt = await query.maybeSingle<SubscriptionRow>();
+    if (!attempt.error) {
+      return attempt.data;
+    }
+
+    lastError = attempt.error.message;
+    if (!isMissingAnyColumnError(attempt.error, ["store_id", "shop_id", "stripe_mode"])) {
+      throw new Error(attempt.error.message);
+    }
   }
 
-  if (!isMissingColumnError(withStoreId.error, "store_id")) {
-    throw new Error(withStoreId.error.message);
+  if (lastError) {
+    throw new Error(lastError);
   }
 
-  const fallback = await supabaseAdmin
-    .from("subscriptions")
-    .select("id, plan, status, created_at, current_period_end, shop_id")
-    .eq("shop_id", storeId)
-    .in("status", ["active", "trialing"])
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<SubscriptionRow>();
-
-  if (fallback.error) {
-    throw new Error(fallback.error.message);
-  }
-
-  return fallback.data;
+  return null;
 };
 
 const ensureSubscriptionStoreBinding = async (args: {

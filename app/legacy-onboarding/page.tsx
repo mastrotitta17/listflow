@@ -27,18 +27,25 @@ type LegacyBootstrapUser = {
 const LISTFLOW_DECIDE_VALUE = "__listflow_decide__";
 const LEGACY_ONBOARDING_TOKEN_HEADER = "x-legacy-onboarding-token";
 
-const buildLegacyHeaders = (onboardingToken: string) => ({
-  "Content-Type": "application/json",
-  [LEGACY_ONBOARDING_TOKEN_HEADER]: onboardingToken,
-});
+const buildLegacyHeaders = (onboardingToken: string | null) => {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (onboardingToken) {
+    headers[LEGACY_ONBOARDING_TOKEN_HEADER] = onboardingToken;
+  }
+  return headers;
+};
 
-const buildLegacyApiUrl = (path: string, onboardingToken: string) => {
+const buildLegacyApiUrl = (path: string, onboardingToken: string | null) => {
   const url = new URL(path, window.location.origin);
-  url.searchParams.set("token", onboardingToken);
+  if (onboardingToken) {
+    url.searchParams.set("token", onboardingToken);
+  }
   return `${url.pathname}${url.search}`;
 };
 
-const loadLegacyOnboardingUser = async (onboardingToken: string): Promise<LegacyBootstrapUser | null> => {
+const loadLegacyOnboardingUser = async (onboardingToken: string | null): Promise<LegacyBootstrapUser | null> => {
   const response = await fetch(buildLegacyApiUrl("/api/legacy-onboarding/profile", onboardingToken), {
     method: "GET",
     cache: "no-store",
@@ -82,10 +89,6 @@ export default function LegacyOnboardingPage() {
   const [storeCurrency, setStoreCurrency] = useState<StoreCurrency>("USD");
 
   const saveLegacyProfile = async (args: { fullName: string; phone: string; password?: string }) => {
-    if (!onboardingToken) {
-      throw new Error("Onboarding bağlantısı bulunamadı.");
-    }
-
     const response = await fetch(buildLegacyApiUrl("/api/legacy-onboarding/profile", onboardingToken), {
       method: "POST",
       headers: buildLegacyHeaders(onboardingToken),
@@ -175,20 +178,18 @@ export default function LegacyOnboardingPage() {
 
     const bootstrap = async () => {
       try {
-        if (!onboardingToken) {
-          setCurrentUser(null);
-          setBootstrapError("Onboarding bağlantısı eksik. Admin panelden yeni link üretin.");
-          return;
-        }
-
-        const legacyUser = await loadLegacyOnboardingUser(onboardingToken);
+        const legacyUser = await loadLegacyOnboardingUser(onboardingToken || null);
         if (!active) {
           return;
         }
 
         if (!legacyUser) {
           setCurrentUser(null);
-          setBootstrapError("Onboarding bağlantısı geçersiz, süresi dolmuş veya zaten kullanılmış.");
+          setBootstrapError(
+            onboardingToken
+              ? "Onboarding bağlantısı geçersiz, süresi dolmuş veya zaten kullanılmış."
+              : "Oturum doğrulanamadı. Lütfen yeniden giriş yapın veya onboarding linkini kullanın."
+          );
           return;
         }
 
@@ -295,10 +296,6 @@ export default function LegacyOnboardingPage() {
         fullName: normalizedName,
         phone: normalizedPhone,
       });
-
-      if (!onboardingToken) {
-        throw new Error("Onboarding bağlantısı bulunamadı.");
-      }
 
       const response = await fetch(buildLegacyApiUrl("/api/onboarding/store", onboardingToken), {
         method: "POST",

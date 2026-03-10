@@ -52,7 +52,10 @@ export async function POST(request: NextRequest) {
 
     if (isSubscriptionPayload(body)) {
       const billingInterval = body.interval === "year" ? "year" : "month";
-      const priceId = await resolveCheckoutPriceId(body.plan, billingInterval, { mode: stripeMode });
+      const priceId = await resolveCheckoutPriceId(body.plan, billingInterval, {
+        mode: stripeMode,
+        currency: "usd",
+      });
 
       if (!priceId) {
         return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
@@ -71,6 +74,7 @@ export async function POST(request: NextRequest) {
             storeId: body.shopId,
             plan: body.plan,
             billingInterval,
+            billingCurrency: "usd",
             stripeMode,
           },
         },
@@ -80,6 +84,7 @@ export async function POST(request: NextRequest) {
           storeId: body.shopId,
           plan: body.plan,
           billingInterval,
+          billingCurrency: "usd",
           stripeMode,
         },
       });

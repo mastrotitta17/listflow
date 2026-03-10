@@ -14,6 +14,7 @@ import {
   loadSchedulerMasterState,
   syncSchedulerCronJobLifecycle,
 } from "@/lib/cron-job-org/client";
+import { serverEnv } from "@/lib/env/server";
 import {
   isWebhookCompatibleWithStore,
   resolveProductCandidateForCategory,
@@ -380,34 +381,58 @@ const loadWebhookCurrencyMap = async (webhookIds: string[]) => {
 };
 
 const loadSubscriptions = async () => {
-  const withStoreId = await supabaseAdmin
-    .from("subscriptions")
-    .select("id, user_id, store_id, shop_id, plan, status, created_at, current_period_end, updated_at")
-    .in("status", ["active", "trialing"])
-    .order("updated_at", { ascending: false });
+  const stripeMode = serverEnv.STRIPE_MODE;
+  const candidates = [
+    {
+      select: "id, user_id, store_id, shop_id, plan, status, created_at, current_period_end, updated_at, stripe_mode",
+      hasStoreId: true,
+      hasStripeMode: true,
+    },
+    {
+      select: "id, user_id, shop_id, plan, status, created_at, current_period_end, updated_at, stripe_mode",
+      hasStoreId: false,
+      hasStripeMode: true,
+    },
+    {
+      select: "id, user_id, store_id, shop_id, plan, status, created_at, current_period_end, updated_at",
+      hasStoreId: true,
+      hasStripeMode: false,
+    },
+    {
+      select: "id, user_id, shop_id, plan, status, created_at, current_period_end, updated_at",
+      hasStoreId: false,
+      hasStripeMode: false,
+    },
+  ] as const;
 
-  if (!withStoreId.error) {
-    return (withStoreId.data ?? []) as SubscriptionRow[];
+  let lastError: string | null = null;
+
+  for (const candidate of candidates) {
+    let query = supabaseAdmin
+      .from("subscriptions")
+      .select(candidate.select)
+      .in("status", ["active", "trialing"])
+      .order("updated_at", { ascending: false });
+
+    if (candidate.hasStripeMode) {
+      query = query.or(`stripe_mode.eq.${stripeMode},stripe_mode.is.null`);
+    }
+
+    const attempt = await query;
+    if (!attempt.error) {
+      return (((attempt.data ?? []) as unknown) as SubscriptionRow[]).map((row) => ({
+        ...row,
+        store_id: candidate.hasStoreId ? row.store_id ?? null : isUuid(row.shop_id) ? row.shop_id : null,
+      }));
+    }
+
+    lastError = attempt.error.message;
+    if (!isMissingAnyColumnError(attempt.error, ["store_id", "stripe_mode"])) {
+      throw new Error(attempt.error.message);
+    }
   }
 
-  if (!isMissingColumnError(withStoreId.error, "store_id")) {
-    throw new Error(withStoreId.error.message);
-  }
-
-  const fallback = await supabaseAdmin
-    .from("subscriptions")
-    .select("id, user_id, shop_id, plan, status, created_at, current_period_end, updated_at")
-    .in("status", ["active", "trialing"])
-    .order("updated_at", { ascending: false });
-
-  if (fallback.error) {
-    throw new Error(fallback.error.message);
-  }
-
-  return ((fallback.data ?? []) as SubscriptionRow[]).map((row) => ({
-    ...row,
-    store_id: isUuid(row.shop_id) ? row.shop_id : null,
-  }));
+  throw new Error(lastError ?? "subscriptions could not be loaded");
 };
 
 const loadSchedulerJobs = async () => {

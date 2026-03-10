@@ -107,10 +107,19 @@ const ensureProfile = async (userId: string, email: string) => {
   }
 };
 
-const updateSubscriptionsByField = async (field: "stripe_subscription_id" | "stripe_customer_id", value: string, userId: string) => {
+const updateSubscriptionsByField = async (
+  field: "stripe_subscription_id" | "stripe_customer_id",
+  value: string,
+  userId: string,
+  stripeMode: StripeMode | null
+) => {
   const nowIso = new Date().toISOString();
   const payloadWithTimestamp: Record<string, string> = { user_id: userId, updated_at: nowIso };
   const payloadWithoutTimestamp: Record<string, string> = { user_id: userId };
+  if (stripeMode) {
+    payloadWithTimestamp.stripe_mode = stripeMode;
+    payloadWithoutTimestamp.stripe_mode = stripeMode;
+  }
 
   const firstTry = await supabaseAdmin
     .from("subscriptions")
@@ -122,7 +131,7 @@ const updateSubscriptionsByField = async (field: "stripe_subscription_id" | "str
     return (firstTry.data ?? []).length;
   }
 
-  if (!isMissingColumnError(firstTry.error, "updated_at")) {
+  if (!isMissingColumnError(firstTry.error, "updated_at") && !isMissingColumnError(firstTry.error, "stripe_mode")) {
     throw new Error(firstTry.error.message);
   }
 
@@ -143,6 +152,7 @@ const insertFallbackSubscription = async (params: {
   userId: string;
   stripeSubscriptionId: string | null;
   stripeCustomerId: string | null;
+  stripeMode: StripeMode | null;
   shopId: string | null;
   storeId: string | null;
   plan: string | null;
@@ -163,12 +173,13 @@ const insertFallbackSubscription = async (params: {
     status: params.status ?? "active",
     stripe_customer_id: params.stripeCustomerId,
     stripe_subscription_id: params.stripeSubscriptionId,
+    stripe_mode: params.stripeMode,
     current_period_end: params.currentPeriodEnd,
     created_at: nowIso,
     updated_at: nowIso,
   };
 
-  const optionalKeys = new Set(["store_id", "created_at", "updated_at", "current_period_end"]);
+  const optionalKeys = new Set(["store_id", "created_at", "updated_at", "current_period_end", "stripe_mode"]);
   const payload = { ...basePayload };
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -324,11 +335,11 @@ export async function POST(request: NextRequest) {
     let linkedCount = 0;
 
     if (stripeSubscriptionId) {
-      linkedCount += await updateSubscriptionsByField("stripe_subscription_id", stripeSubscriptionId, authUser.id);
+      linkedCount += await updateSubscriptionsByField("stripe_subscription_id", stripeSubscriptionId, authUser.id, stripeMode);
     }
 
     if (stripeCustomerId) {
-      linkedCount += await updateSubscriptionsByField("stripe_customer_id", stripeCustomerId, authUser.id);
+      linkedCount += await updateSubscriptionsByField("stripe_customer_id", stripeCustomerId, authUser.id, stripeMode);
     }
 
     let insertedFallback = false;
@@ -337,6 +348,7 @@ export async function POST(request: NextRequest) {
         userId: authUser.id,
         stripeSubscriptionId,
         stripeCustomerId,
+        stripeMode,
         shopId,
         storeId,
         plan,
@@ -345,11 +357,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    let actionLink: string | null = null;
+    const actionLink = buildLegacyOnboardingLink(appUrl, onboardingToken);
     let emailDispatched = false;
     let emailDispatchError: string | null = null;
     if (strategy === "magic_link") {
-      actionLink = buildLegacyOnboardingLink(appUrl, onboardingToken);
       emailDispatched = false;
       emailDispatchError = "Mail otomatik gönderilmez. Uretilen onboarding linkini manuel paylaşın.";
     }

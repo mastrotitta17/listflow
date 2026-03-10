@@ -900,7 +900,7 @@ const recoverSubscriptionRow = async (
         : null;
   const stripeUnitAmount = subscription.items.data[0]?.price?.unit_amount ?? null;
 
-  const payload = {
+  const payloadBase = {
     user_id: userId,
     shop_id: shopId,
     store_id: storeId,
@@ -911,10 +911,22 @@ const recoverSubscriptionRow = async (
     current_period_end: toIsoDate(resolveSubscriptionPeriodEnd(subscription)),
     updated_at: new Date().toISOString(),
   };
+  const payloadWithMode = {
+    ...payloadBase,
+    stripe_mode: subscription.livemode ? "live" : "test",
+  };
+  let payload: Record<string, unknown> = payloadWithMode;
 
-  const upsertResult = await supabaseAdmin
+  let upsertResult = await supabaseAdmin
     .from("subscriptions")
     .upsert(payload, { onConflict: "stripe_subscription_id" });
+
+  if (upsertResult.error && isMissingColumnError(upsertResult.error, "stripe_mode")) {
+    payload = payloadBase;
+    upsertResult = await supabaseAdmin
+      .from("subscriptions")
+      .upsert(payload, { onConflict: "stripe_subscription_id" });
+  }
 
   if (upsertResult.error) {
     if (!isMissingOnConflictConstraintError(upsertResult.error)) {
