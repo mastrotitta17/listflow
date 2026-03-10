@@ -38,6 +38,27 @@ type ListingRow = {
   publish_proof?: string | null;
 };
 
+const isMissingColumnError = (error: { message?: string } | null | undefined, columnName: string) => {
+  if (!error) {
+    return false;
+  }
+
+  const message = (error.message ?? "").toLowerCase();
+  return message.includes("column") && message.includes(columnName.toLowerCase());
+};
+
+const isRecoverableListingSelectError = (error: { message?: string } | null | undefined) => {
+  return [
+    "listing_status",
+    "etsy_listing_id",
+    "etsy_listing_url",
+    "etsy_store_link",
+    "publish_proof",
+    "image_2_url",
+    "image_3_url",
+  ].some((column) => isMissingColumnError(error, column));
+};
+
 const PAGE_SIZE = 18;
 const PUBLIC_R2_ORIGIN = "https://pub-b9db5786e8af4a9b8f542561b9fc5298.r2.dev";
 const PRODUCT_CDN_ORIGIN = "https://cdn.listflow.pro";
@@ -149,6 +170,13 @@ const loadOwnedStores = async (userId: string) => {
   return [] as StoreRow[];
 };
 
+const LISTING_SELECT_CANDIDATES = [
+  "id,key,title,description,image_1_url,image_2_url,image_3_url,price,quantity,status,listing_status,tags,category,created_at,updated_at,etsy_listing_id,etsy_listing_url,etsy_store_link,publish_proof",
+  "id,key,title,description,image_1_url,image_2_url,image_3_url,price,quantity,status,tags,category,created_at,updated_at,etsy_listing_id,etsy_listing_url,etsy_store_link,publish_proof",
+  "id,key,title,description,image_1_url,image_2_url,image_3_url,price,quantity,status,tags,category,created_at,updated_at",
+  "id,key,title,description,image_1_url,price,quantity,status,tags,category,created_at,updated_at",
+] as const;
+
 export async function GET(request: NextRequest) {
   try {
     const accessToken = getAccessToken(request);
@@ -195,30 +223,45 @@ export async function GET(request: NextRequest) {
 
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
-    let query = supabaseAdmin
-      .from("listing")
-      .select(
-        "id,key,title,description,image_1_url,image_2_url,image_3_url,price,quantity,status,listing_status,tags,category,created_at,updated_at,etsy_listing_id,etsy_listing_url,etsy_store_link,publish_proof",
-        { count: "exact" }
-      )
-      .eq("client_id", selectedStore.id)
-      .order("updated_at", { ascending: false })
-      .range(from, to);
+    let data: ListingRow[] | null = null;
+    let count: number | null = null;
+    let lastError: string | null = null;
 
-    if (requestedListingId) {
-      query = query.eq("id", requestedListingId);
+    for (const select of LISTING_SELECT_CANDIDATES) {
+      let query = supabaseAdmin
+        .from("listing")
+        .select(select, { count: "exact" })
+        .eq("client_id", selectedStore.id)
+        .order("updated_at", { ascending: false })
+        .range(from, to);
+
+      if (requestedListingId) {
+        query = query.eq("id", requestedListingId);
+      }
+
+      if (queryText) {
+        query = query.ilike("title", `%${queryText}%`);
+      }
+
+      const result = await query;
+      if (!result.error) {
+        data = ((result.data ?? []) as unknown) as ListingRow[];
+        count = result.count ?? null;
+        lastError = null;
+        break;
+      }
+
+      lastError = result.error.message;
+      if (!isRecoverableListingSelectError(result.error)) {
+        throw new Error(result.error.message);
+      }
     }
 
-    if (queryText) {
-      query = query.ilike("title", `%${queryText}%`);
+    if (lastError) {
+      throw new Error(lastError);
     }
 
-    const { data, error, count } = await query;
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    const rows = (((data ?? []) as unknown) as ListingRow[]).map((row) => ({
+    const rows = (data ?? []).map((row) => ({
       id: row.id,
       key: row.key ?? null,
       title: row.title ?? "Untitled",
