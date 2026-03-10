@@ -21,6 +21,7 @@ type PaymentRow = {
   status?: string | null;
   stripe_subscription_id?: string | null;
   stripe_invoice_id?: string | null;
+  user_id?: string | null;
 };
 
 type RevenueRecord = {
@@ -31,6 +32,7 @@ type RevenueRecord = {
   stripe_subscription_id: string | null;
   stripe_invoice_id: string | null;
   source: "payments" | `stripe_${StripeMode}`;
+  user_id?: string | null;
 };
 
 const isPaidLikeStatus = (status: string | null | undefined) => {
@@ -165,7 +167,7 @@ const resolveInvoiceSubscriptionId = (invoice: Stripe.Invoice) => {
 const loadRecurringPaymentsFromDb = async (fromIso: string) => {
   const withInvoiceColumn = await supabaseAdmin
     .from("payments")
-    .select("amount_cents, created_at, currency, status, stripe_subscription_id, stripe_invoice_id")
+    .select("amount_cents, created_at, currency, status, stripe_subscription_id, stripe_invoice_id, user_id")
     .gte("created_at", fromIso)
     .order("created_at", { ascending: true });
 
@@ -175,7 +177,7 @@ const loadRecurringPaymentsFromDb = async (fromIso: string) => {
   if (withInvoiceColumn.error && isMissingColumnError(withInvoiceColumn.error, "stripe_invoice_id")) {
     const fallback = await supabaseAdmin
       .from("payments")
-      .select("amount_cents, created_at, currency, status, stripe_subscription_id")
+      .select("amount_cents, created_at, currency, status, stripe_subscription_id, user_id")
       .gte("created_at", fromIso)
       .order("created_at", { ascending: true });
 
@@ -207,6 +209,7 @@ const loadRecurringPaymentsFromDb = async (fromIso: string) => {
     stripe_subscription_id: row.stripe_subscription_id ?? null,
     stripe_invoice_id: row.stripe_invoice_id ?? null,
     source: "payments" as const,
+    user_id: row.user_id ?? null,
   }));
 };
 
@@ -356,6 +359,36 @@ const aggregateCurrencyBreakdown = (records: RevenueRecord[], months: number) =>
   return { seriesByCurrency, totalsByCurrency };
 };
 
+const loadAdminUserIds = async (): Promise<Set<string>> => {
+  const { data } = await supabaseAdmin
+    .from("profiles")
+    .select("user_id")
+    .eq("role", "admin");
+
+  return new Set(
+    ((data ?? []) as Array<{ user_id: string }>)
+      .map((row) => row.user_id)
+      .filter(Boolean)
+  );
+};
+
+const loadAdminStripeSubscriptionIds = async (adminUserIds: Set<string>): Promise<Set<string>> => {
+  if (!adminUserIds.size) {
+    return new Set();
+  }
+
+  const { data } = await supabaseAdmin
+    .from("subscriptions")
+    .select("stripe_subscription_id")
+    .in("user_id", Array.from(adminUserIds));
+
+  return new Set(
+    ((data ?? []) as Array<{ stripe_subscription_id: string | null }>)
+      .map((row) => row.stripe_subscription_id)
+      .filter((id): id is string => Boolean(id))
+  );
+};
+
 export async function GET(request: NextRequest) {
   const admin = await requireAdminRequest(request);
   if (!admin) {
@@ -376,13 +409,30 @@ export async function GET(request: NextRequest) {
   const firstMonthUnix = Math.floor(firstMonthDate.getTime() / 1000);
 
   try {
-    const dbRecords = await loadRecurringPaymentsFromDb(firstMonthDate.toISOString());
-    const stripe = await loadRecurringPaymentsFromStripe(mode, firstMonthUnix);
+    const [dbRecords, stripe, adminUserIds] = await Promise.all([
+      loadRecurringPaymentsFromDb(firstMonthDate.toISOString()),
+      loadRecurringPaymentsFromStripe(mode, firstMonthUnix),
+      loadAdminUserIds(),
+    ]);
+
+    // Admin kullanıcıların Stripe abonelik ID'lerini yükle (Stripe kayıtlarını filtrelemek için).
+    const adminStripeSubIds = await loadAdminStripeSubscriptionIds(adminUserIds);
+
+    // Admin kullanıcıları her iki kaynaktan da çıkar.
+    const nonAdminDbRecords = dbRecords.filter(
+      (record) => !record.user_id || !adminUserIds.has(record.user_id)
+    );
+    const nonAdminStripeRecords = stripe.records.filter(
+      (record) => !record.stripe_subscription_id || !adminStripeSubIds.has(record.stripe_subscription_id)
+    );
+
+    // Stripe nesnesini admin-filtered versiyonuyla değiştir.
+    const filteredStripe = { ...stripe, records: nonAdminStripeRecords };
 
     // Stripe'dan gelen invoice ID seti — hangi faturaların hangi mode'a ait olduğunu bilmek için.
     // Bu set sayesinde DB kayıtlarını mode'a göre filtreleyebiliriz.
     const stripeInvoiceIdSet = new Set(
-      stripe.records
+      filteredStripe.records
         .map((r) => r.stripe_invoice_id)
         .filter((id): id is string => Boolean(id))
     );
@@ -391,7 +441,7 @@ export async function GET(request: NextRequest) {
     // (aynı fatura webhook + manuel kayıt gibi iki kez girmiş olabilir).
     const dedupedDbRecords = (() => {
       const seen = new Set<string>();
-      return dbRecords.filter((record) => {
+      return nonAdminDbRecords.filter((record) => {
         if (!record.stripe_invoice_id) {
           // invoice_id olmayan kayıtlar: sadece mode="all" iken dahil et
           return mode === "all";
@@ -425,7 +475,7 @@ export async function GET(request: NextRequest) {
     // Birleştirme: DB kayıtları öncelikli, Stripe'dan gelenler deduplication sonrası eklenir.
     const mergedRecords = [
       ...modeFilteredDbRecords,
-      ...stripe.records.filter((record) => !(record.stripe_invoice_id && dbInvoiceIds.has(record.stripe_invoice_id))),
+      ...filteredStripe.records.filter((record) => !(record.stripe_invoice_id && dbInvoiceIds.has(record.stripe_invoice_id))),
     ];
 
     const currencyAwareRecords = mergedRecords.map((record) => ({
@@ -440,15 +490,15 @@ export async function GET(request: NextRequest) {
 
     const aggregated = aggregateSeries(filteredRecords, months);
     const { seriesByCurrency, totalsByCurrency } = aggregateCurrencyBreakdown(currencyAwareRecords, months);
-    const hasDb = dbRecords.length > 0;
-    const hasStripe = stripe.records.length > 0;
+    const hasDb = nonAdminDbRecords.length > 0;
+    const hasStripe = filteredStripe.records.length > 0;
 
     return NextResponse.json({
       months,
       mode,
       currencyFilter,
       source: hasDb && hasStripe ? "payments_plus_stripe" : hasDb ? "payments_recurring" : "stripe_invoices",
-      warnings: stripe.warnings,
+      warnings: filteredStripe.warnings,
       ...aggregated,
       currency: currencyFilter === "all" ? "mixed" : currencyFilter,
       seriesByCurrency,

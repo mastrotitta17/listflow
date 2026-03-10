@@ -856,16 +856,61 @@ const mergeCoverage = async (
   return { rows, summary };
 };
 
+const loadAdminUserIds = async (): Promise<Set<string>> => {
+  const { data } = await supabaseAdmin
+    .from("profiles")
+    .select("user_id")
+    .eq("role", "admin");
+
+  return new Set(
+    ((data ?? []) as Array<{ user_id: string }>)
+      .map((row) => row.user_id)
+      .filter(Boolean)
+  );
+};
+
+const loadAdminStripeSubscriptionIds = async (adminUserIds: Set<string>): Promise<Set<string>> => {
+  if (!adminUserIds.size) {
+    return new Set();
+  }
+
+  const { data } = await supabaseAdmin
+    .from("subscriptions")
+    .select("stripe_subscription_id")
+    .in("user_id", Array.from(adminUserIds));
+
+  return new Set(
+    ((data ?? []) as Array<{ stripe_subscription_id: string | null }>)
+      .map((row) => row.stripe_subscription_id)
+      .filter((id): id is string => Boolean(id))
+  );
+};
+
 const buildCoverage = async (mode: CoverageMode, currencyFilter: CurrencyFilter) => {
   const stripe = await loadStripeSnapshots(mode);
   const resolvedStripeRows = await resolveStripeRows(stripe.rows);
   const dbRowsAll = await loadDbSubscriptions();
-  const stripeSubscriptionIds = new Set(resolvedStripeRows.map((row) => row.stripeSubscriptionId));
+
+  // Admin kullanıcıları hesaplamadan çıkar.
+  const adminUserIds = await loadAdminUserIds();
+  const adminStripeSubIds = await loadAdminStripeSubscriptionIds(adminUserIds);
+
+  const nonAdminDbRows = dbRowsAll.filter(
+    (row) => !row.user_id || !adminUserIds.has(row.user_id)
+  );
+  const nonAdminStripeRows = resolvedStripeRows.filter((row) => {
+    const userId = row.resolvedUserId ?? row.userIdFromMetadata;
+    if (userId && adminUserIds.has(userId)) return false;
+    if (adminStripeSubIds.has(row.stripeSubscriptionId)) return false;
+    return true;
+  });
+
+  const stripeSubscriptionIds = new Set(nonAdminStripeRows.map((row) => row.stripeSubscriptionId));
 
   const dbRows =
     mode === "all"
-      ? dbRowsAll
-      : dbRowsAll.filter((row) => {
+      ? nonAdminDbRows
+      : nonAdminDbRows.filter((row) => {
           if (!row.stripe_subscription_id) {
             return true;
           }
@@ -873,7 +918,7 @@ const buildCoverage = async (mode: CoverageMode, currencyFilter: CurrencyFilter)
           return stripeSubscriptionIds.has(row.stripe_subscription_id);
         });
 
-  const merged = await mergeCoverage(dbRows, resolvedStripeRows, mode);
+  const merged = await mergeCoverage(dbRows, nonAdminStripeRows, mode);
   const normalizedRows = merged.rows.map((row) => ({
     ...row,
     currency: normalizeCurrency(row.currency),
