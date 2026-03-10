@@ -12,6 +12,7 @@ type ProfileRow = {
   user_id: string;
   email: string | null;
   full_name: string | null;
+  avatar_url?: string | null;
   phone?: string | null;
   role?: string | null;
   created_at?: string | null;
@@ -86,6 +87,7 @@ const isRecoverableProfileColumnError = (error: { message?: string } | null | un
   }
 
   return (
+    isMissingColumnError(error, "avatar_url") ||
     isMissingColumnError(error, "phone") ||
     isMissingColumnError(error, "updated_at") ||
     isMissingColumnError(error, "created_at")
@@ -118,6 +120,11 @@ const normalizeEmail = (value: unknown) => {
 
 const selectProfile = async (userId: string) => {
   const selectCandidates = [
+    "user_id, email, full_name, avatar_url, phone, role, created_at, updated_at",
+    "user_id, email, full_name, avatar_url, phone, role, created_at",
+    "user_id, email, full_name, avatar_url, phone, role",
+    "user_id, email, full_name, avatar_url, role, created_at",
+    "user_id, email, full_name, avatar_url, role",
     "user_id, email, full_name, phone, role, created_at, updated_at",
     "user_id, email, full_name, phone, role, created_at",
     "user_id, email, full_name, phone, role",
@@ -141,6 +148,7 @@ const selectProfile = async (userId: string) => {
 
       return {
         ...result.data,
+        avatar_url: result.data.avatar_url ?? null,
         phone: result.data.phone ?? null,
         created_at: result.data.created_at ?? null,
         updated_at: result.data.updated_at ?? null,
@@ -310,6 +318,7 @@ export async function GET(request: NextRequest) {
         userId: auth.user.id,
         email: profile?.email ?? auth.user.email ?? null,
         fullName: profile?.full_name ?? null,
+        avatarUrl: profile?.avatar_url ?? null,
         phone: profile?.phone ?? null,
         role: profile?.role ?? "user",
         createdAt: profile?.created_at ?? null,
@@ -439,6 +448,7 @@ export async function PATCH(request: NextRequest) {
         userId: auth.user.id,
         email: profile?.email ?? desiredEmail,
         fullName: profile?.full_name ?? fullName,
+        avatarUrl: profile?.avatar_url ?? null,
         phone: profile?.phone ?? phone,
         role: profile?.role ?? "user",
         createdAt: profile?.created_at ?? null,

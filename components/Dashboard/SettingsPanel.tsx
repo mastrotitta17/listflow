@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
@@ -9,6 +9,7 @@ import {
   BadgeCheck,
   CalendarClock,
   CreditCard,
+  ImagePlus,
   KeyRound,
   Loader2,
   QrCode,
@@ -16,6 +17,7 @@ import {
   Save,
   ShieldCheck,
   Sparkles,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
@@ -28,6 +30,7 @@ type ProfilePayload = {
   userId: string;
   email: string | null;
   fullName: string | null;
+  avatarUrl?: string | null;
   phone: string | null;
   role: string | null;
   createdAt: string | null;
@@ -83,7 +86,7 @@ type DeleteAccountResponse = {
   error?: string;
 };
 
-type SettingsSectionKey = "profile" | "subscription" | "security" | "account";
+type SettingsSectionKey = "profile" | "subscription" | "security";
 
 type TotpEnrollment = {
   factorId: string;
@@ -127,7 +130,7 @@ const resolveSettingsSection = (pathname: string | null): SettingsSectionKey => 
   }
 
   if (pathname.startsWith("/settings/account")) {
-    return "account";
+    return "security";
   }
 
   return "profile";
@@ -159,11 +162,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [subscriptions, setSubscriptions] = useState<SubscriptionPayload[]>([]);
   const [subscriptionMonths, setSubscriptionMonths] = useState<SubscriptionMonthPayload[]>([]);
   const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
 
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [isRemovingAvatar, setIsRemovingAvatar] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
   const [isChangingPassword, setIsChangingPassword] = useState(false);
@@ -180,6 +186,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [isVerifyingTotpSetup, setIsVerifyingTotpSetup] = useState(false);
   const [disableTotpCode, setDisableTotpCode] = useState("");
   const [isDisablingTotp, setIsDisablingTotp] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!loadingError) {
@@ -328,6 +335,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setFullName(payload.profile?.fullName ?? "");
       setEmail(payload.profile?.email ?? "");
       setPhone(payload.profile?.phone ?? "");
+      setAvatarUrl(payload.profile?.avatarUrl ?? null);
       setProfileMeta({
         userId: payload.profile?.userId ?? null,
         role: payload.profile?.role ?? null,
@@ -377,11 +385,78 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setFullName(payload.profile?.fullName ?? fullName);
       setEmail(payload.profile?.email ?? email);
       setPhone(payload.profile?.phone ?? phone);
+      setAvatarUrl(payload.profile?.avatarUrl ?? avatarUrl);
       setInfoMessage(t("settings.saveSuccess"));
     } catch (error) {
       setInfoMessage(error instanceof Error ? error.message : t("settings.saveFailed"));
     } finally {
       setIsSavingProfile(false);
+    }
+  };
+
+  const handleAvatarFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    if (!file) {
+      return;
+    }
+
+    setIsUploadingAvatar(true);
+    setInfoMessage(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("avatar", file);
+
+      const response = await fetch("/api/settings/avatar", {
+        method: "POST",
+        body: formData,
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        avatarUrl?: string | null;
+        error?: string;
+      };
+
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error || (isEn ? "Profile photo could not be uploaded." : "Profil fotoğrafı yüklenemedi."));
+      }
+
+      setAvatarUrl(payload.avatarUrl ?? null);
+      setInfoMessage(isEn ? "Profile photo updated." : "Profil fotoğrafı güncellendi.");
+    } catch (error) {
+      setInfoMessage(error instanceof Error ? error.message : (isEn ? "Profile photo could not be uploaded." : "Profil fotoğrafı yüklenemedi."));
+    } finally {
+      event.target.value = "";
+      setIsUploadingAvatar(false);
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    setIsRemovingAvatar(true);
+    setInfoMessage(null);
+
+    try {
+      const response = await fetch("/api/settings/avatar", {
+        method: "DELETE",
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        avatarUrl?: string | null;
+        error?: string;
+      };
+
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error || (isEn ? "Profile photo could not be removed." : "Profil fotoğrafı kaldırılamadı."));
+      }
+
+      setAvatarUrl(payload.avatarUrl ?? null);
+      setInfoMessage(isEn ? "Profile photo removed." : "Profil fotoğrafı kaldırıldı.");
+    } catch (error) {
+      setInfoMessage(error instanceof Error ? error.message : (isEn ? "Profile photo could not be removed." : "Profil fotoğrafı kaldırılamadı."));
+    } finally {
+      setIsRemovingAvatar(false);
     }
   };
 
@@ -692,12 +767,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         label: t("settings.securityTitle"),
         icon: ShieldCheck,
       },
-      {
-        key: "account" as const,
-        href: "/settings/account",
-        label: t("settings.deleteAccount"),
-        icon: AlertTriangle,
-      },
     ],
     [t]
   );
@@ -727,6 +796,28 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     return `data:image/svg+xml;utf-8,${encodeURIComponent(raw)}`;
   }, [totpEnrollment?.qrCode]);
 
+  const renderDeleteAccountBlock = () => (
+    <div className="mt-6 rounded-[24px] border border-red-500/30 bg-[#120f15] p-5">
+      <div className="mb-4 flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
+          <AlertTriangle className="h-5 w-5 text-red-300" />
+        </div>
+        <div>
+          <h3 className="text-xl font-black text-white">{t("settings.deleteAccount")}</h3>
+          <p className="text-xs text-zinc-300">{t("settings.deleteAccountWarning")}</p>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setShowDeleteAccountModal(true)}
+        className="w-full rounded-2xl bg-red-950/60 py-3.5 text-xs font-black uppercase tracking-widest text-white/70 transition-all hover:bg-red-500 hover:text-white cursor-pointer"
+      >
+        {t("settings.deleteAccount")}
+      </button>
+    </div>
+  );
+
   const renderProfileSection = () => (
     <section className="rounded-[28px] border border-zinc-200 p-6 dark:border-white/10 dark:bg-[#0e1320]">
       <div className="mb-6 flex items-center gap-3">
@@ -740,6 +831,68 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       </div>
 
       <form onSubmit={handleSaveProfile} className="space-y-4">
+        <div className="rounded-[22px] border border-white/10 bg-[#111a2d]/80 p-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-4">
+              <div className="relative flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[22px] border border-white/10 bg-linear-to-br from-indigo-500/20 to-cyan-500/10">
+                {avatarUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={avatarUrl} alt={fullName || email || "Avatar"} className="h-full w-full object-cover" />
+                ) : (
+                  <span className="text-xl font-black text-white">
+                    {(fullName || email || "LF")
+                      .split(/\s+/)
+                      .map((part) => part.charAt(0).toUpperCase())
+                      .join("")
+                      .slice(0, 2)}
+                  </span>
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
+                  {t("settings.profilePhoto")}
+                </p>
+                <p className="mt-1 text-sm font-semibold text-slate-200">
+                  {isEn ? "Visible on your dashboard account card." : "Dashboard oturum kartınızda görünür."}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {isEn ? "PNG, JPG or WEBP. Max 5 MB." : "PNG, JPG veya WEBP. En fazla 5 MB."}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:min-w-[240px]">
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={handleAvatarFileChange}
+              />
+              <button
+                type="button"
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={isUploadingAvatar || isRemovingAvatar}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-indigo-100 transition-all hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+              >
+                {isUploadingAvatar ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+                {isUploadingAvatar ? `${t("common.loading")}...` : t("settings.uploadProfilePhoto")}
+              </button>
+              {avatarUrl ? (
+                <button
+                  type="button"
+                  onClick={() => void handleRemoveAvatar()}
+                  disabled={isUploadingAvatar || isRemovingAvatar}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-red-100 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                >
+                  {isRemovingAvatar ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  {isRemovingAvatar ? `${t("common.loading")}...` : t("settings.removeProfilePhoto")}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
         <div>
           <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-zinc-400">
             {t("settings.fullName")}
@@ -786,42 +939,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           {isSavingProfile ? `${t("common.loading")}...` : t("settings.saveProfile")}
         </button>
       </form>
-
-      <div className="mt-5 rounded-2xl border border-zinc-200/80 p-4 dark:border-white/10 dark:bg-white/[0.02]">
-        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-400">
-          {isEn ? "Change Password" : "Şifre Değiştir"}
-        </p>
-        <p className="mt-1 text-xs text-zinc-500">
-          {isEn ? "Create a new password for your account." : "Hesabınız için yeni bir şifre oluşturun."}
-        </p>
-
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <input
-            value={newPassword}
-            onChange={(event) => setNewPassword(event.target.value)}
-            type="password"
-            placeholder={isEn ? "New password" : "Yeni şifre"}
-            className="w-full rounded-2xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-indigo-500 dark:border-white/10 dark:bg-white/5"
-          />
-          <input
-            value={newPasswordConfirm}
-            onChange={(event) => setNewPasswordConfirm(event.target.value)}
-            type="password"
-            placeholder={isEn ? "Confirm new password" : "Yeni şifre tekrar"}
-            className="w-full rounded-2xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-indigo-500 dark:border-white/10 dark:bg-white/5"
-          />
-        </div>
-
-        <button
-          type="button"
-          onClick={() => void handleChangePassword()}
-          disabled={isChangingPassword}
-          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 py-3 text-xs font-black uppercase tracking-widest text-indigo-100 transition-all hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-        >
-          {isChangingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-          {isChangingPassword ? `${t("common.loading")}...` : isEn ? "Update Password" : "Şifreyi Güncelle"}
-        </button>
-      </div>
     </section>
   );
 
@@ -1024,6 +1141,42 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   const renderSecuritySection = () => (
     <section className="rounded-[28px] border border-zinc-200 p-6 dark:border-white/10 dark:bg-[#0e1320]">
+      <div className="mb-5 rounded-2xl border border-zinc-200/80 p-4 dark:border-white/10 dark:bg-white/[0.02]">
+        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-400">
+          {isEn ? "Change Password" : "Şifre Değiştir"}
+        </p>
+        <p className="mt-1 text-xs text-zinc-500">
+          {isEn ? "Create a new password for your account." : "Hesabınız için yeni bir şifre oluşturun."}
+        </p>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <input
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+            type="password"
+            placeholder={isEn ? "New password" : "Yeni şifre"}
+            className="w-full rounded-2xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-indigo-500 dark:border-white/10 dark:bg-white/5"
+          />
+          <input
+            value={newPasswordConfirm}
+            onChange={(event) => setNewPasswordConfirm(event.target.value)}
+            type="password"
+            placeholder={isEn ? "Confirm new password" : "Yeni şifre tekrar"}
+            className="w-full rounded-2xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-indigo-500 dark:border-white/10 dark:bg-white/5"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void handleChangePassword()}
+          disabled={isChangingPassword}
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 py-3 text-xs font-black uppercase tracking-widest text-indigo-100 transition-all hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+        >
+          {isChangingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+          {isChangingPassword ? `${t("common.loading")}...` : isEn ? "Update Password" : "Şifreyi Güncelle"}
+        </button>
+      </div>
+
       <div className="mb-6 flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/10">
           <ShieldCheck className="h-5 w-5 text-cyan-300" />
@@ -1103,28 +1256,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </button>
         </div>
       ) : null}
-    </section>
-  );
 
-  const renderAccountSection = () => (
-    <section className="rounded-[28px] border border-red-500/30 p-6 dark:bg-[#120f15]">
-      <div className="mb-4 flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
-          <AlertTriangle className="h-5 w-5 text-red-300" />
-        </div>
-        <div>
-          <h3 className="text-xl font-black text-white">{t("settings.deleteAccount")}</h3>
-          <p className="text-xs text-zinc-300">{t("settings.deleteAccountWarning")}</p>
-        </div>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => setShowDeleteAccountModal(true)}
-        className="w-full rounded-2xl bg-red-950/60 py-3.5 text-xs font-black uppercase tracking-widest text-white/70 transition-all hover:bg-red-500 hover:text-white cursor-pointer"
-      >
-        {t("settings.deleteAccount")}
-      </button>
+      {renderDeleteAccountBlock()}
     </section>
   );
 
@@ -1141,7 +1274,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       return renderSecuritySection();
     }
 
-    return renderAccountSection();
+    return renderProfileSection();
   };
 
   return (

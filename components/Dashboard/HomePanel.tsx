@@ -27,6 +27,7 @@ type SummaryResponse = {
   profile: {
     fullName: string | null;
     email: string | null;
+    avatarUrl?: string | null;
     phone: string | null;
     isComplete: boolean;
   };
@@ -109,6 +110,17 @@ const statusLabel = (
     return locale === "en" ? "Renewal required" : "Yenileme gerekli";
   }
   return locale === "en" ? "Activation required" : "Aktivasyon gerekli";
+};
+
+const toInitials = (fullName: string | null, email: string | null) => {
+  const source = (fullName ?? "").trim() || (email ?? "").split("@")[0] || "LF";
+  const parts = source
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 2);
+
+  return parts.map((part) => part.charAt(0).toUpperCase()).join("") || source.slice(0, 2).toUpperCase();
 };
 
 export default function HomePanel() {
@@ -335,6 +347,28 @@ export default function HomePanel() {
                 ) : null}
               </div>
               <div>
+                <div className="mb-4 flex items-center gap-4">
+                  {data.profile.avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={data.profile.avatarUrl}
+                      alt={data.profile.fullName ?? data.profile.email ?? "Avatar"}
+                      className="h-16 w-16 shrink-0 rounded-2xl border border-white/10 object-cover shadow-[0_14px_40px_rgba(15,23,42,0.45)]"
+                    />
+                  ) : (
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-lg font-black text-white shadow-[0_14px_40px_rgba(15,23,42,0.45)]">
+                      {toInitials(data.profile.fullName, data.profile.email)}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-black uppercase tracking-[0.22em] text-slate-400">
+                      {locale === "en" ? "Account overview" : "Hesap özeti"}
+                    </p>
+                    <p className="truncate text-base font-semibold text-slate-200">
+                      {data.profile.email ?? "—"}
+                    </p>
+                  </div>
+                </div>
                 <p className="text-sm font-semibold text-slate-300">
                   {locale === "en" ? "Welcome back" : "Tekrar hoş geldin"}{data.profile.fullName ? `, ${data.profile.fullName}` : ""}.
                 </p>

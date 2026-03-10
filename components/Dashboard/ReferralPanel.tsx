@@ -16,6 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n/provider";
+import { supabase } from "@/lib/supabaseClient";
 import { toast } from "sonner";
 import { ReferralPanelSkeleton } from "@/components/loading/PageSkeletons";
 
@@ -46,6 +47,12 @@ type ReferralData = {
   stats: ReferralStats;
   conversions: Conversion[];
   rewards: Reward[];
+};
+
+type ReferralProfile = {
+  fullName: string | null;
+  email: string | null;
+  avatarUrl: string | null;
 };
 
 // ── Confetti burst (emoji particles) ──────────────────────────────────────────
@@ -132,6 +139,11 @@ const ProgressRing = ({
 const ReferralPanel: React.FC = () => {
   const { locale } = useI18n();
   const [data, setData] = useState<ReferralData | null>(null);
+  const [profile, setProfile] = useState<ReferralProfile>({
+    fullName: null,
+    email: null,
+    avatarUrl: null,
+  });
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
@@ -162,6 +174,68 @@ const ReferralPanel: React.FC = () => {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadProfile = async () => {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!user || !mounted) {
+          return;
+        }
+
+        let fullName =
+          (typeof user.user_metadata?.full_name === "string" ? user.user_metadata.full_name.trim() : "") ||
+          (typeof user.user_metadata?.display_name === "string" ? user.user_metadata.display_name.trim() : "") ||
+          null;
+
+        let avatarUrl =
+          typeof user.user_metadata?.avatar_url === "string" && user.user_metadata.avatar_url.trim()
+            ? user.user_metadata.avatar_url.trim()
+            : null;
+
+        try {
+          const { data: row } = await supabase
+            .from("profiles")
+            .select("full_name, avatar_url")
+            .eq("user_id", user.id)
+            .maybeSingle<{ full_name?: string | null; avatar_url?: string | null }>();
+
+          if (typeof row?.full_name === "string" && row.full_name.trim()) {
+            fullName = row.full_name.trim();
+          }
+
+          if (typeof row?.avatar_url === "string" && row.avatar_url.trim()) {
+            avatarUrl = row.avatar_url.trim();
+          }
+        } catch {
+          // metadata fallback is enough
+        }
+
+        if (!mounted) {
+          return;
+        }
+
+        setProfile({
+          fullName,
+          email: user.email ?? null,
+          avatarUrl,
+        });
+      } catch {
+        // no-op
+      }
+    };
+
+    void loadProfile();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleCopyLink = async () => {
     if (!referralUrl) return;
@@ -222,13 +296,27 @@ const ReferralPanel: React.FC = () => {
             </div>
 
             <div className="relative flex flex-col sm:flex-row items-start sm:items-center gap-6">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-indigo-600/20 border border-indigo-500/30 shadow-lg shadow-indigo-500/20">
-                <Gift className="h-8 w-8 text-indigo-300" />
-              </div>
+              {profile.avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={profile.avatarUrl}
+                  alt={profile.fullName ?? profile.email ?? "Avatar"}
+                  className="h-16 w-16 shrink-0 rounded-2xl border border-indigo-500/30 object-cover shadow-lg shadow-indigo-500/20"
+                />
+              ) : (
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-indigo-600/20 border border-indigo-500/30 shadow-lg shadow-indigo-500/20">
+                  <Gift className="h-8 w-8 text-indigo-300" />
+                </div>
+              )}
               <div className="flex-1 min-w-0">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-400 mb-1">
                   {isEn ? "Referral Program" : "Referral Programı"}
                 </p>
+                {profile.fullName || profile.email ? (
+                  <p className="mb-2 truncate text-sm font-semibold text-slate-300">
+                    {profile.fullName ?? profile.email}
+                  </p>
+                ) : null}
                 <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight leading-tight">
                   {isEn
                     ? "Invite Friends, Earn Rewards"

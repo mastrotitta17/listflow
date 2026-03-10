@@ -17,6 +17,7 @@ type ProfileRow = {
   user_id: string;
   email: string | null;
   full_name: string | null;
+  avatar_url?: string | null;
   phone?: string | null;
 };
 
@@ -42,6 +43,8 @@ const isMissingColumnError = (error: { message?: string } | null | undefined, co
 
 const loadProfile = async (userId: string) => {
   const selectCandidates = [
+    "user_id,email,full_name,avatar_url,phone",
+    "user_id,email,full_name,avatar_url",
     "user_id,email,full_name,phone",
     "user_id,email,full_name",
   ] as const;
@@ -57,7 +60,7 @@ const loadProfile = async (userId: string) => {
       return result.data ?? null;
     }
 
-    if (!isMissingColumnError(result.error, "phone")) {
+    if (!isMissingColumnError(result.error, "phone") && !isMissingColumnError(result.error, "avatar_url")) {
       throw new Error(result.error.message);
     }
   }
@@ -220,6 +223,7 @@ export async function GET(request: NextRequest) {
         profile: {
           fullName: profileFullName,
           email: profile?.email ?? user.email ?? null,
+          avatarUrl: profile?.avatar_url ?? null,
           phone: profilePhone,
           isComplete: Boolean(profileFullName && profilePhone),
         },
