@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import {
+  buildSubscriptionStoreIdResolver,
   filterSubscriptionsForStore,
   isSubscriptionActive,
   loadUserSubscriptions,
@@ -202,8 +203,17 @@ export async function GET(request: NextRequest) {
 
     const profileFullName = profile?.full_name?.trim() || null;
     const profilePhone = profile?.phone?.trim() || null;
+    const resolveStoreId = buildSubscriptionStoreIdResolver(
+      stores.map((store) => ({
+        id: store.id,
+        user_id: store.user_id,
+        store_name: store.store_name,
+      }))
+    );
     const storesWithState = stores.map((store) => {
-      const snapshot = summarizeStoreSubscriptions(filterSubscriptionsForStore(subscriptions, store.id));
+      const snapshot = summarizeStoreSubscriptions(
+        filterSubscriptionsForStore(subscriptions, store.id, { resolveStoreId })
+      );
       return {
         id: store.id,
         name: store.store_name,

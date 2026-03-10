@@ -5,6 +5,7 @@ import {
   type BillingPlan,
   type StripeMode,
 } from "@/lib/stripe/client";
+import { buildStoreAliasIndex, type StoreAliasReference } from "@/lib/subscriptions/store-resolution";
 import { serverEnv } from "@/lib/env/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
@@ -156,8 +157,34 @@ export const resolveStoreIdFromSubscription = (row: SettingsSubscriptionRow) => 
   return row.shop_id && isUuid(row.shop_id) ? row.shop_id : null;
 };
 
-export const filterSubscriptionsForStore = (rows: SettingsSubscriptionRow[], storeId: string) => {
-  return rows.filter((row) => resolveStoreIdFromSubscription(row) === storeId);
+export type SubscriptionStoreIdResolver = (row: SettingsSubscriptionRow) => string | null;
+
+export const buildSubscriptionStoreIdResolver = (stores: StoreAliasReference[]): SubscriptionStoreIdResolver => {
+  const aliasIndex = buildStoreAliasIndex(stores);
+
+  return (row: SettingsSubscriptionRow) => {
+    const explicit = resolveStoreIdFromSubscription(row);
+    if (explicit) {
+      return explicit;
+    }
+
+    return aliasIndex.resolve({
+      user_id: row.user_id ?? null,
+      store_id: row.store_id ?? null,
+      shop_id: row.shop_id ?? null,
+    });
+  };
+};
+
+export const filterSubscriptionsForStore = (
+  rows: SettingsSubscriptionRow[],
+  storeId: string,
+  options?: {
+    resolveStoreId?: SubscriptionStoreIdResolver;
+  }
+) => {
+  const resolveStoreId = options?.resolveStoreId ?? resolveStoreIdFromSubscription;
+  return rows.filter((row) => resolveStoreId(row) === storeId);
 };
 
 export const loadUserSubscriptions = async (userId: string) => {

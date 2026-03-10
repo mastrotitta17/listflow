@@ -3,6 +3,7 @@ import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { resolveCheckoutPriceId } from "@/lib/stripe/plans";
 import {
+  buildSubscriptionStoreIdResolver,
   filterSubscriptionsForStore,
   loadUserSubscriptions,
   resolveStripeBillingIntervalForSubscription,
@@ -21,6 +22,7 @@ type RenewalBody = {
 type StoreRow = {
   id: string;
   user_id: string;
+  store_name?: string | null;
 };
 
 const getAccessToken = (request: NextRequest) => request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
@@ -46,7 +48,7 @@ export async function POST(request: NextRequest) {
 
     const storeResult = await supabaseAdmin
       .from("stores")
-      .select("id, user_id")
+      .select("id, user_id, store_name")
       .eq("id", storeId)
       .eq("user_id", user.id)
       .maybeSingle<StoreRow>();
@@ -60,7 +62,14 @@ export async function POST(request: NextRequest) {
     }
 
     const subscriptions = await loadUserSubscriptions(user.id);
-    const matched = filterSubscriptionsForStore(subscriptions, storeId);
+    const resolveStoreId = buildSubscriptionStoreIdResolver([
+      {
+        id: storeResult.data.id,
+        user_id: storeResult.data.user_id,
+        store_name: storeResult.data.store_name ?? null,
+      },
+    ]);
+    const matched = filterSubscriptionsForStore(subscriptions, storeId, { resolveStoreId });
     const snapshot = summarizeStoreSubscriptions(matched);
 
     if (snapshot.renewalState === "activation_required") {

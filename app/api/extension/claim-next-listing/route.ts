@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { resolveExtensionUser } from "@/lib/extension/api-auth";
 import { claimNextListingForUser } from "@/lib/extension/listing-queue";
 import {
+  buildSubscriptionStoreIdResolver,
   filterSubscriptionsForStore,
   loadUserSubscriptions,
   summarizeStoreSubscriptions,
@@ -28,7 +29,7 @@ export async function POST(request: NextRequest) {
     const subscriptions = await loadUserSubscriptions(auth.user.id);
     const { data: storesData, error: storesError } = await supabaseAdmin
       .from("stores")
-      .select("id, store_name")
+      .select("id, user_id, store_name")
       .eq("user_id", auth.user.id)
       .order("created_at", { ascending: true });
 
@@ -36,9 +37,18 @@ export async function POST(request: NextRequest) {
       throw new Error(storesError.message);
     }
 
-    const stores = (storesData ?? []) as Array<{ id: string; store_name: string | null }>;
+    const stores = (storesData ?? []) as Array<{ id: string; user_id: string | null; store_name: string | null }>;
+    const resolveStoreId = buildSubscriptionStoreIdResolver(
+      stores.map((store) => ({
+        id: store.id,
+        user_id: store.user_id ?? auth.user.id,
+        store_name: store.store_name ?? null,
+      }))
+    );
     const summaries = stores.map((store) => {
-      const summary = summarizeStoreSubscriptions(filterSubscriptionsForStore(subscriptions, store.id));
+      const summary = summarizeStoreSubscriptions(
+        filterSubscriptionsForStore(subscriptions, store.id, { resolveStoreId })
+      );
       return {
         storeId: store.id,
         storeName: store.store_name ?? store.id,

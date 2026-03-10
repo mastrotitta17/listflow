@@ -1603,6 +1603,12 @@ export const resetFailedListingForUser = async (args: {
   const belongs = rowBelongsToUser(listing, { userId: args.userId, allowedClientIds: allStoreAliases });
   if (!belongs) return { reset: false, reason: "not_owner" };
 
+  // Etsy'e yüklenmiş kanıt varsa (etsy_listing_id / etsy_listing_url / completed_at)
+  // listing sıfırlanmamalı — duplicate upload'ı önlemek için server-side son güvence.
+  if (hasRowCompletionProof(listing)) {
+    return { reset: false, reason: "already_uploaded" };
+  }
+
   const storeId = readClientId(listing);
   const resolvedListingIdentifier = normalizeString(readFirstString(listing, ["id", "key"])) || listingId || listingKey;
   if (await hasConsumedExtensionAutoRetry({ listingId: resolvedListingIdentifier, storeId, userId: args.userId })) {
@@ -1747,6 +1753,12 @@ export const resetFailedListingForClient = async (args: {
 
   const rowClientId = readClientId(listing);
   if (rowClientId && rowClientId !== clientId) return { reset: false, reason: "client_mismatch" };
+
+  // Etsy'e yüklenmiş kanıt varsa (etsy_listing_id / etsy_listing_url / completed_at)
+  // listing sıfırlanmamalı — duplicate upload'ı önlemek için server-side son güvence.
+  if (hasRowCompletionProof(listing)) {
+    return { reset: false, reason: "already_uploaded" };
+  }
 
   const resolvedListingIdentifier = normalizeString(readFirstString(listing, ["id", "key"])) || listingId || listingKey;
   if (await hasConsumedExtensionAutoRetry({ listingId: resolvedListingIdentifier, storeId: clientId })) {

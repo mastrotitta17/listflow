@@ -28,6 +28,7 @@ type StripeSubscriptionSnapshot = {
   stripeSubscriptionId: string;
   stripeCustomerId: string | null;
   stripeCustomerEmail: string | null;
+  cancelAtPeriodEnd: boolean;
   status: string;
   plan: BillingPlan | null;
   interval: BillingInterval | null;
@@ -98,6 +99,17 @@ const parseCurrencyFilter = (value: string | null): CurrencyFilter => {
 
 const normalizeCurrency = (value: string | null | undefined) => {
   return (value ?? "usd").toLowerCase();
+};
+
+const isCurrentSubscriptionStatus = (value: string | null | undefined) => {
+  const normalized = (value ?? "").trim().toLowerCase();
+  return (
+    normalized === "active" ||
+    normalized === "trialing" ||
+    normalized === "past_due" ||
+    normalized === "incomplete" ||
+    normalized === "unpaid"
+  );
 };
 
 const toStripeModes = (mode: CoverageMode): StripeMode[] => {
@@ -568,6 +580,7 @@ const listStripeSubscriptionsForMode = async (mode: StripeMode): Promise<StripeS
         stripeSubscriptionId: subscription.id,
         stripeCustomerId: typeof subscription.customer === "string" ? subscription.customer : customer?.id ?? null,
         stripeCustomerEmail: customer?.email ?? null,
+        cancelAtPeriodEnd: subscription.cancel_at_period_end,
         status: subscription.status,
         plan: resolvePlanFromSubscription(subscription, planByPriceId),
         interval: recurringInterval,
@@ -768,6 +781,11 @@ const mergeCoverage = async (
     const paymentSummary = dbRow.stripe_subscription_id
       ? latestPaymentBySubscriptionId.get(dbRow.stripe_subscription_id) ?? null
       : null;
+    const paymentCurrency = paymentSummary?.currency ? normalizeCurrency(paymentSummary.currency) : null;
+    // Coverage ekranında aktif/trialing abonelikler tarihsel TRY ödeme satırlarından etkilenmemeli.
+    const dbDisplayCurrency = isCurrentSubscriptionStatus(dbRow.status)
+      ? "usd"
+      : (paymentCurrency ?? "usd");
 
     mergedByKey.set(key, {
       source: "supabase",
@@ -775,7 +793,7 @@ const mergeCoverage = async (
       stripeSubscriptionId: dbRow.stripe_subscription_id ?? null,
       stripeCustomerId: dbRow.stripe_customer_id ?? null,
       amountCents: paymentSummary?.amountCents ?? inferPlanDefaultCents(dbRow.plan),
-      currency: paymentSummary?.currency ?? "usd",
+      currency: dbDisplayCurrency,
       userId: dbRow.user_id ?? null,
       userEmail: dbRow.user_id ? emailByUserId.get(dbRow.user_id) ?? null : null,
       storeId: dbRow.store_id ?? null,
@@ -823,7 +841,12 @@ const mergeCoverage = async (
       stripeSubscriptionId: stripeRow.stripeSubscriptionId,
       stripeCustomerId: stripeRow.stripeCustomerId ?? current.stripeCustomerId,
       amountCents: stripeRow.amountCents ?? current.amountCents,
-      currency: stripeRow.currency ?? current.currency,
+      currency:
+        stripeRow.currency
+          ? normalizeCurrency(stripeRow.currency)
+          : isCurrentSubscriptionStatus(stripeRow.status)
+            ? "usd"
+            : current.currency,
       userId: current.userId ?? stripeRow.resolvedUserId,
       userEmail: current.userEmail ?? inferredEmail ?? null,
       storeId: current.storeId ?? stripeRow.resolvedStoreId,
@@ -905,7 +928,58 @@ const buildCoverage = async (mode: CoverageMode, currencyFilter: CurrencyFilter)
     return true;
   });
 
-  const stripeSubscriptionIds = new Set(nonAdminStripeRows.map((row) => row.stripeSubscriptionId));
+  const activeUsdIdentityKeys = new Set<string>();
+  for (const row of nonAdminStripeRows) {
+    const status = (row.status ?? "").toLowerCase();
+    if (status !== "active" && status !== "trialing") {
+      continue;
+    }
+
+    if (normalizeCurrency(row.currency) !== "usd") {
+      continue;
+    }
+
+    if (row.cancelAtPeriodEnd) {
+      continue;
+    }
+
+    const identityKey =
+      row.resolvedUserId ??
+      normalizeEmail(row.stripeCustomerEmail) ??
+      row.stripeCustomerId ??
+      null;
+    if (identityKey) {
+      activeUsdIdentityKeys.add(identityKey);
+    }
+  }
+
+  const filteredStripeRows = nonAdminStripeRows.filter((row) => {
+    const status = (row.status ?? "").toLowerCase();
+    if (status !== "active" && status !== "trialing") {
+      return true;
+    }
+
+    if (normalizeCurrency(row.currency) !== "try") {
+      return true;
+    }
+
+    if (!row.cancelAtPeriodEnd) {
+      return true;
+    }
+
+    const identityKey =
+      row.resolvedUserId ??
+      normalizeEmail(row.stripeCustomerEmail) ??
+      row.stripeCustomerId ??
+      null;
+    if (!identityKey) {
+      return true;
+    }
+
+    return !activeUsdIdentityKeys.has(identityKey);
+  });
+
+  const stripeSubscriptionIds = new Set(filteredStripeRows.map((row) => row.stripeSubscriptionId));
 
   const dbRows =
     mode === "all"
@@ -918,7 +992,7 @@ const buildCoverage = async (mode: CoverageMode, currencyFilter: CurrencyFilter)
           return stripeSubscriptionIds.has(row.stripe_subscription_id);
         });
 
-  const merged = await mergeCoverage(dbRows, nonAdminStripeRows, mode);
+  const merged = await mergeCoverage(dbRows, filteredStripeRows, mode);
   const normalizedRows = merged.rows.map((row) => ({
     ...row,
     currency: normalizeCurrency(row.currency),

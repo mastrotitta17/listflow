@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import {
+  buildSubscriptionStoreIdResolver,
   filterSubscriptionsForStore,
   loadUserSubscriptions,
   summarizeStoreSubscriptions,
@@ -45,9 +46,18 @@ export async function GET(request: NextRequest) {
     }
 
     const stores = (storesResult.data ?? []) as StoreRow[];
+    const resolveStoreId = buildSubscriptionStoreIdResolver(
+      stores.map((store) => ({
+        id: store.id,
+        user_id: store.user_id,
+        store_name: store.store_name,
+      }))
+    );
     const expiredStores = stores
       .map((store) => {
-        const summary = summarizeStoreSubscriptions(filterSubscriptionsForStore(subscriptions, store.id));
+        const summary = summarizeStoreSubscriptions(
+          filterSubscriptionsForStore(subscriptions, store.id, { resolveStoreId })
+        );
         if (summary.renewalState !== "renewal_required") {
           return null;
         }
