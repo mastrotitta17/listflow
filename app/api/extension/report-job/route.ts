@@ -94,6 +94,17 @@ export async function POST(request: NextRequest) {
       publishProof,
     });
 
+    if (!result.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: result.reason || "listing_report_failed",
+          result,
+        },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json(
       {
         ok: true,

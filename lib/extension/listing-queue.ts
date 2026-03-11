@@ -1126,10 +1126,6 @@ const buildFallbackListingInsertPayloadFromReport = (
 ) => {
   const nowIso = new Date().toISOString();
   const source = toRecord(args.listingPayload) ?? {};
-  const generatedFallbackId =
-    typeof crypto?.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `lf_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
   const listingIdFromPayload = normalizeString(source.listing_id ?? source.id);
   const listingKeyFromPayload = normalizeString(source.listing_key ?? source.key);
@@ -1141,13 +1137,22 @@ const buildFallbackListingInsertPayloadFromReport = (
     normalizeString(source.client_id ?? source.clientId ?? source.store_id ?? source.storeId) ||
     null;
 
+  const stableListingId =
+    listingIdFromPayload ||
+    (listingIdFromArgs && !/^\d{5,}$/.test(listingIdFromArgs) ? listingIdFromArgs : "");
+  const stableListingKey = listingKeyFromPayload || listingKeyFromArgs;
+
+  if (!clientId || (!stableListingId && !stableListingKey)) {
+    return null;
+  }
+
   const tags = dedupeStrings(
     parseTagList(readFirstValue(source, ["tags", "tag_list", "tag_values", "keywords"]))
   ).slice(0, 13);
 
   const payload: RowRecord = {
-    id: listingIdFromPayload || generatedFallbackId,
-    key: listingKeyFromPayload || listingKeyFromArgs || undefined,
+    id: stableListingId || undefined,
+    key: stableListingKey || undefined,
     client_id: clientId || undefined,
     store_id: clientId || undefined,
     user_id: args.userId || undefined,
@@ -1211,7 +1216,7 @@ const buildFallbackListingInsertPayloadFromReport = (
 const upsertMissingListingFromReport = async (args: ReportArgs) => {
   const storeContext = args.clientId ? await loadStoreCategoryContextByClientId(args.clientId) : null;
   let insertPayload = buildFallbackListingInsertPayloadFromReport(args, storeContext?.category ?? null);
-  if (Object.keys(insertPayload).length === 0) {
+  if (!insertPayload || Object.keys(insertPayload).length === 0) {
     return null;
   }
 
