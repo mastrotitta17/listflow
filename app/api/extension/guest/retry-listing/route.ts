@@ -34,8 +34,15 @@ export async function POST(request: NextRequest) {
       reason: "extension_auto_retry",
     });
 
+    if (!reset.reset) {
+      return NextResponse.json(
+        { error: reset.reason || "Could not retry guest listing", ...reset },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json(
-      { ok: true, reset },
+      { ok: true, ...reset },
       { headers: { "cache-control": "no-store" } }
     );
   } catch (error) {

@@ -43,6 +43,13 @@ export async function POST(request: NextRequest) {
       reason: "dashboard_products_manual_requeue",
     });
 
+    if (!requeued.reset) {
+      return NextResponse.json(
+        { error: requeued.reason || "Ürün tekrar sıraya alınamadı." },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json(
       {
         ok: true,

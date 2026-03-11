@@ -163,7 +163,9 @@ export const listingCategoryMatchesStoreProfile = (
   }
 
   if (profile.strict.size > 0) {
-    return profile.strict.has(normalized);
+    return Array.from(profile.strict).some(
+      (needle) => needle === normalized || needle.includes(normalized) || normalized.includes(needle)
+    );
   }
 
   if (profile.fallback.size > 0) {

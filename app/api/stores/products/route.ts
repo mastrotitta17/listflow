@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
 import { normalizePublicAssetUrl } from "@/lib/assets/public-url";
+import { deriveListingRuntimeStatus } from "@/lib/extension/listing-proof";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -120,27 +121,6 @@ const toPositiveInt = (value: string | null, fallback: number) => {
 };
 
 const toTrimmed = (value: unknown) => (typeof value === "string" ? value.trim() : "");
-
-const resolveProductStatus = (row: ListingRow) => {
-  const rawStatus = toTrimmed(row.status ?? row.listing_status ?? "") || "pending";
-  const normalized = rawStatus.toLowerCase();
-  const hasPublishRefs = Boolean(
-    toTrimmed(row.etsy_listing_id) ||
-      toTrimmed(row.etsy_listing_url) ||
-      toTrimmed(row.etsy_store_link) ||
-      toTrimmed(row.publish_proof)
-  );
-
-  if (hasPublishRefs) {
-    return "completed";
-  }
-
-  if (["done", "published", "uploaded", "success", "complete", "completed"].includes(normalized)) {
-    return "completed";
-  }
-
-  return rawStatus;
-};
 
 const loadOwnedStores = async (userId: string) => {
   const candidates = [
@@ -261,25 +241,34 @@ export async function GET(request: NextRequest) {
       throw new Error(lastError);
     }
 
-    const rows = (data ?? []).map((row) => ({
-      id: row.id,
-      key: row.key ?? null,
-      title: row.title ?? "Untitled",
-      description: row.description ?? "",
-      imageUrl: normalizeProductImageUrl(row.image_1_url) ?? null,
-      images: [
-        normalizeProductImageUrl(row.image_1_url) ?? null,
-        normalizeProductImageUrl(row.image_2_url) ?? null,
-        normalizeProductImageUrl(row.image_3_url) ?? null,
-      ].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value) === index),
-      price: Number.isFinite(row.price ?? NaN) ? row.price : 0,
-      quantity: row.quantity ?? 0,
-      status: resolveProductStatus(row),
-      tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0) : [],
-      category: row.category ?? null,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    const rows = (data ?? []).map((row) => {
+      const derivedStatus = deriveListingRuntimeStatus(
+        row as unknown as Record<string, unknown>,
+        row.status ?? row.listing_status
+      );
+
+      return {
+        id: row.id,
+        key: row.key ?? null,
+        title: row.title ?? "Untitled",
+        description: row.description ?? "",
+        imageUrl: normalizeProductImageUrl(row.image_1_url) ?? null,
+        images: [
+          normalizeProductImageUrl(row.image_1_url) ?? null,
+          normalizeProductImageUrl(row.image_2_url) ?? null,
+          normalizeProductImageUrl(row.image_3_url) ?? null,
+        ].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value) === index),
+        price: Number.isFinite(row.price ?? NaN) ? row.price : 0,
+        quantity: row.quantity ?? 0,
+        status: derivedStatus.status,
+        manualReview: derivedStatus.manualReview,
+        manualReviewReason: derivedStatus.manualReviewReason,
+        tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0) : [],
+        category: row.category ?? null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
 
     const total = count ?? rows.length;
     const totalPages = total > 0 ? Math.ceil(total / pageSize) : 1;

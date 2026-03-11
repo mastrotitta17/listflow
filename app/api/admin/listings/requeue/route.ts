@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { notFoundResponse, requireAdminRequest } from "@/lib/auth/admin-request";
+import { requeueListingForClient } from "@/lib/extension/listing-queue";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type ListingRow = Record<string, unknown>;
 
 type RequeueBody = {
   listing_id?: unknown;
@@ -13,61 +12,6 @@ type RequeueBody = {
 };
 
 const toTrimmed = (value: unknown) => (typeof value === "string" ? value.trim() : "");
-
-const buildRequeuePayload = (row: ListingRow) => {
-  const payload: Record<string, unknown> = {};
-  const nowIso = new Date().toISOString();
-
-  if (Object.prototype.hasOwnProperty.call(row, "status")) {
-    payload.status = "pending";
-  }
-  if (Object.prototype.hasOwnProperty.call(row, "listing_status")) {
-    payload.listing_status = "pending";
-  }
-
-  if (Object.prototype.hasOwnProperty.call(row, "updated_at")) {
-    payload.updated_at = nowIso;
-  }
-  if (Object.prototype.hasOwnProperty.call(row, "manual_requeue_requested_at")) {
-    payload.manual_requeue_requested_at = nowIso;
-  }
-
-  const clearColumns = [
-    "processed_at",
-    "completed_at",
-    "claimed_at",
-    "claimed_by_user_id",
-    "claimed_by",
-    "last_error",
-    "error",
-    "etsy_listing_id",
-    "etsy_listing_url",
-    "etsy_store_link",
-    "publish_proof",
-  ];
-
-  for (const column of clearColumns) {
-    if (Object.prototype.hasOwnProperty.call(row, column)) {
-      payload[column] = null;
-    }
-  }
-
-  return payload;
-};
-
-const loadListing = async (identifier: { column: "id" | "key"; value: string }) => {
-  const query = await supabaseAdmin
-    .from("listing")
-    .select("*")
-    .eq(identifier.column, identifier.value)
-    .maybeSingle<ListingRow>();
-
-  if (query.error) {
-    return { row: null as ListingRow | null, error: query.error.message || "Could not load listing" };
-  }
-
-  return { row: query.data ?? null, error: null as string | null };
-};
 
 export async function POST(request: NextRequest) {
   const admin = await requireAdminRequest(request);
@@ -87,31 +31,43 @@ export async function POST(request: NextRequest) {
     ? ({ column: "id", value: listingId } as const)
     : ({ column: "key", value: listingKey } as const);
 
-  const loaded = await loadListing(identifier);
+  const loaded = await supabaseAdmin
+    .from("listing")
+    .select("id, key, client_id")
+    .eq(identifier.column, identifier.value)
+    .maybeSingle<{ id?: string | null; key?: string | null; client_id?: string | null }>();
+
   if (loaded.error) {
-    return NextResponse.json({ error: loaded.error }, { status: 500 });
+    return NextResponse.json({ error: loaded.error.message || "Could not load listing" }, { status: 500 });
   }
 
-  if (!loaded.row) {
+  if (!loaded.data) {
     return NextResponse.json({ error: "Listing not found" }, { status: 404 });
   }
 
-  const payload = buildRequeuePayload(loaded.row);
-  const updated = await supabaseAdmin
-    .from("listing")
-    .update(payload)
-    .eq(identifier.column, identifier.value)
-    .select("*")
-    .maybeSingle<ListingRow>();
+  const clientId = toTrimmed(loaded.data.client_id);
+  if (!clientId) {
+    return NextResponse.json({ error: "Listing client_id bulunamadı" }, { status: 400 });
+  }
 
-  if (updated.error) {
-    return NextResponse.json({ error: updated.error.message || "Could not requeue listing" }, { status: 500 });
+  const updated = await requeueListingForClient({
+    clientId,
+    listingId: listingId || null,
+    listingKey: listingKey || null,
+    reason: "admin_manual_requeue",
+  });
+
+  if (!updated.reset) {
+    return NextResponse.json(
+      { error: updated.reason || "Listing tekrar sıraya alınamadı." },
+      { status: 409 }
+    );
   }
 
   return NextResponse.json(
     {
       ok: true,
-      row: updated.data ?? null,
+      row: updated,
       message: "Listing yeniden kuyruğa alındı.",
     },
     {

@@ -5,6 +5,13 @@ import {
   resolveProductCandidateForCategory,
   type ProductMatchCandidate,
 } from "@/lib/stores/product-resolution";
+import {
+  deriveListingRuntimeStatus,
+  isValidEtsyListingId,
+  isValidPublishedListingUrl,
+  normalizeProofString,
+  resolveListingProofState,
+} from "@/lib/extension/listing-proof";
 
 type RowRecord = Record<string, unknown>;
 
@@ -24,11 +31,19 @@ type ClaimArgs = {
   forceRecover?: boolean;
 };
 
-type ClaimResult = {
-  listing: RowRecord;
-  identifier: ListingIdentifier | null;
-  listingPayload: RowRecord;
-};
+type ClaimResult =
+  | {
+      ok: true;
+      listing: RowRecord;
+      identifier: ListingIdentifier | null;
+      listingPayload: RowRecord;
+    }
+  | {
+      ok: false;
+      reason: "NO_ELIGIBLE_LISTING" | "MISMATCHED_LISTINGS_PRESENT";
+      mismatchedCount: number;
+      candidateCount: number;
+    };
 
 const PENDING_STATUSES = new Set([
   "",
@@ -39,11 +54,24 @@ const PENDING_STATUSES = new Set([
   "draft",
   "todo",
 ]);
-const STALE_PROCESSING_TTL_MS = 60 * 1000;
-const SELF_RETRY_PROCESSING_TTL_MS = 3 * 1000;
-const STUCK_PROCESSING_FORCE_RECOVER_MS = 2 * 60 * 1000;
-const ORPHAN_PROCESSING_RECOVER_MS = 30 * 1000;
+const PROCESSING_LEASE_TTL_MS = 30 * 60 * 1000;
 const EXTENSION_AUTO_RETRY_EVENT = "listing_auto_retry_requeued";
+const EXACT_RETRY_ALLOWED_STATUSES = new Set([
+  "",
+  "pending",
+  "queued",
+  "ready",
+  "new",
+  "draft",
+  "todo",
+  "failed",
+  "processing",
+  "error",
+  "aborted",
+  "cancelled",
+  "canceled",
+  "manual_review",
+]);
 
 const normalizeString = (value: unknown) => {
   if (typeof value !== "string") {
@@ -115,14 +143,7 @@ const parseDateMs = (value: unknown) => {
   return Number.isNaN(ms) ? null : ms;
 };
 
-const hasRowCompletionProof = (row: RowRecord) => {
-  const listingId = readFirstString(row, ["etsy_listing_id"]);
-  const listingUrl = readFirstString(row, ["etsy_listing_url", "etsy_store_link"]);
-  const completedAt = parseDateMs(row.completed_at);
-  const hasUrlProof = Boolean(listingUrl && !/\/listing-editor\//i.test(listingUrl));
-  const hasIdProof = Boolean(listingId);
-  return Boolean(completedAt || hasIdProof || hasUrlProof);
-};
+const hasRowCompletionProof = (row: RowRecord) => resolveListingProofState(row).hasValidProof;
 
 const hasConsumedExtensionAutoRetry = async (args: {
   listingId: string;
@@ -218,6 +239,23 @@ const readClientId = (row: RowRecord) => readFirstString(row, ["client_id", "cli
 
 const readUserId = (row: RowRecord) => readFirstString(row, ["user_id", "owner_user_id"]);
 
+const getRowRuntimeStatus = (row: RowRecord) =>
+  deriveListingRuntimeStatus(row, row.status ?? row.listing_status).status.toLowerCase();
+
+const isProcessingLeaseExpired = (row: RowRecord) => {
+  const leaseStartedAt =
+    parseDateMs(row.claimed_at) ??
+    parseDateMs(row.updated_at) ??
+    parseDateMs(row.processed_at) ??
+    parseDateMs(row.created_at);
+
+  if (!leaseStartedAt) {
+    return true;
+  }
+
+  return Date.now() - leaseStartedAt > PROCESSING_LEASE_TTL_MS;
+};
+
 const inferStatusFieldName = (row: RowRecord) => {
   if (Object.prototype.hasOwnProperty.call(row, "status")) {
     return "status";
@@ -228,7 +266,7 @@ const inferStatusFieldName = (row: RowRecord) => {
   return null;
 };
 
-const isRowPending = (row: RowRecord, options: { userId?: string } = {}) => {
+const isRowPending = (row: RowRecord) => {
   if (hasRowCompletionProof(row)) {
     return false;
   }
@@ -238,31 +276,9 @@ const isRowPending = (row: RowRecord, options: { userId?: string } = {}) => {
     return true;
   }
 
-  const status = normalizeStatus(row[statusField]);
+  const status = getRowRuntimeStatus(row);
   if (PENDING_STATUSES.has(status)) {
     return true;
-  }
-
-  if (status === "processing") {
-    const rowClaimedByUserId = readFirstString(row, ["claimed_by_user_id", "claimed_by"]);
-    const claimedAt =
-      parseDateMs(row.claimed_at) ??
-      parseDateMs(row.updated_at) ??
-      parseDateMs(row.processed_at) ??
-      parseDateMs(row.created_at);
-    if (
-      options.userId &&
-      rowClaimedByUserId &&
-      rowClaimedByUserId === options.userId &&
-      claimedAt &&
-      Date.now() - claimedAt > SELF_RETRY_PROCESSING_TTL_MS
-    ) {
-      return true;
-    }
-
-    if (claimedAt && Date.now() - claimedAt > STALE_PROCESSING_TTL_MS) {
-      return true;
-    }
   }
 
   return false;
@@ -337,6 +353,7 @@ const buildUpdatePayloadForReport = (
     error?: string | null;
     etsyListingId?: string | null;
     etsyListingUrl?: string | null;
+    publishProof?: string | null;
   }
 ) => {
   const nowIso = new Date().toISOString();
@@ -348,7 +365,7 @@ const buildUpdatePayloadForReport = (
 
   addIfPresent(row, "updated_at", nowIso, payload);
   addIfPresent(row, "processed_at", nowIso, payload);
-  addIfPresent(row, "completed_at", args.status === "completed" ? nowIso : row.completed_at, payload);
+  addIfPresent(row, "completed_at", args.status === "completed" ? nowIso : null, payload);
   if (args.status !== "processing") {
     addIfPresent(row, "claimed_at", null, payload);
     addIfPresent(row, "claimed_by_user_id", null, payload);
@@ -359,6 +376,7 @@ const buildUpdatePayloadForReport = (
   addIfPresent(row, "etsy_listing_id", args.etsyListingId ?? row.etsy_listing_id ?? null, payload);
   addIfPresent(row, "etsy_listing_url", args.etsyListingUrl ?? row.etsy_listing_url ?? null, payload);
   addIfPresent(row, "etsy_store_link", args.etsyListingUrl ?? row.etsy_store_link ?? null, payload);
+  addIfPresent(row, "publish_proof", args.publishProof ?? row.publish_proof ?? null, payload);
 
   return payload;
 };
@@ -890,7 +908,7 @@ const updateRowByIdentifier = async (identifier: ListingIdentifier, payload: Row
   }
 };
 
-export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimResult | null> => {
+export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimResult> => {
   const preferredClientId = normalizeString(args.preferredClientId);
   const {
     allAliases: allStoreAliases,
@@ -902,7 +920,12 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
 
   if (preferredClientId) {
     if (!allStoreAliases.has(preferredClientId)) {
-      return null;
+      return {
+        ok: false,
+        reason: "NO_ELIGIBLE_LISTING",
+        mismatchedCount: 0,
+        candidateCount: 0,
+      };
     }
 
     // Mağaza seçildiyse claim yalnızca seçili mağazanın tüm alias kapsamı içinde yapılır.
@@ -922,150 +945,63 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
   const targetedRows = preferredAliases ? await loadRowsForPreferredClientIds(preferredAliases) : [];
   const rows = targetedRows.length > 0 ? targetedRows : await loadAllListingRows();
 
-  const pickEligibleRows = (options: { strictOwnership: boolean; ignoreCategory?: boolean }) =>
-    rows
-      .filter((row) => {
-        if (preferredAliases) {
-          // readClientId, client_id → clientId → store_id sırasıyla okur.
-          // Ama bir listing store_id sorgusundan gelmişse client_id farklı olabilir.
-          // Bu yüzden her iki alan da ayrı ayrı kontrol edilmeli.
-          const rowClientId = readFirstString(row, ["client_id", "clientId"]);
-          const rowStoreId = readFirstString(row, ["store_id"]);
-          const matchesAlias =
-            (rowClientId && preferredAliases.has(rowClientId)) ||
-            (rowStoreId && preferredAliases.has(rowStoreId));
-          if (!matchesAlias) {
-            return false;
-          }
-        }
-
-        if (!options.strictOwnership && preferredAliases) {
-          return true;
-        }
-
-        return rowBelongsToUser(row, { userId: args.userId, allowedClientIds });
-      })
-      .filter((row) => {
-        if (options.ignoreCategory) {
-          return true;
-        }
-
-        if (!storeCategoryProfile) {
-          return true;
-        }
-
-        if (preferredAliases) {
-          const rowClientId = readClientId(row);
-          if (rowClientId && preferredAliases.has(rowClientId) && hasManualRequeueRequest(row)) {
-            return true;
-          }
-        }
-
-        return listingCategoryMatchesStoreProfile(
-          readFirstString(row, ["category", "category_name"]),
-          storeCategoryProfile
-        );
-      })
-      .filter((row) => isRowPending(row, { userId: args.userId }))
-      .sort(sortByOldestFirst);
-
-  let eligibleRows = pickEligibleRows({ strictOwnership: true });
-
-  // Fallback 1: Ownership alanları eksik olan ama client_id eşleşen kayıtları da dene.
-  if (eligibleRows.length === 0 && preferredAliases) {
-    eligibleRows = pickEligibleRows({ strictOwnership: false });
-  }
-
-  // Fallback 2: Category filtresi (stores.product_id'den türeyen strict needles) tüm listing'leri
-  // reddediyorsa — örneğin admin panel webhook switch sonrası category yanlış set edilmişse —
-  // category filtresini devre dışı bırakarak tekrar dene. Bu olmasa kullanıcıların ürünleri
-  // olmasına rağmen "ürün yok" hatası alması söz konusu olabilir.
-  if (eligibleRows.length === 0 && storeCategoryProfile) {
-    eligibleRows = pickEligibleRows({ strictOwnership: true, ignoreCategory: true });
-    if (eligibleRows.length === 0 && preferredAliases) {
-      eligibleRows = pickEligibleRows({ strictOwnership: false, ignoreCategory: true });
-    }
-  }
-
-
-  const recoverStuckProcessingLocks = async () => {
-    const candidateRows = rows.filter((row) => {
-      const status = normalizeStatus(row.status ?? row.listing_status);
-      if (status !== "processing") {
-        return false;
-      }
-
+  const ownershipScopedRows = (strictOwnership: boolean) =>
+    rows.filter((row) => {
       if (preferredAliases) {
-        const rowClientId = readClientId(row);
-        if (!rowClientId || !preferredAliases.has(rowClientId)) {
+        const rowClientId = readFirstString(row, ["client_id", "clientId"]);
+        const rowStoreId = readFirstString(row, ["store_id"]);
+        const matchesAlias =
+          (rowClientId && preferredAliases.has(rowClientId)) ||
+          (rowStoreId && preferredAliases.has(rowStoreId));
+        if (!matchesAlias) {
           return false;
         }
       }
 
-      const belongs = rowBelongsToUser(row, { userId: args.userId, allowedClientIds });
-      if (!belongs) {
-        return false;
+      if (!strictOwnership && preferredAliases) {
+        return true;
       }
 
-      const claimedBy = readFirstString(row, ["claimed_by_user_id", "claimed_by"]);
-      const ageMs =
-        Date.now() -
-        (parseDateMs(row.claimed_at) ??
-          parseDateMs(row.updated_at) ??
-          parseDateMs(row.processed_at) ??
-          parseDateMs(row.created_at) ??
-          Date.now());
-
-      if (claimedBy && claimedBy === args.userId) {
-        return ageMs > SELF_RETRY_PROCESSING_TTL_MS;
-      }
-
-      if (!claimedBy) {
-        return ageMs > ORPHAN_PROCESSING_RECOVER_MS;
-      }
-
-      return ageMs > STUCK_PROCESSING_FORCE_RECOVER_MS;
+      return rowBelongsToUser(row, { userId: args.userId, allowedClientIds });
     });
 
-    let recovered = 0;
-    for (const row of candidateRows.slice(0, 25)) {
-      const identifier = inferIdentifier(row);
-      if (!identifier) continue;
+  const strictOwnedRows = ownershipScopedRows(true);
+  const ownedRows =
+    strictOwnedRows.length > 0 || !preferredAliases ? strictOwnedRows : ownershipScopedRows(false);
 
-      const payload = buildUpdatePayloadForRecovery(row);
-      try {
-        await updateRowByIdentifier(identifier, payload);
-        markRowAsRecoveredInMemory(row);
-        recovered += 1;
-      } catch {
-        // no-op: continue recovering other rows
-      }
+  const categoryMatches = (row: RowRecord) => {
+    if (!storeCategoryProfile) {
+      return true;
     }
 
-    return recovered;
+    return listingCategoryMatchesStoreProfile(
+      readFirstString(row, ["category", "category_name"]),
+      storeCategoryProfile
+    );
   };
 
-  if (args.forceRecover) {
-    await recoverStuckProcessingLocks();
-    eligibleRows = pickEligibleRows({ strictOwnership: true });
-    if (eligibleRows.length === 0 && preferredAliases) {
-      eligibleRows = pickEligibleRows({ strictOwnership: false });
+  const isMismatchCandidate = (row: RowRecord) => {
+    if (hasRowCompletionProof(row) || categoryMatches(row)) {
+      return false;
     }
-  }
 
-  if (eligibleRows.length === 0) {
-    const recoveredCount = await recoverStuckProcessingLocks();
-    if (recoveredCount > 0) {
-      eligibleRows = pickEligibleRows({ strictOwnership: true });
-      if (eligibleRows.length === 0 && preferredAliases) {
-        eligibleRows = pickEligibleRows({ strictOwnership: false });
-      }
-    }
-  }
+    const runtimeStatus = getRowRuntimeStatus(row);
+    return PENDING_STATUSES.has(runtimeStatus) || runtimeStatus === "processing" || hasManualRequeueRequest(row);
+  };
+
+  const eligibleRows = ownedRows
+    .filter((row) => categoryMatches(row))
+    .filter((row) => isRowPending(row))
+    .sort(sortByOldestFirst);
 
   const listing = eligibleRows[0] ?? null;
   if (!listing) {
-    return null;
+    return {
+      ok: false,
+      reason: ownedRows.some((row) => isMismatchCandidate(row)) ? "MISMATCHED_LISTINGS_PRESENT" : "NO_ELIGIBLE_LISTING",
+      mismatchedCount: ownedRows.filter((row) => isMismatchCandidate(row)).length,
+      candidateCount: ownedRows.filter((row) => !hasRowCompletionProof(row)).length,
+    };
   }
 
   const identifier = inferIdentifier(listing);
@@ -1075,6 +1011,7 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
   }
 
   return {
+    ok: true,
     listing,
     identifier,
     listingPayload: mapListingPayload(listing),
@@ -1310,22 +1247,11 @@ const upsertMissingListingFromReport = async (args: ReportArgs) => {
 };
 
 const hasCompletionProof = (args: ReportArgs) => {
-  const publishProof = normalizeString(args.publishProof);
-  if (publishProof) {
-    return true;
-  }
-
-  const etsyListingId = normalizeString(args.etsyListingId);
-  if (etsyListingId) {
-    return true;
-  }
-
-  const etsyListingUrl = normalizeString(args.etsyListingUrl);
-  if (!etsyListingUrl) {
-    return false;
-  }
-
-  return !/\/listing-editor\//i.test(etsyListingUrl);
+  return (
+    isValidEtsyListingId(args.etsyListingId) ||
+    isValidPublishedListingUrl(args.etsyListingUrl) ||
+    isValidPublishedListingUrl(normalizeProofString(args.publishProof))
+  );
 };
 
 export const applyListingJobReport = async (args: ReportArgs) => {
@@ -1396,6 +1322,7 @@ export const applyListingJobReport = async (args: ReportArgs) => {
     error: reportError,
     etsyListingId: normalizeString(args.etsyListingId) || null,
     etsyListingUrl: normalizeString(args.etsyListingUrl) || null,
+    publishProof: normalizeString(args.publishProof) || null,
   });
 
   await updateRowByIdentifier(resolvedIdentifier, payload);
@@ -1617,12 +1544,41 @@ export const syncGuestListingPayload = async (args: GuestSyncArgs) => {
   return { ok: false as const, reason: "insert_payload_exhausted" as const };
 };
 
+const buildExactListingResetResponse = (listing: RowRecord, reason: string | null = null) => ({
+  reset: true,
+  reason,
+  listingId: readFirstString(listing, ["id"]) || null,
+  listingKey: readFirstString(listing, ["key"]) || null,
+  clientId: readClientId(listing),
+  listingPayload: mapListingPayload(listing),
+});
+
+const canResetListingForExactRetry = (listing: RowRecord) => {
+  const status = getRowRuntimeStatus(listing);
+  if (!EXACT_RETRY_ALLOWED_STATUSES.has(status)) {
+    return { ok: false, reason: "invalid_status" };
+  }
+
+  if (status === "processing" && !isProcessingLeaseExpired(listing)) {
+    return { ok: false, reason: "processing_lease_active" };
+  }
+
+  return { ok: true, reason: null };
+};
+
 export const resetFailedListingForUser = async (args: {
   userId: string;
   listingId?: string | null;
   listingKey?: string | null;
   reason?: string | null;
-}): Promise<{ reset: boolean; reason: string | null }> => {
+}): Promise<{
+  reset: boolean;
+  reason: string | null;
+  listingId?: string | null;
+  listingKey?: string | null;
+  clientId?: string | null;
+  listingPayload?: RowRecord | null;
+}> => {
   const listingId = normalizeString(args.listingId);
   const listingKey = normalizeString(args.listingKey);
   if ((!listingId && !listingKey) || !args.userId) return { reset: false, reason: "invalid_request" };
@@ -1649,26 +1605,8 @@ export const resetFailedListingForUser = async (args: {
     return { reset: false, reason: "already_retried" };
   }
 
-  const status = normalizeStatus(listing.status ?? listing.listing_status);
-  // Network/report drift durumunda row "pending"/"queued"/"draft" olarak kalabiliyor.
-  // Auto/manual retry bu state'lerde de güvenlidir; completed/published proof olan row'lar
-  // zaten hasRowCompletionProof ile pending sayılmadığı için burada tekrar claim edilmez.
-  const retryableStatuses = new Set([
-    "",
-    "pending",
-    "queued",
-    "ready",
-    "new",
-    "draft",
-    "todo",
-    "failed",
-    "processing",
-    "error",
-    "aborted",
-    "cancelled",
-    "canceled",
-  ]);
-  if (!retryableStatuses.has(status)) return { reset: false, reason: "invalid_status" };
+  const retryCheck = canResetListingForExactRetry(listing);
+  if (!retryCheck.ok) return { reset: false, reason: retryCheck.reason };
 
   const nowIso = new Date().toISOString();
   const payload: RowRecord = {};
@@ -1689,7 +1627,8 @@ export const resetFailedListingForUser = async (args: {
     userId: args.userId,
     reason: args.reason ?? null,
   });
-  return { reset: true, reason: null };
+  const updatedListing = { ...listing, ...payload };
+  return buildExactListingResetResponse(updatedListing, null);
 };
 
 export const requeueListingForUser = async (args: {
@@ -1698,7 +1637,14 @@ export const requeueListingForUser = async (args: {
   listingKey?: string | null;
   targetClientId?: string | null;
   reason?: string | null;
-}): Promise<{ reset: boolean; reason: string | null }> => {
+}): Promise<{
+  reset: boolean;
+  reason: string | null;
+  listingId?: string | null;
+  listingKey?: string | null;
+  clientId?: string | null;
+  listingPayload?: RowRecord | null;
+}> => {
   const listingId = normalizeString(args.listingId);
   const listingKey = normalizeString(args.listingKey);
   const targetClientId = normalizeString(args.targetClientId);
@@ -1725,23 +1671,8 @@ export const requeueListingForUser = async (args: {
     }
   }
 
-  const status = normalizeStatus(listing.status ?? listing.listing_status);
-  const requeueableStatuses = new Set([
-    "",
-    "pending",
-    "queued",
-    "ready",
-    "new",
-    "draft",
-    "todo",
-    "failed",
-    "processing",
-    "error",
-    "aborted",
-    "cancelled",
-    "canceled",
-  ]);
-  if (!requeueableStatuses.has(status)) return { reset: false, reason: "invalid_status" };
+  const retryCheck = canResetListingForExactRetry(listing);
+  if (!retryCheck.ok) return { reset: false, reason: retryCheck.reason };
 
   const nowIso = new Date().toISOString();
   const payload: RowRecord = {};
@@ -1765,7 +1696,8 @@ export const requeueListingForUser = async (args: {
   addIfPresent(listing, "manual_requeue_requested_at", nowIso, payload);
 
   await updateRowByIdentifier(identifier, payload);
-  return { reset: true, reason: normalizeString(args.reason) || null };
+  const updatedListing = { ...listing, ...payload, client_id: targetClientId || readClientId(listing) };
+  return buildExactListingResetResponse(updatedListing, normalizeString(args.reason) || null);
 };
 
 export const resetFailedListingForClient = async (args: {
@@ -1773,7 +1705,14 @@ export const resetFailedListingForClient = async (args: {
   listingId?: string | null;
   listingKey?: string | null;
   reason?: string | null;
-}): Promise<{ reset: boolean; reason: string | null }> => {
+}): Promise<{
+  reset: boolean;
+  reason: string | null;
+  listingId?: string | null;
+  listingKey?: string | null;
+  clientId?: string | null;
+  listingPayload?: RowRecord | null;
+}> => {
   const listingId = normalizeString(args.listingId);
   const listingKey = normalizeString(args.listingKey);
   const clientId = normalizeString(args.clientId);
@@ -1799,23 +1738,8 @@ export const resetFailedListingForClient = async (args: {
     return { reset: false, reason: "already_retried" };
   }
 
-  const status = normalizeStatus(listing.status ?? listing.listing_status);
-  const retryableStatuses = new Set([
-    "",
-    "pending",
-    "queued",
-    "ready",
-    "new",
-    "draft",
-    "todo",
-    "failed",
-    "processing",
-    "error",
-    "aborted",
-    "cancelled",
-    "canceled",
-  ]);
-  if (!retryableStatuses.has(status)) return { reset: false, reason: "invalid_status" };
+  const retryCheck = canResetListingForExactRetry(listing);
+  if (!retryCheck.ok) return { reset: false, reason: retryCheck.reason };
 
   const nowIso = new Date().toISOString();
   const payload: RowRecord = {};
@@ -1835,7 +1759,8 @@ export const resetFailedListingForClient = async (args: {
     storeId: clientId,
     reason: args.reason ?? null,
   });
-  return { reset: true, reason: null };
+  const updatedListing = { ...listing, ...payload };
+  return buildExactListingResetResponse(updatedListing, null);
 };
 
 export const requeueListingForClient = async (args: {
@@ -1843,7 +1768,14 @@ export const requeueListingForClient = async (args: {
   listingId?: string | null;
   listingKey?: string | null;
   reason?: string | null;
-}): Promise<{ reset: boolean; reason: string | null }> => {
+}): Promise<{
+  reset: boolean;
+  reason: string | null;
+  listingId?: string | null;
+  listingKey?: string | null;
+  clientId?: string | null;
+  listingPayload?: RowRecord | null;
+}> => {
   const clientId = normalizeString(args.clientId);
   const listingId = normalizeString(args.listingId);
   const listingKey = normalizeString(args.listingKey);
@@ -1858,23 +1790,8 @@ export const requeueListingForClient = async (args: {
   const rowClientId = readClientId(listing);
   if (rowClientId && rowClientId !== clientId) return { reset: false, reason: "client_mismatch" };
 
-  const status = normalizeStatus(listing.status ?? listing.listing_status);
-  const requeueableStatuses = new Set([
-    "",
-    "pending",
-    "queued",
-    "ready",
-    "new",
-    "draft",
-    "todo",
-    "failed",
-    "processing",
-    "error",
-    "aborted",
-    "cancelled",
-    "canceled",
-  ]);
-  if (!requeueableStatuses.has(status)) return { reset: false, reason: "invalid_status" };
+  const retryCheck = canResetListingForExactRetry(listing);
+  if (!retryCheck.ok) return { reset: false, reason: retryCheck.reason };
 
   const nowIso = new Date().toISOString();
   const payload: RowRecord = {};
@@ -1895,7 +1812,8 @@ export const requeueListingForClient = async (args: {
   addIfPresent(listing, "manual_requeue_requested_at", nowIso, payload);
 
   await updateRowByIdentifier(identifier, payload);
-  return { reset: true, reason: normalizeString(args.reason) || null };
+  const updatedListing = { ...listing, ...payload };
+  return buildExactListingResetResponse(updatedListing, normalizeString(args.reason) || null);
 };
 
 export const applyGuestListingJobReport = async (args: GuestReportArgs) => {
@@ -1953,6 +1871,7 @@ export const applyGuestListingJobReport = async (args: GuestReportArgs) => {
     error: reportError,
     etsyListingId: normalizeString(args.etsyListingId) || null,
     etsyListingUrl: normalizeString(args.etsyListingUrl) || null,
+    publishProof: normalizeString(args.publishProof) || null,
   });
 
   await updateRowByIdentifier(identifier, payload);

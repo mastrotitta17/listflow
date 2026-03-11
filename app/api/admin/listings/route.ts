@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { notFoundResponse, requireAdminRequest } from "@/lib/auth/admin-request";
+import { deriveListingRuntimeStatus, resolveListingProofState } from "@/lib/extension/listing-proof";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -12,9 +13,6 @@ type StoreLookupRow = {
 };
 
 const toTrimmed = (value: unknown) => (typeof value === "string" ? value.trim() : "");
-
-const normalizeStatus = (row: ListingRow) =>
-  toTrimmed(row.status || row.listing_status || "").toLowerCase();
 
 const getClientId = (row: ListingRow) =>
   toTrimmed(row.client_id || row.store_id || row.clientId || "");
@@ -61,16 +59,7 @@ const parseDateMs = (value: unknown) => {
   return Number.isNaN(ms) ? null : ms;
 };
 
-const getListingProofUrl = (row: ListingRow) =>
-  toTrimmed(row.etsy_listing_url || row.etsy_store_link || "");
-
-const isUploaded = (row: ListingRow) => {
-  const completedAt = parseDateMs(row.completed_at);
-  const listingId = toTrimmed(row.etsy_listing_id || "");
-  const listingUrl = getListingProofUrl(row);
-  const hasUrlProof = Boolean(listingUrl && !/\/listing-editor\//i.test(listingUrl));
-  return Boolean(completedAt || listingId || hasUrlProof);
-};
+const getListingProofUrl = (row: ListingRow) => resolveListingProofState(row).listingUrl;
 
 const listRows = async () => {
   const pageSize = 1000;
@@ -129,13 +118,14 @@ export async function GET(request: NextRequest) {
   const filtered = sorted.filter((row) => {
     const clientId = getClientId(row);
     const derivedStoreName = storeNameByClientId.get(clientId) || "";
+    const derived = deriveListingRuntimeStatus(row, row.status || row.listing_status || "");
 
     if (statusFilter && statusFilter !== "all") {
-      const rowStatus = normalizeStatus(row);
+      const rowStatus = toTrimmed(derived.status).toLowerCase();
       if (statusFilter === "uploaded") {
-        if (!isUploaded(row)) return false;
+        if (!derived.proof.hasValidProof) return false;
       } else if (statusFilter === "not_uploaded") {
-        if (isUploaded(row)) return false;
+        if (derived.proof.hasValidProof) return false;
       } else if (rowStatus !== statusFilter) {
         return false;
       }
@@ -172,14 +162,19 @@ export async function GET(request: NextRequest) {
   });
 
   const page = filtered.slice(offset, offset + limit);
-  const mapped = page.map((row) => ({
-    ...row,
-    derived_status: normalizeStatus(row) || "-",
-    is_uploaded: isUploaded(row),
-    derived_client_id: getClientId(row),
-    derived_store_name: storeNameByClientId.get(getClientId(row)) || null,
-    derived_listing_url: getListingProofUrl(row),
-  }));
+  const mapped = page.map((row) => {
+    const derived = deriveListingRuntimeStatus(row, row.status || row.listing_status || "");
+    return {
+      ...row,
+      derived_status: derived.status || "-",
+      is_uploaded: derived.proof.hasValidProof,
+      manual_review: derived.manualReview,
+      manual_review_reason: derived.manualReviewReason,
+      derived_client_id: getClientId(row),
+      derived_store_name: storeNameByClientId.get(getClientId(row)) || null,
+      derived_listing_url: derived.proof.listingUrl || getListingProofUrl(row),
+    };
+  });
 
   return NextResponse.json(
     {

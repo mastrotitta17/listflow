@@ -109,14 +109,18 @@ export async function POST(request: NextRequest) {
       forceRecover,
     });
 
-    if (!nextListing) {
+    if (!nextListing.ok) {
       return NextResponse.json(
         {
           ok: true,
           job: null,
-          code: "NO_MATCHING_LISTING_FOR_USER",
+          code: nextListing.reason,
+          mismatched_count: nextListing.mismatchedCount,
+          candidate_count: nextListing.candidateCount,
           message:
-            "Yüklenecek ürün bulunamadı. listing.client_id seçili mağazayla eşleşmiyor, ürün durumu uygun değil veya listing.category mağazanın bağlı ürün/kategori filtresiyle eşleşmiyor.",
+            nextListing.reason === "MISMATCHED_LISTINGS_PRESENT"
+              ? "Yüklenecek uygun ürün bulunamadı. Seçili mağazada kategoriyle eşleşmeyen listing kayıtları var; bunlar manuel inceleme gerektiriyor."
+              : "Yüklenecek ürün bulunamadı. listing.client_id seçili mağazayla eşleşmiyor, ürün durumu uygun değil veya listing.category mağazanın bağlı ürün/kategori filtresiyle eşleşmiyor.",
           preferred_client_id: preferredClientId || null,
         },
         {

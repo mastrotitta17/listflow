@@ -37,8 +37,15 @@ export async function POST(request: NextRequest) {
       reason: "extension_panel_manual_requeue",
     });
 
+    if (!row.reset) {
+      return NextResponse.json(
+        { error: row.reason || "Could not requeue listing", ...row },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json(
-      { ok: true, row },
+      { ok: true, ...row },
       {
         headers: {
           "cache-control": "no-store",
