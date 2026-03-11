@@ -477,8 +477,24 @@ const parseBase64List = (value: unknown): string[] => {
   return [text];
 };
 
+// DB'den gelen title'da HTML entity (&amp; gibi) veya fazla boşluk olabilir.
+// Eklentiye gönderilmeden önce sanitize et; Etsy title limit'i 140 karakterdir.
+const sanitizeEtsyTitle = (raw: string): string => {
+  if (!raw) return "";
+  let title = raw
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#\d+;/g, ""); // diğer numeric entity'leri temizle
+  return title.replace(/\s+/g, " ").trim().slice(0, 140);
+};
+
 const mapListingPayload = (row: RowRecord): RowRecord => {
-  const title = readFirstString(row, ["title", "name"]) ?? "";
+  const title = sanitizeEtsyTitle(readFirstString(row, ["title", "name"]) ?? "");
   const description = readFirstString(row, ["description", "catalog_description"]) ?? "";
   const rawTags = readFirstValue(row, ["tags", "etiket", "tag_list", "tag_values"]);
   const tags = dedupeStrings(parseTagList(rawTags)).slice(0, 13);
