@@ -1035,6 +1035,8 @@ export async function GET(request: NextRequest) {
     const fallbackStoreWebhookMap = await loadStoreWebhookMappingsFromLogs(storeIds);
     const directCronHealthByStoreId = await loadSchedulerHealthByStoreId(storeIds);
     const cronLifecycleSnapshot = await cronLifecycleSnapshotPromise;
+    const schedulerMasterState = await loadSchedulerMasterState().catch(() => null);
+    const schedulerManuallyDisabled = schedulerMasterState?.enabled === false;
     const candidateWebhookIds = new Set<string>();
     for (const store of stores) {
       if (store.active_webhook_config_id) {
@@ -1276,7 +1278,7 @@ export async function GET(request: NextRequest) {
       return row.directCronPresent !== true;
     });
 
-    if (missingDirectCronForEligibleStore) {
+    if (missingDirectCronForEligibleStore && !schedulerManuallyDisabled) {
       await syncSchedulerCronJobLifecycle().catch(() => null);
     }
 
@@ -1298,7 +1300,7 @@ export async function GET(request: NextRequest) {
       return nextAutomationAtMs <= nowMs;
     });
 
-    if (hasDueAutomation) {
+    if (hasDueAutomation && !schedulerManuallyDisabled) {
       const latestCronTickMs = await loadLatestCronTickMs();
       const isCronStale = latestCronTickMs === null || nowMs - latestCronTickMs > 3 * 60 * 1000;
 

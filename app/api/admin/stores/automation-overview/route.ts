@@ -1191,6 +1191,7 @@ export async function GET(request: NextRequest) {
     const masterSchedulerPresent = Boolean(
       schedulerMasterState?.enabled && schedulerMasterState.active && schedulerMasterState.jobId
     );
+    const schedulerManuallyDisabled = schedulerMasterState?.enabled === false;
     const cronLifecycleSnapshot = await cronLifecycleSnapshotPromise;
 
     const userIds = Array.from(new Set(stores.map((store) => store.user_id)));
@@ -1411,7 +1412,7 @@ export async function GET(request: NextRequest) {
       return Boolean(row.subscriptionId && row.activeWebhookConfigId && row.directCronPresent !== true);
     });
 
-    if (missingSchedulerRows.length > 0) {
+    if (missingSchedulerRows.length > 0 && !schedulerManuallyDisabled) {
       for (const row of missingSchedulerRows.slice(0, 10)) {
         await insertCronDirectJobVerifyLog({
           storeId: row.storeId,
@@ -1436,7 +1437,7 @@ export async function GET(request: NextRequest) {
       return nextTriggerAtMs <= nowMs;
     });
 
-    if (hasDueRows) {
+    if (hasDueRows && !schedulerManuallyDisabled) {
       const latestCronTickMs = await loadLatestCronTickMs();
       const isCronStale = latestCronTickMs === null || nowMs - latestCronTickMs > 3 * 60 * 1000;
 
