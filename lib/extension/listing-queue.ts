@@ -1120,7 +1120,10 @@ const toRecord = (value: unknown): RowRecord | null => {
   return value as RowRecord;
 };
 
-const buildFallbackListingInsertPayloadFromReport = (args: ReportArgs) => {
+const buildFallbackListingInsertPayloadFromReport = (
+  args: ReportArgs,
+  storeCategory: string | null = null
+) => {
   const nowIso = new Date().toISOString();
   const source = toRecord(args.listingPayload) ?? {};
   const generatedFallbackId =
@@ -1195,13 +1198,19 @@ const buildFallbackListingInsertPayloadFromReport = (args: ReportArgs) => {
     payload.shipping_template = source.shipping_template;
   }
 
+  const guardedPayload = applyMismatchManualReviewToPayload(payload, {
+    storeCategory,
+    listingCategory: readFirstString(source, ["category", "category_name"]) || null,
+  }).payload;
+
   return Object.fromEntries(
-    Object.entries(payload).filter(([, value]) => value !== undefined && value !== "")
+    Object.entries(guardedPayload).filter(([, value]) => value !== undefined && value !== "")
   ) as RowRecord;
 };
 
 const upsertMissingListingFromReport = async (args: ReportArgs) => {
-  let insertPayload = buildFallbackListingInsertPayloadFromReport(args);
+  const storeContext = args.clientId ? await loadStoreCategoryContextByClientId(args.clientId) : null;
+  let insertPayload = buildFallbackListingInsertPayloadFromReport(args, storeContext?.category ?? null);
   if (Object.keys(insertPayload).length === 0) {
     return null;
   }
