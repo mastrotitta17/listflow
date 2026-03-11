@@ -83,8 +83,14 @@ set search_path = public, private, cron
 as $$
 declare
   cfg private.listflow_scheduler_runtime_config%rowtype;
-  existing_job record;
-  latest_run record;
+  existing_job_id bigint;
+  existing_job_active boolean;
+  existing_job_schedule text;
+  existing_job_command text;
+  latest_run_status text;
+  latest_run_details text;
+  latest_run_started_at timestamptz;
+  latest_run_ended_at timestamptz;
   expected_command text := 'select public.listflow_pg_cron_dispatch();';
 begin
   select *
@@ -92,8 +98,8 @@ begin
   from private.listflow_scheduler_runtime_config
   where id = 1;
 
-  select jobid, jobname, active, schedule, command
-  into existing_job
+  select jobid, active, schedule, command
+  into existing_job_id, existing_job_active, existing_job_schedule, existing_job_command
   from cron.job
   where
     jobname = public.listflow_pg_cron_job_name()
@@ -103,11 +109,11 @@ begin
     jobid asc
   limit 1;
 
-  if existing_job.jobid is not null then
+  if existing_job_id is not null then
     select status, return_message, start_time, end_time
-    into latest_run
+    into latest_run_status, latest_run_details, latest_run_started_at, latest_run_ended_at
     from cron.job_run_details
-    where jobid = existing_job.jobid
+    where jobid = existing_job_id
     order by start_time desc
     limit 1;
   end if;
@@ -116,14 +122,14 @@ begin
     'configured', cfg.id is not null,
     'enabled', coalesce(cfg.enabled, false),
     'schedulerBaseUrl', cfg.scheduler_base_url,
-    'jobId', existing_job.jobid,
-    'active', coalesce(existing_job.active, false),
-    'schedule', existing_job.schedule,
-    'command', existing_job.command,
-    'lastRunStatus', latest_run.status,
-    'lastRunDetails', latest_run.return_message,
-    'lastRunStartedAt', latest_run.start_time,
-    'lastRunEndedAt', latest_run.end_time,
+    'jobId', existing_job_id,
+    'active', coalesce(existing_job_active, false),
+    'schedule', existing_job_schedule,
+    'command', existing_job_command,
+    'lastRunStatus', latest_run_status,
+    'lastRunDetails', latest_run_details,
+    'lastRunStartedAt', latest_run_started_at,
+    'lastRunEndedAt', latest_run_ended_at,
     'lastRequestId', cfg.last_request_id,
     'lastRequestQueuedAt', cfg.last_request_queued_at,
     'lastSyncedAt', cfg.last_synced_at

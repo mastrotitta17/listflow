@@ -1188,6 +1188,7 @@ export async function GET(request: NextRequest) {
       loadListingCounts(storeIds),
     ]);
     const schedulerMasterState = await loadSchedulerMasterState().catch(() => null);
+    const schedulerStateUnavailable = schedulerMasterState === null;
     const masterSchedulerPresent = Boolean(
       schedulerMasterState?.enabled && schedulerMasterState.active && schedulerMasterState.jobId
     );
@@ -1412,7 +1413,7 @@ export async function GET(request: NextRequest) {
       return Boolean(row.subscriptionId && row.activeWebhookConfigId && row.directCronPresent !== true);
     });
 
-    if (missingSchedulerRows.length > 0 && !schedulerManuallyDisabled) {
+    if (missingSchedulerRows.length > 0 && !schedulerManuallyDisabled && !schedulerStateUnavailable) {
       for (const row of missingSchedulerRows.slice(0, 10)) {
         await insertCronDirectJobVerifyLog({
           storeId: row.storeId,
@@ -1437,7 +1438,7 @@ export async function GET(request: NextRequest) {
       return nextTriggerAtMs <= nowMs;
     });
 
-    if (hasDueRows && !schedulerManuallyDisabled) {
+    if (hasDueRows && !schedulerManuallyDisabled && !schedulerStateUnavailable) {
       const latestCronTickMs = await loadLatestCronTickMs();
       const isCronStale = latestCronTickMs === null || nowMs - latestCronTickMs > 3 * 60 * 1000;
 

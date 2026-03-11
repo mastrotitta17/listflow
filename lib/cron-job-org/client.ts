@@ -276,6 +276,14 @@ export const setSchedulerCronJobLifecycle = async (enabled: boolean): Promise<Sc
 
 export const syncSchedulerCronJobLifecycle = async (_options?: { force?: boolean }): Promise<SchedulerCronSyncResult> => {
   const currentState = await loadSchedulerMasterState().catch(() => null);
+  if (currentState === null && _options?.force !== true) {
+    return {
+      ok: false,
+      status: "skipped",
+      message: "Supabase pg_cron scheduler durumu okunamadı. Otomatik yeniden etkinleştirme atlandı.",
+    };
+  }
+
   if (currentState?.configured && currentState.enabled === false) {
     return {
       ok: false,

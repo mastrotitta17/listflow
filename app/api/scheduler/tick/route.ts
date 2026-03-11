@@ -226,6 +226,29 @@ const runTick = async (request: NextRequest) => {
 
   try {
     const schedulerState = await loadSchedulerMasterState().catch(() => null);
+    if (schedulerState === null) {
+      const payload = {
+        success: true,
+        skipped: true,
+        reason: "scheduler_state_unavailable",
+        lifecycle: {
+          ok: false,
+          status: "skipped",
+          message: "Supabase pg_cron scheduler durumu okunamadı. Tick güvenlik nedeniyle atlandı.",
+        },
+        meta: { source },
+      };
+      await insertCronTickLogWithFallback({
+        request,
+        status: 202,
+        responsePayload: payload,
+        durationMs: Date.now() - startedAt,
+        authorized,
+        source,
+      });
+      return NextResponse.json(payload, { status: 202 });
+    }
+
     if (schedulerState?.configured && schedulerState.enabled === false) {
       const payload = {
         success: true,
