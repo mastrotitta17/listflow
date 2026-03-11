@@ -163,11 +163,6 @@ export const buildSubscriptionStoreIdResolver = (stores: StoreAliasReference[]):
   const aliasIndex = buildStoreAliasIndex(stores);
 
   return (row: SettingsSubscriptionRow) => {
-    const explicit = resolveStoreIdFromSubscription(row);
-    if (explicit) {
-      return explicit;
-    }
-
     return aliasIndex.resolve({
       user_id: row.user_id ?? null,
       store_id: row.store_id ?? null,

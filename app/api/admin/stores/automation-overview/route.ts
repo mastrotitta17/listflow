@@ -1038,6 +1038,45 @@ const insertCronDirectJobVerifyLog = async (payload: {
   }
 };
 
+const loadLatestCronTickMs = async () => {
+  const { data, error } = await supabaseAdmin
+    .from("webhook_logs")
+    .select("created_at")
+    .eq("request_method", "CRON_TICK")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ created_at: string | null }>();
+
+  if (error || !data?.created_at) {
+    return null;
+  }
+
+  const timestamp = new Date(data.created_at).getTime();
+  return Number.isNaN(timestamp) ? null : timestamp;
+};
+
+const triggerTickWithCronSecret = async (request: NextRequest) => {
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  if (!cronSecret) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${request.nextUrl.origin}/api/scheduler/tick`, {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${cronSecret}`,
+        "x-listflow-tick-source": "admin-automation-overview-fallback",
+      },
+    });
+
+    return response.ok;
+  } catch {
+    return false;
+  }
+};
+
 const getMostRecentCadenceSuccessAt = (jobs: SchedulerJobRow[]) => {
   for (const job of jobs) {
     if ((job.status ?? "").toLowerCase() !== "success") {
@@ -1321,14 +1360,11 @@ export async function GET(request: NextRequest) {
     );
 
     for (const subscription of subscriptions) {
-      const resolvedStoreId =
-        subscription.store_id ??
-        (subscription.shop_id && isUuid(subscription.shop_id) ? subscription.shop_id : null) ??
-        storeAliasIndex.resolve({
-          user_id: subscription.user_id,
-          store_id: subscription.store_id ?? null,
-          shop_id: subscription.shop_id ?? null,
-        });
+      const resolvedStoreId = storeAliasIndex.resolve({
+        user_id: subscription.user_id,
+        store_id: subscription.store_id ?? null,
+        shop_id: subscription.shop_id ?? null,
+      });
       if (!resolvedStoreId) {
         continue;
       }
@@ -1530,6 +1566,28 @@ export async function GET(request: NextRequest) {
       }
 
       await syncSchedulerCronJobLifecycle().catch(() => null);
+    }
+
+    const hasDueRows = rows.some((row) => {
+      if (!row.subscriptionId || !row.activeWebhookConfigId || !row.nextTriggerAt) {
+        return false;
+      }
+
+      const nextTriggerAtMs = new Date(row.nextTriggerAt).getTime();
+      if (Number.isNaN(nextTriggerAtMs)) {
+        return false;
+      }
+
+      return nextTriggerAtMs <= nowMs;
+    });
+
+    if (hasDueRows) {
+      const latestCronTickMs = await loadLatestCronTickMs();
+      const isCronStale = latestCronTickMs === null || nowMs - latestCronTickMs > 3 * 60 * 1000;
+
+      if (isCronStale) {
+        await triggerTickWithCronSecret(request);
+      }
     }
 
     return NextResponse.json({

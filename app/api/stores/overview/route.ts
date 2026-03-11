@@ -15,7 +15,11 @@ import {
 import { buildStoreAliasIndex } from "@/lib/subscriptions/store-resolution";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
-import { loadSchedulerMasterState, syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
+import {
+  isDirectAutomationMode,
+  loadSchedulerMasterState,
+  syncSchedulerCronJobLifecycle,
+} from "@/lib/cron-job-org/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -132,8 +136,6 @@ const normalizeStoreCurrency = (value: string | null | undefined): "USD" | "TRY"
 
   return null;
 };
-
-const isDirectAutomationMode = () => true;
 
 const toValidDate = (value: string | null | undefined) => {
   if (!value) {
@@ -1040,8 +1042,6 @@ export async function GET(request: NextRequest) {
       subscriptions
         .filter((row) => isSubscriptionActive(row))
         .map((row) =>
-          row.store_id ??
-          (row.shop_id && isUuid(row.shop_id) ? row.shop_id : null) ??
           storeAliasIndex.resolve({
             user_id: row.user_id,
             store_id: row.store_id ?? null,
@@ -1113,14 +1113,11 @@ export async function GET(request: NextRequest) {
     const rows = stores.map((store) => {
       const matchedSubscriptions = subscriptions
         .filter((row) => {
-          const storeId =
-            row.store_id ??
-            (row.shop_id && isUuid(row.shop_id) ? row.shop_id : null) ??
-            storeAliasIndex.resolve({
-              user_id: row.user_id,
-              store_id: row.store_id ?? null,
-              shop_id: row.shop_id ?? null,
-            });
+          const storeId = storeAliasIndex.resolve({
+            user_id: row.user_id,
+            store_id: row.store_id ?? null,
+            shop_id: row.shop_id ?? null,
+          });
           return storeId === store.id;
         })
         .sort((a, b) => {

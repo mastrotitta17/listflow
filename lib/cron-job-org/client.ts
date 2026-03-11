@@ -87,6 +87,18 @@ const resolveSchedulerBaseUrl = () => {
   return stripTrailingSlashes(resolvePublicSiteUrl());
 };
 
+const isLoopbackBaseUrl = (value: string | null | undefined) => {
+  if (!value) {
+    return false;
+  }
+
+  return /^https?:\/\/(localhost|127(?:\.\d{1,3}){3})(:\d+)?$/i.test(value.trim());
+};
+
+const isRemoteSupabaseProject = () => {
+  return !isLoopbackBaseUrl(serverEnv.NEXT_PUBLIC_SUPABASE_URL);
+};
+
 const mapLastRunStatusToExecutionCode = (status: string | null | undefined) => {
   const normalized = (status ?? "").trim().toLowerCase();
   if (!normalized) {
@@ -200,12 +212,45 @@ const isSchemaCacheFunctionMismatchError = (error: { message?: string } | null |
   return message.includes("could not find the function") && message.includes("schema cache");
 };
 
+const isFunctionOverloadAmbiguousError = (error: { message?: string } | null | undefined) => {
+  const message = (error?.message ?? "").toLowerCase();
+  return message.includes("is not unique") || message.includes("function") && message.includes("ambiguous");
+};
+
 const shouldFallbackToLegacyPgCronRpc = (error: { message?: string } | null | undefined) =>
-  isMissingPgCronFunctionError(error) || isSchemaCacheFunctionMismatchError(error);
+  isMissingPgCronFunctionError(error) ||
+  isSchemaCacheFunctionMismatchError(error) ||
+  isFunctionOverloadAmbiguousError(error);
 
 const callSyncPgCronSchedulerRpc = async (enabled: boolean) => {
   const schedulerBaseUrl = resolveSchedulerBaseUrl();
   const cronSecret = serverEnv.CRON_SECRET;
+
+  if (enabled && isLoopbackBaseUrl(schedulerBaseUrl) && isRemoteSupabaseProject()) {
+    return {
+      data: {
+        ok: false,
+        status: "skipped",
+        message:
+          "pg_cron scheduler sync atlandı: CRON_SCHEDULER_BASE_URL loopback (localhost/127.0.0.1) ama Supabase remote projeye bağlı.",
+      },
+      error: null,
+    };
+  }
+
+  const implPreferred = await supabaseAdmin.rpc("sync_listflow_pg_cron_scheduler_impl", {
+    p_scheduler_base_url: schedulerBaseUrl,
+    p_cron_secret: cronSecret,
+    p_enabled: enabled,
+  });
+
+  if (!implPreferred.error) {
+    return implPreferred;
+  }
+
+  if (!shouldFallbackToLegacyPgCronRpc(implPreferred.error)) {
+    return implPreferred;
+  }
 
   const preferred = await supabaseAdmin.rpc("sync_listflow_pg_cron_scheduler", {
     p_scheduler_base_url: schedulerBaseUrl,
