@@ -955,9 +955,20 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
 
   let eligibleRows = pickEligibleRows({ strictOwnership: true });
 
-  // Fallback: Seçili mağazaya göre client_id eşleşen kayıtlar, ownership alanları eksikse de yakala.
+  // Fallback 1: Ownership alanları eksik olan ama client_id eşleşen kayıtları da dene.
   if (eligibleRows.length === 0 && preferredAliases) {
     eligibleRows = pickEligibleRows({ strictOwnership: false });
+  }
+
+  // Fallback 2: Category filtresi (stores.product_id'den türeyen strict needles) tüm listing'leri
+  // reddediyorsa — örneğin admin panel webhook switch sonrası category yanlış set edilmişse —
+  // category filtresini devre dışı bırakarak tekrar dene. Bu olmasa kullanıcıların ürünleri
+  // olmasına rağmen "ürün yok" hatası alması söz konusu olabilir.
+  if (eligibleRows.length === 0 && storeCategoryProfile) {
+    eligibleRows = pickEligibleRows({ strictOwnership: true, ignoreCategory: true });
+    if (eligibleRows.length === 0 && preferredAliases) {
+      eligibleRows = pickEligibleRows({ strictOwnership: false, ignoreCategory: true });
+    }
   }
 
 
