@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { loadSchedulerMasterState } from "@/lib/cron-job-org/client";
 import { getEtsyConnection } from "@/lib/etsy/connection";
 import { buildEtsyCallbackUrl, readEtsyRuntimeConfig } from "@/lib/etsy/config";
 import { getNavlungoConnection } from "@/lib/navlungo/connection";
@@ -159,16 +160,25 @@ const loadWinner = async (rows: SubscriptionRow[]) => {
   } satisfies WinnerInfo;
 };
 
-export default async function AdminHomePage() {
+type AdminHomePageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function AdminHomePage({ searchParams }: AdminHomePageProps) {
+  const query = searchParams ? await searchParams : {};
+  const schedulerQuery = typeof query?.scheduler === "string" ? query.scheduler : null;
+  const schedulerMessage =
+    typeof query?.schedulerMessage === "string" && query.schedulerMessage.trim() ? query.schedulerMessage : null;
   const etsyConfig = readEtsyRuntimeConfig();
   const navlungoConfig = readNavlungoRuntimeConfig();
-  const [totalStores, totalUsers, subscriptions, payments, etsyConnection, navlungoConnection] = await Promise.all([
+  const [totalStores, totalUsers, subscriptions, payments, etsyConnection, navlungoConnection, schedulerState] = await Promise.all([
     countRows("stores"),
     countRows("profiles", ["user_id", "id", "*"]),
     loadSubscriptions(),
     loadPayments(),
     getEtsyConnection(),
     getNavlungoConnection(navlungoConfig.environment),
+    loadSchedulerMasterState().catch(() => null),
   ]);
 
   const activeSubscriptions = subscriptions
@@ -374,6 +384,63 @@ export default async function AdminHomePage() {
                   </button>
                 </form>
               ) : null}
+            </div>
+          </CardHeader>
+        </Card>
+        <Card className="rounded-2xl border-cyan-500/20 bg-slate-950/70">
+          <CardHeader className="gap-3 p-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-sm uppercase tracking-[0.24em] text-cyan-300">pg_cron Scheduler</CardTitle>
+              <Badge variant={schedulerState?.enabled && schedulerState?.active ? "default" : "secondary"}>
+                {schedulerState?.enabled && schedulerState?.active ? "Aktif" : "Durduruldu"}
+              </Badge>
+              {schedulerState?.jobId ? <Badge variant="secondary">#{schedulerState.jobId}</Badge> : null}
+            </div>
+            <CardDescription className="text-slate-300">
+              Master scheduler otomatik webhook tetiklerini yönetir. Buradan geçici olarak durdurabilir, sonra tekrar
+              açabilirsin.
+            </CardDescription>
+            <div className="grid gap-2 text-sm text-slate-300 md:grid-cols-2">
+              <p>Durum: {schedulerState?.enabled ? "enabled" : "disabled"}</p>
+              <p>Job active: {schedulerState?.active ? "true" : "false"}</p>
+              <p>Schedule: {schedulerState?.schedule ?? "-"}</p>
+              <p>Son senkron: {schedulerState?.lastSyncedAt ?? "-"}</p>
+              <p>Son çalışma: {schedulerState?.lastRunStartedAt ?? "-"}</p>
+              <p>Son sonuç: {schedulerState?.lastRunStatus ?? "-"}</p>
+            </div>
+            {schedulerQuery ? (
+              <div
+                className={`rounded-2xl border px-4 py-3 text-sm ${
+                  schedulerQuery === "error" || schedulerQuery === "invalid"
+                    ? "border-rose-500/30 bg-rose-500/10 text-rose-200"
+                    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                }`}
+              >
+                {schedulerQuery === "enabled" && "Scheduler yeniden aktif edildi."}
+                {schedulerQuery === "disabled" && "Scheduler geçici olarak durduruldu."}
+                {schedulerQuery === "invalid" && "Scheduler işlemi için geçersiz parametre gönderildi."}
+                {schedulerQuery === "error" && (schedulerMessage || "Scheduler durumu değiştirilemedi.")}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-3">
+              <form action="/api/admin/scheduler/toggle" method="post">
+                <input type="hidden" name="enabled" value="true" />
+                <button
+                  type="submit"
+                  className="inline-flex items-center rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                >
+                  Enable
+                </button>
+              </form>
+              <form action="/api/admin/scheduler/toggle" method="post">
+                <input type="hidden" name="enabled" value="false" />
+                <button
+                  type="submit"
+                  className="inline-flex items-center rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/30 hover:text-white"
+                >
+                  Deactive
+                </button>
+              </form>
             </div>
           </CardHeader>
         </Card>

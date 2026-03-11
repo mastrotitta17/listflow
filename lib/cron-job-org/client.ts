@@ -231,6 +231,8 @@ const callSyncPgCronSchedulerRpc = async (enabled: boolean) => {
   });
 };
 
+export type SchedulerMasterState = PgCronSchedulerState;
+
 export const loadSchedulerMasterState = async (): Promise<PgCronSchedulerState | null> => {
   const { data, error } = await supabaseAdmin.rpc("get_listflow_pg_cron_scheduler_status");
   if (error) {
@@ -243,27 +245,35 @@ export const loadSchedulerMasterState = async (): Promise<PgCronSchedulerState |
   return parseSchedulerState(data);
 };
 
-export const syncSchedulerCronJobLifecycle = async (_options?: { force?: boolean }): Promise<SchedulerCronSyncResult> => {
-  const { data, error } = await callSyncPgCronSchedulerRpc(true);
+export const setSchedulerCronJobLifecycle = async (enabled: boolean): Promise<SchedulerCronSyncResult> => {
+  const { data, error } = await callSyncPgCronSchedulerRpc(enabled);
 
   if (error) {
     return {
       ok: false,
       status: "error",
-      message: "Supabase pg_cron scheduler senkronu başarısız.",
+      message: enabled
+        ? "Supabase pg_cron scheduler etkinleştirilemedi."
+        : "Supabase pg_cron scheduler devre dışı bırakılamadı.",
       details: error.message,
     };
   }
 
-  const bypassSync = await syncPgCronVercelBypassSecret();
-  if (bypassSync.error && !isMissingPgCronFunctionError(bypassSync.error)) {
-    return {
-      ok: false,
-      status: "error",
-      message: "Supabase pg_cron Vercel bypass secret senkronu başarısız.",
-      details: bypassSync.error.message,
-    };
+  if (enabled) {
+    const bypassSync = await syncPgCronVercelBypassSecret();
+    if (bypassSync.error && !isMissingPgCronFunctionError(bypassSync.error)) {
+      return {
+        ok: false,
+        status: "error",
+        message: "Supabase pg_cron Vercel bypass secret senkronu başarısız.",
+        details: bypassSync.error.message,
+      };
+    }
   }
 
   return parseSyncResult(data);
+};
+
+export const syncSchedulerCronJobLifecycle = async (_options?: { force?: boolean }): Promise<SchedulerCronSyncResult> => {
+  return await setSchedulerCronJobLifecycle(true);
 };
