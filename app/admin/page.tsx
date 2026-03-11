@@ -1,5 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getEtsyConnection } from "@/lib/etsy/connection";
+import { buildEtsyCallbackUrl, readEtsyRuntimeConfig } from "@/lib/etsy/config";
 import { getNavlungoConnection } from "@/lib/navlungo/connection";
 import { buildNavlungoCallbackUrl, readNavlungoRuntimeConfig } from "@/lib/navlungo/config";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -158,12 +160,14 @@ const loadWinner = async (rows: SubscriptionRow[]) => {
 };
 
 export default async function AdminHomePage() {
+  const etsyConfig = readEtsyRuntimeConfig();
   const navlungoConfig = readNavlungoRuntimeConfig();
-  const [totalStores, totalUsers, subscriptions, payments, navlungoConnection] = await Promise.all([
+  const [totalStores, totalUsers, subscriptions, payments, etsyConnection, navlungoConnection] = await Promise.all([
     countRows("stores"),
     countRows("profiles", ["user_id", "id", "*"]),
     loadSubscriptions(),
     loadPayments(),
+    getEtsyConnection(),
     getNavlungoConnection(navlungoConfig.environment),
   ]);
 
@@ -296,6 +300,45 @@ export default async function AdminHomePage() {
         <CardDescription>Bu alan yalnızca admin rolüne açıktır ve tüm işlemler loglanır.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <Card className="rounded-2xl border-emerald-500/20 bg-slate-950/70">
+          <CardHeader className="gap-3 p-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-sm uppercase tracking-[0.24em] text-emerald-300">Etsy OAuth Bağlantısı</CardTitle>
+              <Badge variant={etsyConnection ? "default" : "secondary"}>
+                {etsyConnection ? "Bağlı" : "Bağlı Değil"}
+              </Badge>
+            </div>
+            <CardDescription className="text-slate-300">
+              {etsyConnection
+                ? `Admin test bağlantısı aktif. Etsy user id: ${etsyConnection.etsy_user_id}`
+                : "Önce Etsy OAuth bağlantısını admin panelden doğrula. Sonraki aşamada mağaza bazlı seller bağlantılarına geçeceğiz."}
+            </CardDescription>
+            <div className="grid gap-2 text-sm text-slate-300 md:grid-cols-2">
+              <p>Callback URL: {buildEtsyCallbackUrl(process.env.NEXT_PUBLIC_SITE_URL ?? process.env.APP_URL ?? "http://localhost:3000")}</p>
+              <p>Scope: {etsyConfig.scopes.join(" ") || "-"}</p>
+              <p>Client ID: {etsyConfig.clientId || "-"}</p>
+              <p>Bağlantı zamanı: {etsyConnection?.connected_at ?? "-"}</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <a
+                href="/api/admin/etsy/connect/start?returnTo=/admin"
+                className="inline-flex items-center rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+              >
+                {etsyConnection ? "Yeniden Bağlan" : "Etsy'yi Bağla"}
+              </a>
+              {etsyConnection ? (
+                <form action="/api/admin/etsy/disconnect" method="post">
+                  <button
+                    type="submit"
+                    className="inline-flex items-center rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/30 hover:text-white"
+                  >
+                    Bağlantıyı Kaldır
+                  </button>
+                </form>
+              ) : null}
+            </div>
+          </CardHeader>
+        </Card>
         <Card className="rounded-2xl border-indigo-500/20 bg-slate-950/70">
           <CardHeader className="gap-3 p-5">
             <div className="flex flex-wrap items-center gap-2">
