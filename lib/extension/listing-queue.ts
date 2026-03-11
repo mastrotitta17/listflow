@@ -1,11 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import {
-  buildStrictListingCategoryNeedles,
-  listingCategoryMatchesStoreProfile,
-  resolveProductCandidateForCategory,
-  type ProductMatchCandidate,
-} from "@/lib/stores/product-resolution";
-import {
   deriveListingRuntimeStatus,
   isValidEtsyListingId,
   isValidPublishedListingUrl,
@@ -44,7 +38,7 @@ type ClaimResult =
     }
   | {
       ok: false;
-      reason: "NO_ELIGIBLE_LISTING" | "MISMATCHED_LISTINGS_PRESENT";
+      reason: "NO_ELIGIBLE_LISTING";
       mismatchedCount: number;
       candidateCount: number;
     };
@@ -588,19 +582,6 @@ type StoreAliasRow = {
   store_name?: string | null;
 };
 
-type StoreClaimRow = StoreAliasRow & {
-  user_id?: string | null;
-  product_id?: string | null;
-  category?: string | null;
-};
-
-type StoreClaimContext = {
-  storeId: string;
-  category: string | null;
-  productId: string | null;
-  product: ProductMatchCandidate | null;
-};
-
 const isMissingColumnError = (error: QueryError | null | undefined, column: string) => {
   if (!error) {
     return false;
@@ -751,133 +732,6 @@ const resolveStoreAliasScope = async (userId: string, preferredClientId: string)
   return {
     allAliases,
     preferredAliases: matchedRow ? new Set(getAliasesFromStoreRow(matchedRow)) : null,
-    preferredStoreId: matchedRow ? normalizeString(matchedRow.id) || preferredClientId : preferredClientId,
-  };
-};
-
-const loadProductMatchCandidates = async (): Promise<ProductMatchCandidate[]> => {
-  const categoryQuery = await supabaseAdmin
-    .from("categories")
-    .select("id,title_tr,title_en")
-    .limit(5000);
-
-  if (categoryQuery.error) {
-    if (isMissingTableError(categoryQuery.error)) {
-      return [];
-    }
-    throw new Error(categoryQuery.error.message || "categories query failed");
-  }
-
-  const categoriesById = new Map(
-    ((categoryQuery.data ?? []) as Array<{ id: string; title_tr?: string | null; title_en?: string | null }>).map((row) => [
-      row.id,
-      {
-        tr: row.title_tr ?? null,
-        en: row.title_en ?? null,
-      },
-    ])
-  );
-
-  const productQuery = await supabaseAdmin
-    .from("products")
-    .select("id,category_id,title_tr,title_en")
-    .limit(5000);
-
-  if (productQuery.error) {
-    if (isMissingTableError(productQuery.error)) {
-      return [];
-    }
-    throw new Error(productQuery.error.message || "products query failed");
-  }
-
-  return ((productQuery.data ?? []) as Array<{
-    id: string;
-    category_id?: string | null;
-    title_tr?: string | null;
-    title_en?: string | null;
-  }>).map((row) => {
-    const category = row.category_id ? categoriesById.get(row.category_id) : null;
-    const labelTr = [category?.tr, row.title_tr ?? null].filter(Boolean).join(" / ");
-    const labelEn = [category?.en, row.title_en ?? null].filter(Boolean).join(" / ");
-
-    return {
-      id: row.id,
-      titleTr: row.title_tr ?? null,
-      titleEn: row.title_en ?? null,
-      categoryTitleTr: category?.tr ?? null,
-      categoryTitleEn: category?.en ?? null,
-      labelTr: labelTr || null,
-      labelEn: labelEn || null,
-    } satisfies ProductMatchCandidate;
-  });
-};
-
-const loadStoreClaimContext = async (userId: string, preferredClientId: string): Promise<StoreClaimContext | null> => {
-  const candidates = [
-    {
-      select: "id,user_id,product_id,category",
-      hasProduct: true,
-      hasCategory: true,
-    },
-    {
-      select: "id,user_id,product_id",
-      hasProduct: true,
-      hasCategory: false,
-    },
-    {
-      select: "id,user_id,category",
-      hasProduct: false,
-      hasCategory: true,
-    },
-    {
-      select: "id,user_id",
-      hasProduct: false,
-      hasCategory: false,
-    },
-  ] as const;
-
-  let row: StoreClaimRow | null = null;
-
-  for (const candidate of candidates) {
-    const query = await supabaseAdmin
-      .from("stores")
-      .select(candidate.select)
-      .eq("id", preferredClientId)
-      .eq("user_id", userId)
-      .maybeSingle<StoreClaimRow>();
-
-    if (!query.error) {
-      if (!query.data?.id) {
-        return null;
-      }
-      row = {
-        id: query.data.id,
-        user_id: query.data.user_id ?? null,
-        product_id: candidate.hasProduct ? query.data.product_id ?? null : null,
-        category: candidate.hasCategory ? query.data.category ?? null : null,
-      };
-      break;
-    }
-
-    if (!isRecoverableStoreError(query.error) && !isMissingColumnError(query.error, "product_id") && !isMissingColumnError(query.error, "category")) {
-      throw new Error(query.error.message || "stores claim context query failed");
-    }
-  }
-
-  if (!row) {
-    return null;
-  }
-
-  const productCandidates = await loadProductMatchCandidates();
-  const resolvedProduct =
-    (row.product_id ? productCandidates.find((candidate) => candidate.id === row.product_id) ?? null : null) ??
-    resolveProductCandidateForCategory(row.category ?? null, productCandidates);
-
-  return {
-    storeId: row.id ?? preferredClientId,
-    category: row.category ?? null,
-    productId: resolvedProduct?.id ?? row.product_id ?? null,
-    product: resolvedProduct ?? null,
   };
 };
 
@@ -917,10 +771,8 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
   const {
     allAliases: allStoreAliases,
     preferredAliases: resolvedPreferredAliases,
-    preferredStoreId,
   } = await resolveStoreAliasScope(args.userId, preferredClientId);
   let preferredAliases: Set<string> | null = null;
-  let storeClaimContext: StoreClaimContext | null = null;
 
   if (preferredClientId) {
     if (!allStoreAliases.has(preferredClientId)) {
@@ -934,18 +786,11 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
 
     // Mağaza seçildiyse claim yalnızca seçili mağazanın tüm alias kapsamı içinde yapılır.
     preferredAliases = resolvedPreferredAliases ?? new Set([preferredClientId]);
-    storeClaimContext = await loadStoreClaimContext(args.userId, preferredStoreId);
   }
 
   const allowedClientIds = preferredAliases
     ? new Set<string>([...allStoreAliases])
     : allStoreAliases;
-  const storeCategoryProfile = storeClaimContext
-    ? buildStrictListingCategoryNeedles({
-        storeCategory: storeClaimContext.category,
-        product: storeClaimContext.product,
-      })
-    : null;
   const targetedRows = preferredAliases ? await loadRowsForPreferredClientIds(preferredAliases) : [];
   const rows = targetedRows.length > 0 ? targetedRows : await loadAllListingRows();
 
@@ -973,28 +818,7 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
   const ownedRows =
     strictOwnedRows.length > 0 || !preferredAliases ? strictOwnedRows : ownershipScopedRows(false);
 
-  const categoryMatches = (row: RowRecord) => {
-    if (!storeCategoryProfile) {
-      return true;
-    }
-
-    return listingCategoryMatchesStoreProfile(
-      readFirstString(row, ["category", "category_name"]),
-      storeCategoryProfile
-    );
-  };
-
-  const isMismatchCandidate = (row: RowRecord) => {
-    if (hasRowCompletionProof(row) || categoryMatches(row)) {
-      return false;
-    }
-
-    const runtimeStatus = getRowRuntimeStatus(row);
-    return PENDING_STATUSES.has(runtimeStatus) || runtimeStatus === "processing" || hasManualRequeueRequest(row);
-  };
-
   const eligibleRows = ownedRows
-    .filter((row) => categoryMatches(row))
     .filter((row) => isRowPending(row))
     .sort(sortByOldestFirst);
 
@@ -1002,8 +826,8 @@ export const claimNextListingForUser = async (args: ClaimArgs): Promise<ClaimRes
   if (!listing) {
     return {
       ok: false,
-      reason: ownedRows.some((row) => isMismatchCandidate(row)) ? "MISMATCHED_LISTINGS_PRESENT" : "NO_ELIGIBLE_LISTING",
-      mismatchedCount: ownedRows.filter((row) => isMismatchCandidate(row)).length,
+      reason: "NO_ELIGIBLE_LISTING",
+      mismatchedCount: 0,
       candidateCount: ownedRows.filter((row) => !hasRowCompletionProof(row)).length,
     };
   }

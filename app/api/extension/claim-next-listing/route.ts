@@ -118,9 +118,7 @@ export async function POST(request: NextRequest) {
           mismatched_count: nextListing.mismatchedCount,
           candidate_count: nextListing.candidateCount,
           message:
-            nextListing.reason === "MISMATCHED_LISTINGS_PRESENT"
-              ? "Yüklenecek uygun ürün bulunamadı. Seçili mağazada kategoriyle eşleşmeyen listing kayıtları var; bunlar manuel inceleme gerektiriyor."
-              : "Yüklenecek ürün bulunamadı. listing.client_id seçili mağazayla eşleşmiyor, ürün durumu uygun değil veya listing.category mağazanın bağlı ürün/kategori filtresiyle eşleşmiyor.",
+            "Yüklenecek ürün bulunamadı. listing.client_id seçili mağazayla eşleşmiyor veya ürün durumu yükleme için uygun değil.",
           preferred_client_id: preferredClientId || null,
         },
         {
