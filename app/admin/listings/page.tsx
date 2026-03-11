@@ -260,6 +260,7 @@ export default function AdminListingsPage() {
 
   const [rows, setRows] = useState<ListingAdminRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [reconcileLoading, setReconcileLoading] = useState(false);
   const [requeueLoadingId, setRequeueLoadingId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [clientFilter, setClientFilter] = useState("");
@@ -462,6 +463,39 @@ export default function AdminListingsPage() {
     },
     [fetchRows]
   );
+
+  const handleReconcileMismatch = useCallback(async () => {
+    setReconcileLoading(true);
+    try {
+      const response = await fetch("/api/admin/listings/reconcile-mismatch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+
+      const body = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        scanned?: number;
+        updated?: number;
+        mismatch_marked?: number;
+        stale_processing_marked?: number;
+      };
+
+      if (!response.ok || !body.ok) {
+        throw new Error(body.error || "Listing bakım işlemi başarısız.");
+      }
+
+      toast.success(
+        `Bakım tamamlandı. Tarandı: ${body.scanned ?? 0}, güncellendi: ${body.updated ?? 0}, mismatch: ${body.mismatch_marked ?? 0}, stale processing: ${body.stale_processing_marked ?? 0}`
+      );
+      await fetchRows();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Listing bakım işlemi başarısız.";
+      toast.error(message);
+    } finally {
+      setReconcileLoading(false);
+    }
+  }, [fetchRows]);
 
   const deleteLogAndOptionallyRequeue = useCallback(
     async (opts: { requeue: boolean }) => {
@@ -768,6 +802,15 @@ export default function AdminListingsPage() {
                   className="h-9 cursor-pointer shrink-0"
                 >
                   Temizle
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  onClick={() => void handleReconcileMismatch()}
+                  disabled={reconcileLoading}
+                  className="h-9 cursor-pointer shrink-0"
+                >
+                  {reconcileLoading ? "Bakım çalışıyor…" : "Mismatch Bakımı"}
                 </Button>
 
                 <Button onClick={() => void fetchRows()} disabled={loading} className="h-9 cursor-pointer shrink-0">
