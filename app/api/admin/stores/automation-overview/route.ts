@@ -7,10 +7,6 @@ import {
   getPlanWindowHours,
 } from "@/lib/scheduler/idempotency";
 import {
-  describeCronJobOrgExecutionStatus,
-  isDirectAutomationMode,
-  isPerStoreDirectCronEnabled,
-  loadDirectAutomationCronJobs,
   loadSchedulerMasterState,
   syncSchedulerCronJobLifecycle,
 } from "@/lib/cron-job-org/client";
@@ -451,7 +447,7 @@ const loadSchedulerJobs = async () => {
       .from("scheduler_jobs")
       .select(select)
       .order("run_at", { ascending: false })
-      .limit(1000);
+      .limit(10000);
 
     if (!error) {
       const rows = ((data ?? []) as unknown) as Array<{
@@ -829,121 +825,10 @@ const parseIsoToMs = (value: string | null | undefined) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
-type DirectCronSnapshot = {
-  webhookConfigId: string | null;
-  plan: string | null;
-  cadenceHours: number | null;
-  nextTriggerAt: string | null;
-  lastExecutionAt: string | null;
-  lastStatus: number | null;
-  verifiedJobId: number | null;
-};
-
 type CronLifecycleSnapshot = {
   lastCronSyncAt: string | null;
   lastCronSyncStatus: "success" | "skipped" | "error" | null;
   lastCronSyncMessage: string | null;
-};
-
-const loadDirectCronByStoreId = async (storeIds: string[]) => {
-  const map = new Map<string, DirectCronSnapshot>();
-  if (!storeIds.length) {
-    return map;
-  }
-
-  try {
-    const rows = await loadDirectAutomationCronJobs();
-    const storeIdSet = new Set(storeIds);
-    const bestByStoreId = new Map<
-      string,
-      {
-        nextExecution: number | null;
-        lastExecution: number | null;
-        lastStatus: number | null;
-        plan: string | null;
-        webhookConfigId: string | null;
-        verifiedJobId: number | null;
-      }
-    >();
-
-    for (const row of rows) {
-      const storeId = typeof row.storeId === "string" ? row.storeId : null;
-      if (!storeId || !storeIdSet.has(storeId)) {
-        continue;
-      }
-
-      const candidateNextExecution = typeof row.nextExecution === "number" && Number.isFinite(row.nextExecution)
-        ? row.nextExecution
-        : null;
-      const current = bestByStoreId.get(storeId) ?? null;
-      if (!current) {
-        bestByStoreId.set(storeId, {
-          nextExecution: candidateNextExecution,
-          lastExecution:
-            typeof row.lastExecution === "number" && Number.isFinite(row.lastExecution) ? row.lastExecution : null,
-          lastStatus: typeof row.lastStatus === "number" && Number.isFinite(row.lastStatus) ? row.lastStatus : null,
-          plan: row.plan ?? null,
-          webhookConfigId: row.webhookConfigId ?? null,
-          verifiedJobId: row.jobId ?? null,
-        });
-        continue;
-      }
-
-      if (current.nextExecution === null && candidateNextExecution !== null) {
-        bestByStoreId.set(storeId, {
-          nextExecution: candidateNextExecution,
-          lastExecution:
-            typeof row.lastExecution === "number" && Number.isFinite(row.lastExecution) ? row.lastExecution : current.lastExecution,
-          lastStatus:
-            typeof row.lastStatus === "number" && Number.isFinite(row.lastStatus) ? row.lastStatus : current.lastStatus,
-          plan: row.plan ?? current.plan ?? null,
-          webhookConfigId: row.webhookConfigId ?? current.webhookConfigId ?? null,
-          verifiedJobId: row.jobId ?? current.verifiedJobId ?? null,
-        });
-        continue;
-      }
-
-      if (
-        current.nextExecution !== null &&
-        candidateNextExecution !== null &&
-        candidateNextExecution < current.nextExecution
-      ) {
-        bestByStoreId.set(storeId, {
-          nextExecution: candidateNextExecution,
-          lastExecution:
-            typeof row.lastExecution === "number" && Number.isFinite(row.lastExecution) ? row.lastExecution : current.lastExecution,
-          lastStatus:
-            typeof row.lastStatus === "number" && Number.isFinite(row.lastStatus) ? row.lastStatus : current.lastStatus,
-          plan: row.plan ?? current.plan ?? null,
-          webhookConfigId: row.webhookConfigId ?? current.webhookConfigId ?? null,
-          verifiedJobId: row.jobId ?? current.verifiedJobId ?? null,
-        });
-      }
-    }
-
-    for (const [storeId, row] of bestByStoreId.entries()) {
-      const plan = (row.plan ?? "").trim().toLowerCase() || null;
-      const cadenceHours = plan ? getPlanWindowHours(plan) : null;
-      const nextTriggerAt = row.nextExecution !== null
-        ? new Date(row.nextExecution * 1000).toISOString()
-        : null;
-
-      map.set(storeId, {
-        webhookConfigId: row.webhookConfigId ?? null,
-        plan,
-        cadenceHours,
-        nextTriggerAt,
-        lastExecutionAt:
-          row.lastExecution !== null ? new Date(row.lastExecution * 1000).toISOString() : null,
-        lastStatus: row.lastStatus ?? null,
-        verifiedJobId: row.verifiedJobId ?? null,
-      });
-    }
-  } catch {
-    return map;
-  }
-
-  return map;
 };
 
 const parseCronLifecycleResponse = (value: string | null | undefined) => {
@@ -1302,7 +1187,6 @@ export async function GET(request: NextRequest) {
       loadStoreWebhookMappingsFromLogs(storeIds),
       loadListingCounts(storeIds),
     ]);
-    const directCronByStoreId = await loadDirectCronByStoreId(storeIds);
     const schedulerMasterState = await loadSchedulerMasterState().catch(() => null);
     const masterSchedulerPresent = Boolean(
       schedulerMasterState?.enabled && schedulerMasterState.active && schedulerMasterState.jobId
@@ -1406,7 +1290,6 @@ export async function GET(request: NextRequest) {
       const canSwitch = Boolean(activeSubscription);
       const lastJob = latestJobByStoreId.get(store.id) ?? null;
       const storeJobs = jobsByStoreId.get(store.id) ?? [];
-      const directCronSnapshot = directCronByStoreId.get(store.id) ?? null;
       const mappingSnapshot = storeWebhookMappingFallback.get(store.id) ?? null;
       const storeCurrency = storeCurrencyById.get(store.id) ?? "USD";
       const hasStoreCurrency = storeCurrencyById.has(store.id);
@@ -1456,7 +1339,7 @@ export async function GET(request: NextRequest) {
       const scheduleState = computeNextTriggerAt({
         subscriptionId: activeSubscription?.id,
         storeId: store.id,
-        plan: activeSubscription?.plan ?? directCronSnapshot?.plan ?? null,
+        plan: activeSubscription?.plan ?? null,
         jobs: storeJobs,
         nowMs,
       });
@@ -1476,40 +1359,14 @@ export async function GET(request: NextRequest) {
           }
         : null;
       const lastTriggerFromMapping = mappingSnapshot?.lastTrigger ?? null;
-      const directCronStatus = describeCronJobOrgExecutionStatus(directCronSnapshot?.lastStatus);
-      const lastTriggerFromDirectCron =
-        directCronSnapshot?.lastExecutionAt
-          ? {
-              status: directCronStatus.state,
-              triggerType: "auto_switch",
-              responseStatus: directCronSnapshot.lastStatus,
-              responseStatusLabel: `master scheduler ${directCronStatus.label}${
-                directCronSnapshot.lastStatus !== null ? ` (${directCronSnapshot.lastStatus})` : ""
-              }`,
-              responseStatusSource: "scheduler",
-              errorMessage: directCronStatus.state === "failed" ? `master scheduler ${directCronStatus.label}` : null,
-              createdAt: directCronSnapshot.lastExecutionAt,
-              webhookConfigId: directCronSnapshot.webhookConfigId,
-            }
-          : null;
       const lastTrigger =
-        [lastTriggerFromJob, lastTriggerFromMapping, lastTriggerFromDirectCron]
+        [lastTriggerFromJob, lastTriggerFromMapping]
           .filter((trigger): trigger is NonNullable<typeof lastTriggerFromJob> => Boolean(trigger))
           .sort((left, right) => parseIsoToMs(right.createdAt ?? null) - parseIsoToMs(left.createdAt ?? null))[0] ?? null;
-      const usesPerStoreDirectCron = isDirectAutomationMode() && isPerStoreDirectCronEnabled();
-      const directCronPresent = usesPerStoreDirectCron
-        ? Boolean(directCronSnapshot?.verifiedJobId)
-        : Boolean(masterSchedulerPresent && activeSubscription?.id && activeWebhookConfigId);
-      const cadenceHours =
-        usesPerStoreDirectCron && directCronPresent
-          ? directCronSnapshot?.cadenceHours ?? scheduleState.cadenceHours
-          : scheduleState.cadenceHours;
+      const directCronPresent = Boolean(masterSchedulerPresent && activeSubscription?.id && activeWebhookConfigId);
+      const cadenceHours = scheduleState.cadenceHours;
       const nextTriggerAt =
-        usesPerStoreDirectCron && directCronPresent
-          ? directCronSnapshot?.nextTriggerAt ?? scheduleState.nextTriggerAt
-          : directCronPresent
-            ? scheduleState.nextTriggerAt
-            : null;
+        activeSubscription?.id && activeWebhookConfigId ? scheduleState.nextTriggerAt : null;
 
       return {
         storeId: store.id,
@@ -1528,7 +1385,7 @@ export async function GET(request: NextRequest) {
         eligibleWebhookConfigIds,
         subscriptionId: activeSubscription?.id ?? null,
         subscriptionStatus: activeSubscription?.status ?? null,
-        plan: activeSubscription?.plan ?? directCronSnapshot?.plan ?? null,
+        plan: activeSubscription?.plan ?? null,
         currentPeriodEnd: activeSubscription?.current_period_end ?? null,
         monthIndex,
         canSwitch,
@@ -1540,9 +1397,7 @@ export async function GET(request: NextRequest) {
         cadenceHours,
         nextTriggerAt,
         directCronPresent,
-        directCronJobId: usesPerStoreDirectCron
-          ? directCronSnapshot?.verifiedJobId ?? null
-          : schedulerMasterState?.jobId ?? null,
+        directCronJobId: schedulerMasterState?.jobId ?? null,
         lastCronSyncAt: cronLifecycleSnapshot.lastCronSyncAt,
         lastCronSyncStatus: cronLifecycleSnapshot.lastCronSyncStatus,
         lastCronSyncMessage: cronLifecycleSnapshot.lastCronSyncMessage,

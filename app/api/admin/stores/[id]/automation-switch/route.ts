@@ -2,10 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdminRequest, notFoundResponse } from "@/lib/auth/admin-request";
 import { getSubscriptionMonthIndex } from "@/lib/admin/automation";
 import {
-  ensureDirectAutomationCronJobForBinding,
-  findStrictDirectAutomationCronJob,
-  isDirectAutomationMode,
-  isPerStoreDirectCronEnabled,
   loadSchedulerMasterState,
   syncSchedulerCronJobLifecycle,
   type SchedulerCronSyncResult,
@@ -1020,97 +1016,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         }
       | null = null;
     let cronWarning: string | null = null;
+    cronSync = await syncSchedulerCronJobLifecycle({ force: true });
 
-    const usePerStoreDirectCron = isDirectAutomationMode() && isPerStoreDirectCronEnabled();
-
-    if (usePerStoreDirectCron) {
-      cronSync = await ensureDirectAutomationCronJobForBinding({
-        subscriptionId: activeSubscription.id,
+    if (!cronSync.ok) {
+      cronWarning = cronSync.details ?? cronSync.message;
+      await persistCronVerificationLog({
         storeId: store.id,
         webhookConfigId: targetWebhook.id,
-        plan: activeSubscription.plan,
-        anchorIso: nowIso,
-        targetUrl: targetWebhook.target_url,
-        method: targetWebhook.method,
-        headers: targetWebhook.headers ?? null,
+        webhookName: targetWebhook.name,
+        schedulerMessage: cronWarning,
+        verifiedJobId: null,
+        nextExecutionUnix: null,
+        lastExecutionUnix: null,
+        lastStatus: null,
+        createdBy: admin.user.id,
       });
-
-      if (!cronSync.ok) {
-        cronWarning = cronSync.message;
-        await persistCronVerificationLog({
-          storeId: store.id,
-          webhookConfigId: targetWebhook.id,
-          webhookName: targetWebhook.name,
-          schedulerMessage: cronSync.message,
-          verifiedJobId: null,
-          nextExecutionUnix: null,
-          lastExecutionUnix: null,
-          lastStatus: null,
-          createdBy: admin.user.id,
-        });
-      } else {
-        try {
-          const verifiedJob = await findStrictDirectAutomationCronJob({
-            storeId: store.id,
-            webhookConfigId: targetWebhook.id,
-          });
-
-          if (!verifiedJob) {
-            cronWarning = `Master scheduler doğrulaması tamamlanamadı. ${targetWebhook.name} için pg_cron tetik kaydı henüz görünmüyor.`;
-            await persistCronVerificationLog({
-              storeId: store.id,
-              webhookConfigId: targetWebhook.id,
-              webhookName: targetWebhook.name,
-              schedulerMessage: cronWarning,
-              verifiedJobId: null,
-              nextExecutionUnix: null,
-              lastExecutionUnix: null,
-              lastStatus: null,
-              createdBy: admin.user.id,
-            });
-          } else {
-            directCronVerification = {
-              jobId: verifiedJob.jobId,
-              nextExecution: verifiedJob.nextExecution ?? null,
-              lastExecution: verifiedJob.lastExecution ?? null,
-              lastStatus: verifiedJob.lastStatus ?? null,
-            };
-
-            await persistCronVerificationLog({
-              storeId: store.id,
-              webhookConfigId: targetWebhook.id,
-              webhookName: targetWebhook.name,
-              schedulerMessage: cronSync.message,
-              verifiedJobId: verifiedJob.jobId,
-              nextExecutionUnix: verifiedJob.nextExecution ?? null,
-              lastExecutionUnix: verifiedJob.lastExecution ?? null,
-              lastStatus: verifiedJob.lastStatus ?? null,
-              createdBy: admin.user.id,
-            });
-          }
-        } catch (error) {
-          cronWarning =
-            error instanceof Error
-              ? `Master scheduler doğrulaması tamamlanamadı: ${error.message}`
-              : "Master scheduler doğrulaması tamamlanamadı.";
-          await persistCronVerificationLog({
-            storeId: store.id,
-            webhookConfigId: targetWebhook.id,
-            webhookName: targetWebhook.name,
-            schedulerMessage: cronWarning,
-            verifiedJobId: null,
-            nextExecutionUnix: null,
-            lastExecutionUnix: null,
-            lastStatus: null,
-            createdBy: admin.user.id,
-          });
-        }
-      }
     } else {
-      cronSync = await syncSchedulerCronJobLifecycle({ force: true });
+      const schedulerState = await loadSchedulerMasterState().catch(() => null);
 
-      if (!cronSync.ok) {
-        cronWarning = cronSync.details ?? cronSync.message;
+      if (!schedulerState?.jobId || schedulerState.active !== true) {
+        cronWarning = "Supabase pg_cron master scheduler henüz aktif görünmüyor.";
         await persistCronVerificationLog({
           storeId: store.id,
           webhookConfigId: targetWebhook.id,
@@ -1123,41 +1048,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           createdBy: admin.user.id,
         });
       } else {
-        const schedulerState = await loadSchedulerMasterState().catch(() => null);
+        directCronVerification = {
+          jobId: schedulerState.jobId,
+          nextExecution: null,
+          lastExecution: toUnixSeconds(schedulerState.lastRunStartedAt),
+          lastStatus: mapPgCronStatusCode(schedulerState.lastRunStatus),
+        };
 
-        if (!schedulerState?.jobId || schedulerState.active !== true) {
-          cronWarning = "Supabase pg_cron master scheduler henüz aktif görünmüyor.";
-          await persistCronVerificationLog({
-            storeId: store.id,
-            webhookConfigId: targetWebhook.id,
-            webhookName: targetWebhook.name,
-            schedulerMessage: cronWarning,
-            verifiedJobId: null,
-            nextExecutionUnix: null,
-            lastExecutionUnix: null,
-            lastStatus: null,
-            createdBy: admin.user.id,
-          });
-        } else {
-          directCronVerification = {
-            jobId: schedulerState.jobId,
-            nextExecution: null,
-            lastExecution: toUnixSeconds(schedulerState.lastRunStartedAt),
-            lastStatus: mapPgCronStatusCode(schedulerState.lastRunStatus),
-          };
-
-          await persistCronVerificationLog({
-            storeId: store.id,
-            webhookConfigId: targetWebhook.id,
-            webhookName: targetWebhook.name,
-            schedulerMessage: cronSync.message,
-            verifiedJobId: schedulerState.jobId,
-            nextExecutionUnix: null,
-            lastExecutionUnix: toUnixSeconds(schedulerState.lastRunStartedAt),
-            lastStatus: mapPgCronStatusCode(schedulerState.lastRunStatus),
-            createdBy: admin.user.id,
-          });
-        }
+        await persistCronVerificationLog({
+          storeId: store.id,
+          webhookConfigId: targetWebhook.id,
+          webhookName: targetWebhook.name,
+          schedulerMessage: cronSync.message,
+          verifiedJobId: schedulerState.jobId,
+          nextExecutionUnix: null,
+          lastExecutionUnix: toUnixSeconds(schedulerState.lastRunStartedAt),
+          lastStatus: mapPgCronStatusCode(schedulerState.lastRunStatus),
+          createdBy: admin.user.id,
+        });
       }
     }
 

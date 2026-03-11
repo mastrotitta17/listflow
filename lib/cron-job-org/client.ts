@@ -2,9 +2,6 @@ import { serverEnv } from "@/lib/env/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { resolvePublicSiteUrl } from "@/lib/url/public-site";
 
-const LISTFLOW_MASTER_SCHEDULER_TITLE = "Listflow Master Scheduler";
-const POST_REQUEST_METHOD = 1;
-
 export type SchedulerCronSyncResult =
   | {
       ok: true;
@@ -18,29 +15,6 @@ export type SchedulerCronSyncResult =
       message: string;
       details?: string;
     };
-
-export type DirectAutomationCronJob = {
-  jobId: number;
-  enabled: boolean;
-  title: string;
-  url: string;
-  requestMethod: number;
-  lastStatus: number | null;
-  lastDuration: number | null;
-  lastExecution: number | null;
-  nextExecution: number | null;
-  schedule: null;
-  subscriptionId: string | null;
-  storeId: string | null;
-  webhookConfigId: string | null;
-  plan: string | null;
-};
-
-export type CronJobOrgExecutionStatus = {
-  state: "pending" | "success" | "failed";
-  label: string;
-  isSuccess: boolean;
-};
 
 type PgCronSchedulerState = {
   configured: boolean;
@@ -97,36 +71,6 @@ const isLoopbackBaseUrl = (value: string | null | undefined) => {
 
 const isRemoteSupabaseProject = () => {
   return !isLoopbackBaseUrl(serverEnv.NEXT_PUBLIC_SUPABASE_URL);
-};
-
-const mapLastRunStatusToExecutionCode = (status: string | null | undefined) => {
-  const normalized = (status ?? "").trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized === "succeeded" || normalized === "success") {
-    return 1;
-  }
-
-  if (normalized === "failed") {
-    return 2;
-  }
-
-  return 0;
-};
-
-const toUnixSeconds = (value: string | null | undefined) => {
-  if (!value) {
-    return null;
-  }
-
-  const timestamp = new Date(value).getTime();
-  if (Number.isNaN(timestamp)) {
-    return null;
-  }
-
-  return Math.floor(timestamp / 1000);
 };
 
 const parseSyncResult = (payload: unknown): SchedulerCronSyncResult => {
@@ -287,34 +231,6 @@ const callSyncPgCronSchedulerRpc = async (enabled: boolean) => {
   });
 };
 
-export const describeCronJobOrgExecutionStatus = (status: number | null | undefined): CronJobOrgExecutionStatus => {
-  if (status === null || status === undefined || status === 0) {
-    return {
-      state: "pending",
-      label: "Bekliyor",
-      isSuccess: false,
-    };
-  }
-
-  if (status === 1) {
-    return {
-      state: "success",
-      label: "Başarılı",
-      isSuccess: true,
-    };
-  }
-
-  return {
-    state: "failed",
-    label: `Hata (${status})`,
-    isSuccess: false,
-  };
-};
-
-export const isDirectAutomationMode = () => false;
-
-export const isPerStoreDirectCronEnabled = () => false;
-
 export const loadSchedulerMasterState = async (): Promise<PgCronSchedulerState | null> => {
   const { data, error } = await supabaseAdmin.rpc("get_listflow_pg_cron_scheduler_status");
   if (error) {
@@ -325,57 +241,6 @@ export const loadSchedulerMasterState = async (): Promise<PgCronSchedulerState |
   }
 
   return parseSchedulerState(data);
-};
-
-export const loadDirectAutomationCronJobs = async (_options?: { force?: boolean }): Promise<DirectAutomationCronJob[]> => {
-  const schedulerState = await loadSchedulerMasterState();
-  if (!schedulerState?.jobId) {
-    return [];
-  }
-
-  return [
-    {
-      jobId: schedulerState.jobId,
-      enabled: schedulerState.active,
-      title: LISTFLOW_MASTER_SCHEDULER_TITLE,
-      url: `${schedulerState.schedulerBaseUrl ?? resolveSchedulerBaseUrl()}/api/scheduler/tick`,
-      requestMethod: POST_REQUEST_METHOD,
-      lastStatus: mapLastRunStatusToExecutionCode(schedulerState.lastRunStatus),
-      lastDuration: null,
-      lastExecution: toUnixSeconds(schedulerState.lastRunStartedAt),
-      nextExecution: null,
-      schedule: null,
-      subscriptionId: null,
-      storeId: null,
-      webhookConfigId: null,
-      plan: null,
-    },
-  ];
-};
-
-export const findStrictDirectAutomationCronJob = async (
-  _args?: unknown,
-): Promise<DirectAutomationCronJob | null> => null;
-
-export const ensureDirectAutomationCronJobForBinding = async (_args?: unknown): Promise<SchedulerCronSyncResult> =>
-  syncSchedulerCronJobLifecycle();
-
-export const ensureSchedulerCronJob = async (): Promise<SchedulerCronSyncResult> =>
-  syncSchedulerCronJobLifecycle();
-
-export const deleteSchedulerCronJob = async (): Promise<SchedulerCronSyncResult> => {
-  const { data, error } = await callSyncPgCronSchedulerRpc(false);
-
-  if (error) {
-    return {
-      ok: false,
-      status: "error",
-      message: "Supabase pg_cron scheduler devre dışı bırakılamadı.",
-      details: error.message,
-    };
-  }
-
-  return parseSyncResult(data);
 };
 
 export const syncSchedulerCronJobLifecycle = async (_options?: { force?: boolean }): Promise<SchedulerCronSyncResult> => {

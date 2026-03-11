@@ -16,7 +16,6 @@ import { buildStoreAliasIndex } from "@/lib/subscriptions/store-resolution";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isUuid } from "@/lib/utils/uuid";
 import {
-  isDirectAutomationMode,
   loadSchedulerMasterState,
   syncSchedulerCronJobLifecycle,
 } from "@/lib/cron-job-org/client";
@@ -135,24 +134,6 @@ const normalizeStoreCurrency = (value: string | null | undefined): "USD" | "TRY"
   }
 
   return null;
-};
-
-const toValidDate = (value: string | null | undefined) => {
-  if (!value) {
-    return null;
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
-
-const toTimestamp = (value: string | null | undefined) => {
-  if (!value) {
-    return null;
-  }
-
-  const parsed = new Date(value).getTime();
-  return Number.isNaN(parsed) ? null : parsed;
 };
 
 const parseScheduledStoreIdFromKey = (idempotencyKey: string | null | undefined) => {
@@ -312,31 +293,6 @@ const getRetryDelayMinutes = (retryCount: number) => {
 
   const retrySchedule = [1, 2, 4, 8, 16] as const;
   return retrySchedule[Math.min(retryCount - 1, retrySchedule.length - 1)];
-};
-
-const toIsoOrNull = (value: string | null | undefined) => {
-  if (!value) {
-    return null;
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  return parsed.toISOString();
-};
-
-const computeRollingNextAtMs = (anchorIso: string | null | undefined, intervalMs: number, nowMs: number) => {
-  const anchorMs = toTimestamp(anchorIso) ?? nowMs;
-  const firstDueMs = anchorMs + intervalMs;
-  if (firstDueMs > nowMs) {
-    return firstDueMs;
-  }
-
-  const elapsedMs = nowMs - firstDueMs;
-  const slotsElapsed = Math.floor(elapsedMs / intervalMs) + 1;
-  return firstDueMs + slotsElapsed * intervalMs;
 };
 
 const getAccessToken = (request: NextRequest) => request.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null;
@@ -961,7 +917,7 @@ const loadLatestCronLifecycleSnapshot = async (): Promise<CronLifecycleSnapshot>
   };
 };
 
-const loadDirectCronHealthByStoreId = async (storeIds: string[]) => {
+const loadSchedulerHealthByStoreId = async (storeIds: string[]) => {
   const map = new Map<string, DirectCronHealth>();
   if (!storeIds.length) {
     return map;
@@ -1077,8 +1033,7 @@ export async function GET(request: NextRequest) {
     }
 
     const fallbackStoreWebhookMap = await loadStoreWebhookMappingsFromLogs(storeIds);
-    const directMode = isDirectAutomationMode();
-    const directCronHealthByStoreId = directMode ? await loadDirectCronHealthByStoreId(storeIds) : new Map<string, DirectCronHealth>();
+    const directCronHealthByStoreId = await loadSchedulerHealthByStoreId(storeIds);
     const cronLifecycleSnapshot = await cronLifecycleSnapshotPromise;
     const candidateWebhookIds = new Set<string>();
     for (const store of stores) {
@@ -1169,17 +1124,6 @@ export async function GET(request: NextRequest) {
       let slotRetryCount = 0;
 
       if (intervalMs !== null && hasActiveAutomationWebhook) {
-        if (directMode) {
-          const directAnchorIso =
-            toIsoOrNull(store.automation_updated_at) ??
-            toIsoOrNull(mappingSnapshot?.lastMappedAt) ??
-            toIsoOrNull(lastSuccessfulAutomationAt) ??
-            toIsoOrNull(primarySubscription?.updated_at) ??
-            toIsoOrNull(primarySubscription?.created_at) ??
-            new Date(nowMs).toISOString();
-
-          nextAutomationAtMs = computeRollingNextAtMs(directAnchorIso, intervalMs, nowMs);
-        } else {
         let slotDueMs = (() => {
           if (lastSuccessfulAutomationAt) {
             return new Date(lastSuccessfulAutomationAt).getTime() + intervalMs;
@@ -1234,22 +1178,19 @@ export async function GET(request: NextRequest) {
         } else {
           nextAutomationAtMs = slotDueMs;
         }
-        }
       }
 
       const nextAutomationAt = nextAutomationAtMs !== null ? new Date(nextAutomationAtMs).toISOString() : null;
       const hasRetryWindow =
-        !directMode &&
         Boolean(slotJobForState) &&
         (slotJobForState?.status ?? "").toLowerCase() === "failed" &&
         slotRetryCount < 5;
       const hasTerminalFailure =
-        !directMode &&
         Boolean(slotJobForState) &&
         (slotJobForState?.status ?? "").toLowerCase() === "failed" &&
         slotRetryCount >= 5;
 
-      const hasProcessingAutomation = !directMode && subscriptionJobs.some((job) => {
+      const hasProcessingAutomation = subscriptionJobs.some((job) => {
         const status = (job.status ?? "").toLowerCase();
         if (status !== "processing") {
           return false;
@@ -1323,48 +1264,46 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    if (directMode) {
-      const missingDirectCronForEligibleStore = rows.some((row) => {
-        if (!row.hasActiveSubscription || row.renewalState !== "active") {
-          return false;
-        }
-
-        if (!row.hasActiveAutomationWebhook) {
-          return false;
-        }
-
-        return row.directCronPresent !== true;
-      });
-
-      if (missingDirectCronForEligibleStore) {
-        await syncSchedulerCronJobLifecycle().catch(() => null);
+    const missingDirectCronForEligibleStore = rows.some((row) => {
+      if (!row.hasActiveSubscription || row.renewalState !== "active") {
+        return false;
       }
-    } else {
-      const nowMs = Date.now();
-      const hasDueAutomation = rows.some((row) => {
-        if (!row.hasActiveSubscription || !row.hasActiveAutomationWebhook || row.automationState === "processing") {
-          return false;
-        }
 
-        if (!row.nextAutomationAt) {
-          return false;
-        }
+      if (!row.hasActiveAutomationWebhook) {
+        return false;
+      }
 
-        const nextAutomationAtMs = new Date(row.nextAutomationAt).getTime();
-        if (Number.isNaN(nextAutomationAtMs)) {
-          return false;
-        }
+      return row.directCronPresent !== true;
+    });
 
-        return nextAutomationAtMs <= nowMs;
-      });
+    if (missingDirectCronForEligibleStore) {
+      await syncSchedulerCronJobLifecycle().catch(() => null);
+    }
 
-      if (hasDueAutomation) {
-        const latestCronTickMs = await loadLatestCronTickMs();
-        const isCronStale = latestCronTickMs === null || nowMs - latestCronTickMs > 3 * 60 * 1000;
+    const nowMs = Date.now();
+    const hasDueAutomation = rows.some((row) => {
+      if (!row.hasActiveSubscription || !row.hasActiveAutomationWebhook || row.automationState === "processing") {
+        return false;
+      }
 
-        if (isCronStale) {
-          await triggerTickWithCronSecret(request);
-        }
+      if (!row.nextAutomationAt) {
+        return false;
+      }
+
+      const nextAutomationAtMs = new Date(row.nextAutomationAt).getTime();
+      if (Number.isNaN(nextAutomationAtMs)) {
+        return false;
+      }
+
+      return nextAutomationAtMs <= nowMs;
+    });
+
+    if (hasDueAutomation) {
+      const latestCronTickMs = await loadLatestCronTickMs();
+      const isCronStale = latestCronTickMs === null || nowMs - latestCronTickMs > 3 * 60 * 1000;
+
+      if (isCronStale) {
+        await triggerTickWithCronSecret(request);
       }
     }
 
