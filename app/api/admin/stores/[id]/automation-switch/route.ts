@@ -6,7 +6,7 @@ import {
   syncSchedulerCronJobLifecycle,
   type SchedulerCronSyncResult,
 } from "@/lib/cron-job-org/client";
-import { dispatchN8nTrigger } from "@/lib/n8n/client";
+import { buildN8nTriggerPayload, dispatchN8nTrigger } from "@/lib/n8n/client";
 import { serverEnv } from "@/lib/env/server";
 import { createManualSwitchIdempotencyKey } from "@/lib/scheduler/idempotency";
 import {
@@ -173,6 +173,7 @@ const insertSchedulerJobWithFallback = async (args: {
   plan: string;
   idempotencyKey: string;
   runAt: string;
+  requestPayload?: Record<string, unknown> | null;
 }) => {
   const payloads: Array<Record<string, unknown>> = [
     {
@@ -185,7 +186,7 @@ const insertSchedulerJobWithFallback = async (args: {
       trigger_type: "manual_switch",
       idempotency_key: args.idempotencyKey,
       run_at: args.runAt,
-      request_payload: { client_id: args.storeId },
+      request_payload: args.requestPayload ?? { client_id: args.storeId },
     },
     {
       subscription_id: args.subscriptionId,
@@ -1069,6 +1070,22 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }
     }
 
+    const triggerPayload = buildN8nTriggerPayload({
+      client_id: store.id,
+      store_id: store.id,
+      webhook_config_id: targetWebhook.id,
+      trigger_type: "manual_switch",
+      subscription_id: activeSubscription.id,
+      idempotency_key: idempotencyKey,
+      triggered_at: nowIso,
+      store_category: effectiveCategory,
+      store_currency: store.store_currency,
+      product_id: effectiveProductId,
+      user_id: store.user_id,
+      plan: activeSubscription.plan,
+      source: "admin_manual_switch",
+    });
+
     const schedulerJobInsert = await insertSchedulerJobWithFallback({
       subscriptionId: activeSubscription.id,
       userId: store.user_id,
@@ -1077,6 +1094,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       plan: activeSubscription.plan,
       idempotencyKey,
       runAt: nowIso,
+      requestPayload: triggerPayload,
     });
 
     if (schedulerJobInsert.error) {
@@ -1120,9 +1138,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         url: targetWebhook.target_url,
         method: targetWebhook.method === "GET" ? "GET" : "POST",
         headers: targetWebhook.headers ?? {},
-        payload: {
-          client_id: store.id,
-        },
+        payload: triggerPayload,
         idempotencyKey,
         triggeredAt: nowIso,
       });

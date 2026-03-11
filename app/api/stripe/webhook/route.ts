@@ -4,7 +4,7 @@ import { syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
 import { serverEnv } from "@/lib/env/server";
 import { getPlanCentsByInterval, getStripeClientForMode } from "@/lib/stripe/client";
 import { syncOneTimeCheckoutPayment } from "@/lib/stripe/checkout-payment-sync";
-import { dispatchN8nTrigger } from "@/lib/n8n/client";
+import { buildN8nTriggerPayload, dispatchN8nTrigger } from "@/lib/n8n/client";
 import { qualifyReferralConversion } from "@/lib/referral/qualify";
 import { createActivationIdempotencyKey } from "@/lib/scheduler/idempotency";
 import { findFirstProfileUserIdByEmail, syncProfileSubscriptionState } from "@/lib/subscription/profile-sync";
@@ -847,6 +847,7 @@ const insertSchedulerActivationJobWithFallback = async (args: {
   runAtIso: string;
   status: "processing" | "skipped";
   errorMessage?: string | null;
+  requestPayload?: Record<string, unknown> | null;
 }) => {
   const payloads: Array<Record<string, unknown>> = [
     {
@@ -859,7 +860,7 @@ const insertSchedulerActivationJobWithFallback = async (args: {
       trigger_type: "activation",
       idempotency_key: args.idempotencyKey,
       run_at: args.runAtIso,
-      request_payload: { client_id: args.storeId },
+      request_payload: args.requestPayload ?? { client_id: args.storeId },
       error_message: args.errorMessage ?? null,
     },
     {
@@ -994,6 +995,22 @@ const triggerActivationAutomation = async (args: {
     userId: args.userId,
     idempotencyKey,
   });
+  const storeBinding = await loadStoreActivationBinding(args.storeId);
+  const triggerPayload = buildN8nTriggerPayload({
+    client_id: args.storeId,
+    store_id: args.storeId,
+    webhook_config_id: activeWebhookConfigId,
+    trigger_type: "activation",
+    subscription_id: args.subscription.id,
+    idempotency_key: idempotencyKey,
+    triggered_at: runAtIso,
+    store_category: storeBinding.category ?? null,
+    store_currency: storeBinding.storeCurrency ?? null,
+    product_id: storeBinding.productId ?? null,
+    user_id: args.userId,
+    plan: args.plan,
+    source: "stripe_activation",
+  });
 
   if (!activeWebhookConfigId) {
     await insertSchedulerActivationJobWithFallback({
@@ -1006,6 +1023,7 @@ const triggerActivationAutomation = async (args: {
       runAtIso,
       status: "skipped",
       errorMessage: "no_active_webhook_config",
+      requestPayload: triggerPayload,
     });
     return;
   }
@@ -1023,6 +1041,7 @@ const triggerActivationAutomation = async (args: {
       runAtIso,
       status: "skipped",
       errorMessage: "inactive_or_invalid_webhook_config",
+      requestPayload: triggerPayload,
     });
     return;
   }
@@ -1036,6 +1055,7 @@ const triggerActivationAutomation = async (args: {
     idempotencyKey,
     runAtIso,
     status: "processing",
+    requestPayload: triggerPayload,
   });
 
   if (createdJob.duplicated) {
@@ -1051,7 +1071,7 @@ const triggerActivationAutomation = async (args: {
       url: webhook.target_url,
       method: webhook.method === "GET" ? "GET" : "POST",
       headers: webhook.headers ?? {},
-      payload: { client_id: args.storeId },
+      payload: triggerPayload,
       idempotencyKey,
       triggeredAt: runAtIso,
     });

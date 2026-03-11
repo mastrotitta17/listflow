@@ -1,5 +1,44 @@
 export type N8nPayload = {
   client_id: string;
+  store_id?: string;
+  webhook_config_id?: string | null;
+  trigger_type?: string | null;
+  subscription_id?: string | null;
+  idempotency_key?: string | null;
+  slot_due_at?: string | null;
+  attempt?: number | null;
+  triggered_at?: string | null;
+  store_category?: string | null;
+  store_currency?: string | null;
+  product_id?: string | null;
+  user_id?: string | null;
+  plan?: string | null;
+  source?: string | null;
+};
+
+export const buildN8nTriggerPayload = (payload: N8nPayload): N8nPayload => {
+  const clientId = String(payload.client_id || "").trim();
+  if (!clientId) {
+    throw new Error("N8N payload requires client_id.");
+  }
+
+  return {
+    client_id: clientId,
+    store_id: String(payload.store_id || clientId).trim(),
+    webhook_config_id: typeof payload.webhook_config_id === "string" ? payload.webhook_config_id.trim() || null : null,
+    trigger_type: typeof payload.trigger_type === "string" ? payload.trigger_type.trim() || null : null,
+    subscription_id: typeof payload.subscription_id === "string" ? payload.subscription_id.trim() || null : null,
+    idempotency_key: typeof payload.idempotency_key === "string" ? payload.idempotency_key.trim() || null : null,
+    slot_due_at: typeof payload.slot_due_at === "string" ? payload.slot_due_at.trim() || null : null,
+    attempt: Number.isFinite(payload.attempt) ? Number(payload.attempt) : null,
+    triggered_at: typeof payload.triggered_at === "string" ? payload.triggered_at.trim() || null : null,
+    store_category: typeof payload.store_category === "string" ? payload.store_category.trim() || null : null,
+    store_currency: typeof payload.store_currency === "string" ? payload.store_currency.trim() || null : null,
+    product_id: typeof payload.product_id === "string" ? payload.product_id.trim() || null : null,
+    user_id: typeof payload.user_id === "string" ? payload.user_id.trim() || null : null,
+    plan: typeof payload.plan === "string" ? payload.plan.trim() || null : null,
+    source: typeof payload.source === "string" ? payload.source.trim() || null : null,
+  };
 };
 
 type DispatchN8nTriggerInput = {
@@ -49,7 +88,7 @@ export const dispatchN8nTrigger = async ({
     throw new Error("Webhook target URL is required.");
   }
 
-  const body = JSON.stringify(payload);
+  const body = JSON.stringify(buildN8nTriggerPayload(payload));
   const safeHeaders = normalizeHeaders(headers);
   const finalMethod = method.toUpperCase() === "GET" ? "GET" : "POST";
 

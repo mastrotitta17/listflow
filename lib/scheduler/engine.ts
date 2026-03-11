@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { dispatchN8nTrigger } from "@/lib/n8n/client";
+import { buildN8nTriggerPayload, dispatchN8nTrigger } from "@/lib/n8n/client";
 import { serverEnv } from "@/lib/env/server";
 import {
   createScheduledSlotIdempotencyKey,
@@ -1384,8 +1384,10 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
       }
 
       const requestMethod = webhookConfig.method === "GET" ? "GET" : "POST";
-      const requestBody = {
+      const currentStore = storesById.get(storeId) ?? null;
+      const requestBody = buildN8nTriggerPayload({
         client_id: storeId,
+        store_id: storeId,
         trigger_type: "scheduled",
         subscription_id: subscription.id,
         webhook_config_id: activeWebhookConfigId,
@@ -1393,7 +1395,13 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
         slot_due_at: slotDueIso,
         attempt: currentRetryCount + 1,
         triggered_at: nowIso,
-      };
+        store_category: currentStore?.category ?? null,
+        store_currency: currentStore?.store_currency ?? null,
+        product_id: currentStore?.product_id ?? null,
+        user_id: subscription.user_id,
+        plan: subscription.plan,
+        source: "pg_cron_scheduler",
+      });
       const requestHeaders = webhookConfig.headers ?? {};
       const requestStartAt = Date.now();
 
@@ -1402,9 +1410,7 @@ export const runSchedulerTick = async (): Promise<SchedulerSummary> => {
           url: webhookConfig.target_url,
           method: requestMethod,
           headers: requestHeaders,
-          payload: {
-            client_id: storeId,
-          },
+          payload: requestBody,
           idempotencyKey,
           triggeredAt: nowIso,
         });

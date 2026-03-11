@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminRequest, notFoundResponse } from "@/lib/auth/admin-request";
-import { dispatchN8nTrigger } from "@/lib/n8n/client";
+import { buildN8nTriggerPayload, dispatchN8nTrigger } from "@/lib/n8n/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { persistWebhookConfigProductMap } from "@/lib/webhooks/config-product-map";
 import { syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
@@ -427,6 +427,7 @@ const persistDirectBootstrapLog = async (args: {
   method: "GET" | "POST";
   storeId: string;
   webhookConfigId: string;
+  requestBody?: Record<string, unknown> | null;
   responseStatus: number | null;
   responseBody: string | null;
   durationMs: number;
@@ -437,7 +438,7 @@ const persistDirectBootstrapLog = async (args: {
       request_url: args.url,
       request_method: "DIRECT_BOOTSTRAP",
       request_headers: {},
-      request_body: {
+      request_body: args.requestBody ?? {
         client_id: args.storeId,
         webhook_config_id: args.webhookConfigId,
       },
@@ -449,7 +450,7 @@ const persistDirectBootstrapLog = async (args: {
     {
       request_url: args.url,
       request_method: "DIRECT_BOOTSTRAP",
-      request_body: {
+      request_body: args.requestBody ?? {
         client_id: args.storeId,
         webhook_config_id: args.webhookConfigId,
       },
@@ -493,13 +494,22 @@ const triggerDirectBootstrapDispatch = async (args: {
     attempted += 1;
     const startedAt = Date.now();
     const idempotencyKey = `direct_bootstrap:${storeId}:${args.webhookConfigId}:${Math.floor(Date.now() / 60_000)}`;
+    const triggerPayload = buildN8nTriggerPayload({
+      client_id: storeId,
+      store_id: storeId,
+      webhook_config_id: args.webhookConfigId,
+      trigger_type: "direct_bootstrap",
+      idempotency_key: idempotencyKey,
+      triggered_at: new Date().toISOString(),
+      source: "admin_webhook_config_direct_bootstrap",
+    });
 
     try {
       const dispatch = await dispatchN8nTrigger({
         url: webhook.target_url,
         method,
         headers: webhook.headers ?? {},
-        payload: { client_id: storeId },
+        payload: triggerPayload,
         idempotencyKey,
         triggeredAt: new Date().toISOString(),
       });
@@ -515,6 +525,7 @@ const triggerDirectBootstrapDispatch = async (args: {
         method,
         storeId,
         webhookConfigId: args.webhookConfigId,
+        requestBody: triggerPayload,
         responseStatus: dispatch.status,
         responseBody: dispatch.body,
         durationMs: Date.now() - startedAt,
@@ -528,6 +539,7 @@ const triggerDirectBootstrapDispatch = async (args: {
         method,
         storeId,
         webhookConfigId: args.webhookConfigId,
+        requestBody: triggerPayload,
         responseStatus: null,
         responseBody: message,
         durationMs: Date.now() - startedAt,
