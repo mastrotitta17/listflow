@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
+import { loadSchedulerMasterState, syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
 import { serverEnv } from "@/lib/env/server";
 import { runSchedulerTick } from "@/lib/scheduler/engine";
 import { runStripeRenewalReconcileTick } from "@/lib/stripe/renewal-reconcile";
@@ -225,6 +225,30 @@ const runTick = async (request: NextRequest) => {
   }
 
   try {
+    const schedulerState = await loadSchedulerMasterState().catch(() => null);
+    if (schedulerState?.configured && schedulerState.enabled === false) {
+      const payload = {
+        success: true,
+        skipped: true,
+        reason: "scheduler_disabled",
+        lifecycle: {
+          ok: false,
+          status: "skipped",
+          message: "Supabase pg_cron scheduler manuel olarak devre dışı bırakıldı.",
+        },
+        meta: { source },
+      };
+      await insertCronTickLogWithFallback({
+        request,
+        status: 202,
+        responsePayload: payload,
+        durationMs: Date.now() - startedAt,
+        authorized,
+        source,
+      });
+      return NextResponse.json(payload, { status: 202 });
+    }
+
     const lifecycleSummary = await syncSchedulerCronJobLifecycle();
     const summary = await runSchedulerTick();
     let stripeReconcileSummary: Awaited<ReturnType<typeof runStripeRenewalReconcileTick>> | null = null;

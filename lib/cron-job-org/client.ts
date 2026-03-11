@@ -275,5 +275,14 @@ export const setSchedulerCronJobLifecycle = async (enabled: boolean): Promise<Sc
 };
 
 export const syncSchedulerCronJobLifecycle = async (_options?: { force?: boolean }): Promise<SchedulerCronSyncResult> => {
+  const currentState = await loadSchedulerMasterState().catch(() => null);
+  if (currentState?.configured && currentState.enabled === false) {
+    return {
+      ok: false,
+      status: "skipped",
+      message: "Supabase pg_cron scheduler manuel olarak devre dışı bırakıldı.",
+    };
+  }
+
   return await setSchedulerCronJobLifecycle(true);
 };
