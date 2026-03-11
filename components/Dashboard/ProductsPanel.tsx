@@ -36,6 +36,9 @@ type ProductRow = {
   price: number;
   quantity: number;
   status: string;
+  manualReview?: boolean;
+  manualReviewReason?: string | null;
+  categoryMismatch?: boolean;
   tags: string[];
   category: string | null;
   createdAt: string;
@@ -99,6 +102,10 @@ const statusTone = (value: string) => {
 
   if (["failed", "error", "cancelled", "canceled"].includes(normalized)) {
     return "border-red-400/40 bg-red-950/90 text-red-100 shadow-[0_8px_24px_rgba(239,68,68,0.18)]";
+  }
+
+  if (["manual_review"].includes(normalized)) {
+    return "border-orange-400/40 bg-orange-950/90 text-orange-100 shadow-[0_8px_24px_rgba(249,115,22,0.18)]";
   }
 
   if (DRAFT_STATUSES.includes(normalized)) {
@@ -309,6 +316,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
             <Calendar className="h-3.5 w-3.5 text-slate-500" />
             <span>{createdAtText}</span>
           </div>
+          {row.categoryMismatch || row.manualReview ? (
+            <div className="flex items-center gap-2 text-amber-300 sm:col-span-2">
+              <Boxes className="h-3.5 w-3.5 text-amber-400/80" />
+              <span>{row.manualReviewReason === "store_category_mismatch" ? "Mağaza kategorisiyle uyuşmuyor" : "Manuel inceleme gerekli"}</span>
+            </div>
+          ) : null}
         </div>
 
         <div className="pt-1">

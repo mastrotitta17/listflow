@@ -30,8 +30,12 @@ type ListingAdminRow = Record<string, unknown> & {
   derived_status?: string;
   derived_client_id?: string;
   derived_store_name?: string | null;
+  derived_store_category?: string | null;
   derived_listing_url?: string;
   is_uploaded?: boolean;
+  manual_review?: boolean;
+  manual_review_reason?: string | null;
+  category_mismatch?: boolean;
   etsy_listing_id?: string | null;
   last_error?: string | null;
   error?: string | null;
@@ -78,6 +82,7 @@ const STATUS_OPTIONS = [
   { value: "processing", label: "processing" },
   { value: "completed", label: "completed" },
   { value: "failed", label: "failed" },
+  { value: "manual_review", label: "manual_review" },
   { value: "uploaded", label: "Yüklendi (kanıtlı)" },
   { value: "not_uploaded", label: "Yüklenmedi" },
 ] as const;
@@ -217,6 +222,13 @@ const StatusBadge = ({ row }: { row: ListingAdminRow }) => {
   }
   if (status === "failed") {
     return <Badge variant="destructive">failed</Badge>;
+  }
+  if (status === "manual_review") {
+    return (
+      <Badge variant="secondary" className="border-orange-500/30 bg-orange-500/15 text-orange-300">
+        manual_review
+      </Badge>
+    );
   }
   if (status === "pending") {
     return <Badge variant="secondary">pending</Badge>;
@@ -544,6 +556,11 @@ export default function AdminListingsPage() {
               <p className="text-slate-300">
                 <span className="text-slate-500">Fiyat:</span> {price}
               </p>
+              {row.original.category_mismatch ? (
+                <p className="text-amber-300">
+                  <span className="text-amber-500/80">İnceleme:</span> mağaza kategorisiyle uyuşmuyor
+                </p>
+              ) : null}
             </div>
           );
         },

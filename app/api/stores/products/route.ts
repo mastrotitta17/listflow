@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
+import { isStoreCategoryMismatch } from "@/lib/extension/listing-category-guard";
 import { normalizePublicAssetUrl } from "@/lib/assets/public-url";
 import { deriveListingRuntimeStatus } from "@/lib/extension/listing-proof";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -246,6 +247,13 @@ export async function GET(request: NextRequest) {
         row as unknown as Record<string, unknown>,
         row.status ?? row.listing_status
       );
+      const categoryMismatch = isStoreCategoryMismatch({
+        storeCategory: selectedStore.category,
+        listingCategory: row.category ?? null,
+      });
+      const manualReview = derivedStatus.manualReview || categoryMismatch;
+      const manualReviewReason = derivedStatus.manualReviewReason || (categoryMismatch ? "store_category_mismatch" : null);
+      const runtimeStatus = manualReview ? "manual_review" : derivedStatus.status;
 
       return {
         id: row.id,
@@ -260,9 +268,10 @@ export async function GET(request: NextRequest) {
         ].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value) === index),
         price: Number.isFinite(row.price ?? NaN) ? row.price : 0,
         quantity: row.quantity ?? 0,
-        status: derivedStatus.status,
-        manualReview: derivedStatus.manualReview,
-        manualReviewReason: derivedStatus.manualReviewReason,
+        status: runtimeStatus,
+        manualReview,
+        manualReviewReason,
+        categoryMismatch,
         tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0) : [],
         category: row.category ?? null,
         createdAt: row.created_at,

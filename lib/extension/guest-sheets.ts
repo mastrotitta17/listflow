@@ -1,4 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import {
+  applyMismatchManualReviewToPayload,
+  loadStoreCategoryContextByClientId,
+} from "@/lib/extension/listing-category-guard";
 
 const SHEET_CSV_URL =
   "https://docs.google.com/spreadsheets/d/13y03EveZ34w7RiycbzXUGgpvRWfUovUmnx8IB-ZZ3E4/export?format=csv&gid=0";
@@ -152,7 +156,8 @@ const SHEET_PENDING_STATUSES = new Set(["", "pending"]);
 // Also insert into the listing table so report-job can find it
 const syncRowToListingTable = async (row: SheetRow, clientId: string) => {
   const nowIso = new Date().toISOString();
-  const payload = {
+  const storeContext = await loadStoreCategoryContextByClientId(clientId);
+  const basePayload = {
     id: row["id"] || undefined,
     key: row["key"] || undefined,
     client_id: clientId,
@@ -174,6 +179,11 @@ const syncRowToListingTable = async (row: SheetRow, clientId: string) => {
     updated_at: nowIso,
     created_at: nowIso,
   };
+
+  const payload = applyMismatchManualReviewToPayload(basePayload, {
+    storeCategory: storeContext?.category ?? null,
+    listingCategory: row["category"] || "",
+  }).payload;
 
   const cleaned = Object.fromEntries(
     Object.entries(payload).filter(([, v]) => v !== undefined && v !== "")

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { notFoundResponse, requireAdminRequest } from "@/lib/auth/admin-request";
+import { isStoreCategoryMismatch } from "@/lib/extension/listing-category-guard";
 import { deriveListingRuntimeStatus, resolveListingProofState } from "@/lib/extension/listing-proof";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
@@ -10,6 +11,7 @@ type ListingRow = Record<string, unknown>;
 type StoreLookupRow = {
   id: string;
   store_name?: string | null;
+  category?: string | null;
 };
 
 const toTrimmed = (value: unknown) => (typeof value === "string" ? value.trim() : "");
@@ -17,7 +19,7 @@ const toTrimmed = (value: unknown) => (typeof value === "string" ? value.trim() 
 const getClientId = (row: ListingRow) =>
   toTrimmed(row.client_id || row.store_id || row.clientId || "");
 
-const loadStoreNameById = async (clientIds: string[]) => {
+const loadStoreInfoById = async (clientIds: string[]) => {
   const normalizedIds = Array.from(
     new Set(
       clientIds
@@ -25,27 +27,39 @@ const loadStoreNameById = async (clientIds: string[]) => {
         .filter(Boolean)
     )
   );
-  const map = new Map<string, string>();
+  const map = new Map<string, { storeName: string; category: string | null }>();
 
   if (normalizedIds.length === 0) {
     return map;
   }
 
   const chunkSize = 500;
+  const candidates = ["id, store_name, category", "id, store_name"] as const;
   for (let index = 0; index < normalizedIds.length; index += chunkSize) {
     const chunk = normalizedIds.slice(index, index + chunkSize);
-    const query = await supabaseAdmin.from("stores").select("id, store_name").in("id", chunk);
 
-    if (query.error) {
-      continue;
-    }
+    for (const select of candidates) {
+      const query = await supabaseAdmin.from("stores").select(select).in("id", chunk);
 
-    for (const row of ((query.data ?? []) as StoreLookupRow[])) {
-      const id = toTrimmed(row.id);
-      const storeName = toTrimmed(row.store_name);
-      if (id && storeName) {
-        map.set(id, storeName);
+      if (query.error) {
+        const message = (query.error.message ?? "").toLowerCase();
+        if (message.includes("column")) {
+          continue;
+        }
+        break;
       }
+
+      for (const row of (((query.data ?? []) as unknown) as StoreLookupRow[])) {
+        const id = toTrimmed(row.id);
+        const storeName = toTrimmed(row.store_name);
+        if (id) {
+          map.set(id, {
+            storeName: storeName || id,
+            category: toTrimmed(row.category) || null,
+          });
+        }
+      }
+      break;
     }
   }
 
@@ -107,7 +121,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: loaded.error }, { status: 500 });
   }
 
-  const storeNameByClientId = await loadStoreNameById(loaded.rows.map((row) => getClientId(row)));
+  const storeInfoByClientId = await loadStoreInfoById(loaded.rows.map((row) => getClientId(row)));
 
   const sorted = loaded.rows.sort((a, b) => {
     const aMs = parseDateMs(a.updated_at) ?? parseDateMs(a.created_at) ?? 0;
@@ -117,11 +131,19 @@ export async function GET(request: NextRequest) {
 
   const filtered = sorted.filter((row) => {
     const clientId = getClientId(row);
-    const derivedStoreName = storeNameByClientId.get(clientId) || "";
+    const derivedStoreInfo = storeInfoByClientId.get(clientId) || null;
+    const derivedStoreName = derivedStoreInfo?.storeName || "";
     const derived = deriveListingRuntimeStatus(row, row.status || row.listing_status || "");
+    const categoryMismatch = isStoreCategoryMismatch({
+      storeCategory: derivedStoreInfo?.category ?? null,
+      listingCategory: toTrimmed(row.category),
+    });
+    const manualReview = derived.manualReview || categoryMismatch;
+    const manualReviewReason = derived.manualReviewReason || (categoryMismatch ? "store_category_mismatch" : null);
+    const runtimeStatus = manualReview ? "manual_review" : derived.status;
 
     if (statusFilter && statusFilter !== "all") {
-      const rowStatus = toTrimmed(derived.status).toLowerCase();
+      const rowStatus = toTrimmed(runtimeStatus).toLowerCase();
       if (statusFilter === "uploaded") {
         if (!derived.proof.hasValidProof) return false;
       } else if (statusFilter === "not_uploaded") {
@@ -164,14 +186,25 @@ export async function GET(request: NextRequest) {
   const page = filtered.slice(offset, offset + limit);
   const mapped = page.map((row) => {
     const derived = deriveListingRuntimeStatus(row, row.status || row.listing_status || "");
+    const clientId = getClientId(row);
+    const storeInfo = storeInfoByClientId.get(clientId) || null;
+    const categoryMismatch = isStoreCategoryMismatch({
+      storeCategory: storeInfo?.category ?? null,
+      listingCategory: toTrimmed(row.category),
+    });
+    const manualReview = derived.manualReview || categoryMismatch;
+    const manualReviewReason = derived.manualReviewReason || (categoryMismatch ? "store_category_mismatch" : null);
+    const runtimeStatus = manualReview ? "manual_review" : derived.status;
     return {
       ...row,
-      derived_status: derived.status || "-",
+      derived_status: runtimeStatus || "-",
       is_uploaded: derived.proof.hasValidProof,
-      manual_review: derived.manualReview,
-      manual_review_reason: derived.manualReviewReason,
-      derived_client_id: getClientId(row),
-      derived_store_name: storeNameByClientId.get(getClientId(row)) || null,
+      manual_review: manualReview,
+      manual_review_reason: manualReviewReason,
+      category_mismatch: categoryMismatch,
+      derived_client_id: clientId,
+      derived_store_name: storeInfo?.storeName || null,
+      derived_store_category: storeInfo?.category || null,
       derived_listing_url: derived.proof.listingUrl || getListingProofUrl(row),
     };
   });

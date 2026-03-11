@@ -12,6 +12,10 @@ import {
   normalizeProofString,
   resolveListingProofState,
 } from "@/lib/extension/listing-proof";
+import {
+  applyMismatchManualReviewToPayload,
+  loadStoreCategoryContextByClientId,
+} from "@/lib/extension/listing-category-guard";
 
 type RowRecord = Record<string, unknown>;
 
@@ -1359,7 +1363,11 @@ const toFiniteNumberOr = (value: unknown, fallback: number) => {
   return Number.isFinite(maybe) ? maybe : fallback;
 };
 
-const buildGuestListingInsertPayload = (listingPayload: RowRecord, clientId: string) => {
+const buildGuestListingInsertPayload = (
+  listingPayload: RowRecord,
+  clientId: string,
+  storeCategory: string | null = null
+) => {
   const nowIso = new Date().toISOString();
   const normalizedClientId = normalizeString(clientId);
   const listingId = normalizeString(listingPayload.listing_id ?? listingPayload.id);
@@ -1406,14 +1414,24 @@ const buildGuestListingInsertPayload = (listingPayload: RowRecord, clientId: str
     payload.shipping_template = listingPayload.shipping_template;
   }
 
+  const guardedPayload = applyMismatchManualReviewToPayload(payload, {
+    storeCategory,
+    listingCategory: normalizeString(listingPayload.category ?? listingPayload.category_name),
+  }).payload;
+
   const cleaned = Object.fromEntries(
-    Object.entries(payload).filter(([, value]) => value !== undefined && value !== "")
+    Object.entries(guardedPayload).filter(([, value]) => value !== undefined && value !== "")
   );
 
   return cleaned;
 };
 
-const buildGuestListingUpdatePayload = (row: RowRecord, listingPayload: RowRecord, clientId: string) => {
+const buildGuestListingUpdatePayload = (
+  row: RowRecord,
+  listingPayload: RowRecord,
+  clientId: string,
+  storeCategory: string | null = null
+) => {
   const nowIso = new Date().toISOString();
   const payload: RowRecord = {};
   const statusField = inferStatusFieldName(row);
@@ -1475,7 +1493,10 @@ const buildGuestListingUpdatePayload = (row: RowRecord, listingPayload: RowRecor
     payload.shipping_template = listingPayload.shipping_template;
   }
 
-  return payload;
+  return applyMismatchManualReviewToPayload(payload, {
+    storeCategory,
+    listingCategory: normalizeString(listingPayload.category ?? listingPayload.category_name),
+  }).payload;
 };
 
 export const syncGuestListingPayload = async (args: GuestSyncArgs) => {
@@ -1483,6 +1504,7 @@ export const syncGuestListingPayload = async (args: GuestSyncArgs) => {
   if (!clientId) {
     return { ok: false as const, reason: "client_id_missing" as const };
   }
+  const storeContext = await loadStoreCategoryContextByClientId(clientId);
 
   const rawPayload =
     args.listingPayload && typeof args.listingPayload === "object" && !Array.isArray(args.listingPayload)
@@ -1508,12 +1530,17 @@ export const syncGuestListingPayload = async (args: GuestSyncArgs) => {
       return { ok: false as const, reason: "client_mismatch" as const };
     }
 
-    const updatePayload = buildGuestListingUpdatePayload(existing, rawPayload, clientId);
+    const updatePayload = buildGuestListingUpdatePayload(
+      existing,
+      rawPayload,
+      clientId,
+      storeContext?.category ?? null
+    );
     await updateRowByIdentifier(identifier, updatePayload);
     return { ok: true as const, mode: "updated" as const, identifier };
   }
 
-  let insertPayload = buildGuestListingInsertPayload(rawPayload, clientId);
+  let insertPayload = buildGuestListingInsertPayload(rawPayload, clientId, storeContext?.category ?? null);
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const result = await supabaseAdmin.from("listing").insert(insertPayload).select("*").maybeSingle<RowRecord>();
@@ -1532,7 +1559,12 @@ export const syncGuestListingPayload = async (args: GuestSyncArgs) => {
     if (result.error.code === "23505") {
       const concurrentRow = await loadListingByIdentifier(identifier);
       if (concurrentRow) {
-        const updatePayload = buildGuestListingUpdatePayload(concurrentRow, rawPayload, clientId);
+        const updatePayload = buildGuestListingUpdatePayload(
+          concurrentRow,
+          rawPayload,
+          clientId,
+          storeContext?.category ?? null
+        );
         await updateRowByIdentifier(identifier, updatePayload);
         return { ok: true as const, mode: "updated" as const, identifier };
       }
