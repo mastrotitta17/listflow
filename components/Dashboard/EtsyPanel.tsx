@@ -20,7 +20,7 @@ import { useI18n } from "@/lib/i18n/provider";
 import { normalizePhoneForStorage, sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
 import { MAX_STORE_NAME_LENGTH, normalizeStoreNameInput } from "@/lib/stores/name";
-import { ABSOLUTE_MAX_STORES_PER_USER } from "@/lib/stores/quota";
+import { ABSOLUTE_MAX_STORES_PER_USER } from "@/lib/stores/quota-config";
 import { Select } from "@/components/ui/select";
 import { openCrispChat } from "@/lib/crisp";
 import type { Shop } from "@/types";

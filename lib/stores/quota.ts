@@ -1,6 +1,11 @@
 import { PLAN_TO_MONTHLY_CENTS, type BillingPlan } from "@/lib/stripe/client";
 import { isSubscriptionActive, loadUserSubscriptions } from "@/lib/settings/subscriptions";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import {
+  ABSOLUTE_MAX_STORES_PER_USER,
+  EXTRA_STORE_PRICE_CENTS_BY_PLAN,
+  STORE_LIMITS_BY_PLAN,
+} from "@/lib/stores/quota-config";
 
 type QueryError = {
   message?: string;
@@ -26,19 +31,6 @@ export type UserStoreQuota = {
   canCreateStore: boolean;
   extraStorePriceCents: number;
   upgradeOptions: StoreUpgradeOption[];
-};
-
-export const STORE_LIMITS_BY_PLAN: Record<BillingPlan, number> = {
-  standard: 4,
-  pro: 6,
-  turbo: 8,
-};
-export const ABSOLUTE_MAX_STORES_PER_USER = 10;
-
-export const EXTRA_STORE_PRICE_CENTS_BY_PLAN: Record<BillingPlan, number> = {
-  standard: 2000,
-  pro: 2000,
-  turbo: 1000,
 };
 
 const PLAN_ORDER: BillingPlan[] = ["standard", "pro", "turbo"];
