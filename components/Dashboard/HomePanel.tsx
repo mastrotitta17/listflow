@@ -65,8 +65,6 @@ type ChecklistItem = {
   icon: React.ComponentType<{ className?: string }>;
 };
 
-const EXTENSION_CHECK_KEY_PREFIX = "listflow:dashboard-extension-check:";
-
 const planBadgeClass = (plan: string | null) => {
   switch ((plan ?? "").toLowerCase()) {
     case "turbo":
@@ -125,7 +123,6 @@ const toInitials = (fullName: string | null, email: string | null) => {
 
 export default function HomePanel() {
   const { t, locale } = useI18n();
-  const [extensionMarkedDone, setExtensionMarkedDone] = useState(false);
 
   const syncServerSession = useCallback(async () => {
     const {
@@ -182,30 +179,12 @@ export default function HomePanel() {
   });
 
   useEffect(() => {
-    if (!data?.userId || typeof window === "undefined") {
-      return;
-    }
-
-    const stored = window.localStorage.getItem(`${EXTENSION_CHECK_KEY_PREFIX}${data.userId}`) === "1";
-    setExtensionMarkedDone(stored);
-  }, [data?.userId]);
-
-  useEffect(() => {
     if (!error) {
       return;
     }
 
     toast.error(error instanceof Error ? error.message : locale === "en" ? "Dashboard could not be loaded." : "Dashboard yüklenemedi.");
   }, [error, locale]);
-
-  const handleMarkExtensionDone = () => {
-    if (!data?.userId || typeof window === "undefined") {
-      return;
-    }
-
-    window.localStorage.setItem(`${EXTENSION_CHECK_KEY_PREFIX}${data.userId}`, "1");
-    setExtensionMarkedDone(true);
-  };
 
   const checklist = useMemo<ChecklistItem[]>(() => {
     if (!data) {
@@ -250,30 +229,6 @@ export default function HomePanel() {
         icon: RefreshCcw,
       },
       {
-        id: "extension",
-        title: locale === "en" ? "Download the extension" : "Eklentiyi indir",
-        description:
-          locale === "en"
-            ? "Install the Chrome extension so generated listings can be sent to Etsy."
-            : "Üretilen listingleri Etsy'ye gönderebilmek için Chrome eklentisini kur.",
-        done: extensionMarkedDone,
-        href: "/downloads",
-        cta: locale === "en" ? "Open downloads" : "İndirme sayfası",
-        icon: Download,
-      },
-      {
-        id: "products",
-        title: locale === "en" ? "Queue your first product" : "İlk ürününü sıraya al",
-        description:
-          locale === "en"
-            ? "Generated products appear in the Products page and become available for upload."
-            : "Üretilen ürünler Ürünler sayfasında görünür ve yüklemeye hazır hale gelir.",
-        done: data.stats.totalProductsCount > 0,
-        href: "/products",
-        cta: locale === "en" ? "Open products" : "Ürünleri aç",
-        icon: Boxes,
-      },
-      {
         id: "orders",
         title: locale === "en" ? "Test the order flow" : "Sipariş akışını test et",
         description:
@@ -286,7 +241,7 @@ export default function HomePanel() {
         icon: Package,
       },
     ];
-  }, [data, extensionMarkedDone, locale]);
+  }, [data, locale]);
 
   const completedChecklistCount = checklist.filter((item) => item.done).length;
   const primaryStores = data?.stores.slice(0, 4) ?? [];
@@ -502,11 +457,6 @@ export default function HomePanel() {
                   </div>
                   <Link
                     href={item.href}
-                    onClick={() => {
-                      if (item.id === "extension") {
-                        handleMarkExtensionDone();
-                      }
-                    }}
                     className="inline-flex shrink-0 items-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-white transition-colors hover:border-indigo-400/30"
                   >
                     {item.cta}

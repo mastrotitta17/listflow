@@ -17,7 +17,12 @@ import {
   Check,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n/provider";
-import { normalizePhoneForStorage, sanitizePhoneInput } from "@/lib/phone";
+import {
+  INTERNATIONAL_PHONE_REGEX,
+  MAX_INTERNATIONAL_PHONE_LENGTH,
+  normalizeInternationalPhone,
+  sanitizePhoneInput,
+} from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
 import { MAX_STORE_NAME_LENGTH, normalizeStoreNameInput } from "@/lib/stores/name";
 import { ABSOLUTE_MAX_STORES_PER_USER } from "@/lib/stores/quota-config";
@@ -501,7 +506,16 @@ const EtsyPanel: React.FC = () => {
         throw new Error("Oturum senkronize edilemedi.");
       }
 
-      const normalizedPhone = normalizePhoneForStorage(phone);
+      const trimmedPhone = phone.trim();
+      const normalizedPhone = trimmedPhone ? normalizeInternationalPhone(trimmedPhone) : null;
+
+      if (trimmedPhone && !normalizedPhone) {
+        throw new Error(
+          locale === "en"
+            ? "Phone must be in international format like +905551112233."
+            : "Telefon numarası +905551112233 biçiminde olmalıdır."
+        );
+      }
 
       const categoryName = resolvedSubCategory?.name || selectedParentCategory?.name || (locale === "en" ? "General" : "Genel");
       const topCategoryId =
@@ -1336,7 +1350,32 @@ const EtsyPanel: React.FC = () => {
                 <p className="text-slate-500 font-bold">Kaydı tamamlayın, uzman ekibimiz sizi arasın.</p>
               </div>
 
-              <form onSubmit={handleConnect} className="space-y-6">
+              <form
+                onSubmit={handleConnect}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") {
+                    return;
+                  }
+
+                  const target = event.target as HTMLElement | null;
+                  const tagName = target?.tagName?.toLowerCase() ?? "";
+                  const targetType =
+                    target instanceof HTMLInputElement || target instanceof HTMLButtonElement
+                      ? target.type?.toLowerCase() ?? ""
+                      : "";
+
+                  if (tagName === "textarea") {
+                    return;
+                  }
+
+                  if (tagName === "button" || targetType === "submit") {
+                    return;
+                  }
+
+                  event.preventDefault();
+                }}
+                className="space-y-6"
+              >
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Mağaza Adı</label>
@@ -1360,12 +1399,21 @@ const EtsyPanel: React.FC = () => {
                       <input
                         type="tel"
                         value={phone}
-                        onChange={(event) => setPhone(sanitizePhoneInput(event.target.value))}
+                        onChange={(event) =>
+                          setPhone(sanitizePhoneInput(event.target.value, MAX_INTERNATIONAL_PHONE_LENGTH))
+                        }
                         inputMode="tel"
-                        placeholder="+90 5xx..."
+                        maxLength={MAX_INTERNATIONAL_PHONE_LENGTH}
+                        pattern={INTERNATIONAL_PHONE_REGEX.source}
+                        placeholder="+905551112233"
                         className="w-full pl-12 pr-5 py-4 rounded-2xl bg-white/5 border border-white/10 text-white outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium"
                       />
                     </div>
+                    <p className="text-[10px] text-slate-500 font-semibold">
+                      {locale === "en"
+                        ? "Use international format like +905551112233."
+                        : "Telefonu +905551112233 biçiminde girin."}
+                    </p>
                   </div>
                 </div>
 
