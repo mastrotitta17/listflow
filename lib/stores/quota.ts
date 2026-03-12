@@ -17,6 +17,8 @@ export type UserStoreQuota = {
   plan: BillingPlan;
   hasActiveSubscription: boolean;
   includedStoreLimit: number;
+  effectiveStoreLimit: number;
+  absoluteStoreLimit: number;
   totalStores: number;
   purchasedExtraStores: number;
   usedExtraStores: number;
@@ -31,6 +33,7 @@ export const STORE_LIMITS_BY_PLAN: Record<BillingPlan, number> = {
   pro: 6,
   turbo: 8,
 };
+export const ABSOLUTE_MAX_STORES_PER_USER = 10;
 
 export const EXTRA_STORE_PRICE_CENTS_BY_PLAN: Record<BillingPlan, number> = {
   standard: 2000,
@@ -218,14 +221,20 @@ export const loadUserStoreQuota = async (userId: string): Promise<UserStoreQuota
   ]);
 
   const includedStoreLimit = STORE_LIMITS_BY_PLAN[plan];
+  const effectiveStoreLimit = Math.min(
+    includedStoreLimit + purchasedExtraStores,
+    ABSOLUTE_MAX_STORES_PER_USER
+  );
   const usedExtraStores = Math.max(0, totalStores - includedStoreLimit);
-  const remainingSlots = includedStoreLimit + purchasedExtraStores - totalStores;
+  const remainingSlots = Math.max(0, effectiveStoreLimit - totalStores);
   const canCreateStore = remainingSlots > 0;
 
   return {
     plan,
     hasActiveSubscription,
     includedStoreLimit,
+    effectiveStoreLimit,
+    absoluteStoreLimit: ABSOLUTE_MAX_STORES_PER_USER,
     totalStores,
     purchasedExtraStores,
     usedExtraStores,

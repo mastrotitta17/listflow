@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type Stripe from "stripe";
+import { parseOrderCheckoutDraftMetadata } from "@/lib/orders/checkout";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startNavlungoShipmentForOrder, type NavlungoShipmentDispatchResult } from "@/lib/navlungo/shipment";
 import { isUuid } from "@/lib/utils/uuid";
@@ -74,6 +76,15 @@ const isRecoverableColumnError = (error: QueryError | null | undefined, columns:
   }
 
   return columns.some((column) => isMissingColumnError(error, column));
+};
+
+const isDuplicateKeyError = (error: QueryError | null | undefined) => {
+  if (!error) {
+    return false;
+  }
+
+  const message = (error.message ?? "").toLowerCase();
+  return message.includes("duplicate key");
 };
 
 const isRecoverableSelectError = (error: QueryError | null | undefined) => {
@@ -152,6 +163,17 @@ const parseOrderIdFromMetadata = (session: Stripe.Checkout.Session) => {
   return null;
 };
 
+const buildDeterministicOrderIdFromSession = (sessionId: string) => {
+  const hex = createHash("sha256").update(`listflow-order:${sessionId}`).digest("hex");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `4${hex.slice(13, 16)}`,
+    `a${hex.slice(17, 20)}`,
+    hex.slice(20, 32),
+  ].join("-");
+};
+
 const findExistingPaymentBySessionId = async (sessionId: string) => {
   const withSessionId = await supabaseAdmin
     .from("payments")
@@ -199,6 +221,130 @@ const findExistingPaymentByShopFallback = async (shopId: string | null) => {
   }
 
   throw new Error(withShopId.error.message ?? "Could not query payments by shop_id");
+};
+
+const ensureDraftOrderExists = async (session: Stripe.Checkout.Session) => {
+  const draft = parseOrderCheckoutDraftMetadata(session.metadata);
+  const userId = session.metadata?.userId ?? null;
+
+  if (!draft || !userId || !isUuid(userId)) {
+    return null;
+  }
+
+  const orderId = buildDeterministicOrderIdFromSession(session.id);
+  const existing = await supabaseAdmin
+    .from("orders")
+    .select("id")
+    .eq("id", orderId)
+    .maybeSingle<{ id: string }>();
+
+  if (!existing.error && existing.data?.id) {
+    return existing.data.id;
+  }
+
+  const nowIso = new Date().toISOString();
+  const baseInsertPayload = {
+    id: orderId,
+    user_id: userId,
+    store_id: draft.storeId,
+    category_name: draft.category,
+    sub_product_name: draft.subProductName,
+    variant_name: draft.variantName,
+    product_link: draft.productLink,
+    listing_id: draft.listingId,
+    listing_key: draft.listingKey,
+    listing_title: draft.listingTitle,
+    listing_image_url: draft.listingImageUrl,
+    order_date: draft.date,
+    shipping_address: draft.address,
+    receiver_name: draft.receiverName,
+    receiver_phone: draft.receiverPhone,
+    receiver_country_code: draft.receiverCountryCode,
+    receiver_state: draft.receiverState,
+    receiver_city: draft.receiverCity,
+    receiver_town: draft.receiverTown,
+    receiver_postal_code: draft.receiverPostalCode,
+    note: draft.note,
+    ioss: draft.ioss,
+    label_number: draft.labelNumber,
+    amount_usd: draft.amountUsd,
+    payment_status: "paid",
+    updated_at: nowIso,
+  } satisfies Record<string, unknown>;
+
+  const payloadCandidates: Array<Record<string, unknown>> = [
+    baseInsertPayload,
+    {
+      ...baseInsertPayload,
+      listing_id: undefined,
+      listing_key: undefined,
+      listing_title: undefined,
+      listing_image_url: undefined,
+    },
+    {
+      ...baseInsertPayload,
+      store_id: undefined,
+    },
+    {
+      ...baseInsertPayload,
+      store_id: undefined,
+      listing_id: undefined,
+      listing_key: undefined,
+      listing_title: undefined,
+      listing_image_url: undefined,
+    },
+    {
+      ...baseInsertPayload,
+      receiver_name: undefined,
+      receiver_phone: undefined,
+      receiver_country_code: undefined,
+      receiver_state: undefined,
+      receiver_city: undefined,
+      receiver_town: undefined,
+      receiver_postal_code: undefined,
+      note: undefined,
+      ioss: undefined,
+    },
+  ];
+
+  let lastError: QueryError | null = null;
+
+  for (const payload of payloadCandidates) {
+    const inserted = await supabaseAdmin.from("orders").insert(payload).select("id").maybeSingle<{ id: string }>();
+    if (!inserted.error && inserted.data?.id) {
+      return inserted.data.id;
+    }
+
+    if (isDuplicateKeyError(inserted.error)) {
+      const conflictLookup = await supabaseAdmin.from("orders").select("id").eq("id", orderId).maybeSingle<{ id: string }>();
+      if (!conflictLookup.error && conflictLookup.data?.id) {
+        return conflictLookup.data.id;
+      }
+    }
+
+    lastError = inserted.error ?? null;
+    if (inserted.error && !isRecoverableColumnError(inserted.error, [
+      "store_id",
+      "listing_id",
+      "listing_key",
+      "listing_title",
+      "listing_image_url",
+      "receiver_name",
+      "receiver_phone",
+      "receiver_country_code",
+      "receiver_state",
+      "receiver_city",
+      "receiver_town",
+      "receiver_postal_code",
+      "note",
+      "ioss",
+      "updated_at",
+    ])) {
+      throw new Error(inserted.error.message ?? "Could not create order from checkout draft");
+    }
+  }
+
+  throw new Error(lastError?.message ?? "Could not create order from checkout draft");
 };
 
 const updateExistingPayment = async (args: {
@@ -638,7 +784,7 @@ export const syncOneTimeCheckoutPayment = async (
   const paymentStatus = normalizeCheckoutPaymentStatus(session.payment_status, options?.forcedStatus);
   const userId = session.metadata?.userId ?? null;
   const shopId = session.metadata?.shopId ?? null;
-  const orderId = parseOrderIdFromMetadata(session);
+  const metadataOrderId = parseOrderIdFromMetadata(session);
   const amountCents = session.amount_total ?? 0;
   const currency = (session.currency ?? "usd").toLowerCase();
 
@@ -669,6 +815,11 @@ export const syncOneTimeCheckoutPayment = async (
       currency,
       status: paymentStatus,
     });
+  }
+
+  let orderId = metadataOrderId;
+  if (!orderId && paymentStatus === "paid") {
+    orderId = await ensureDraftOrderExists(session);
   }
 
   let orderUpdated = false;

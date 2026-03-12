@@ -7,6 +7,7 @@ type OrdersResponse = {
   rows?: Order[];
   row?: Order;
   id?: string;
+  url?: string;
   shipment?: {
     status?: "started" | "failed" | "skipped";
     reason?: string;
@@ -43,6 +44,7 @@ export type CreateOrderInput = {
 
 export type CreateOrderResult = {
   order: Order | null;
+  checkoutUrl: string | null;
   shipment: NonNullable<OrdersResponse["shipment"]> | null;
 };
 
@@ -95,10 +97,19 @@ export const useOrdersRepository = () => {
       throw new Error(payload.error || "Order could not be created");
     }
 
+    if (payload.url) {
+      return {
+        order: null,
+        checkoutUrl: payload.url,
+        shipment: payload.shipment ?? null,
+      };
+    }
+
     if (payload.row) {
       setOrders((previous) => [payload.row as Order, ...previous]);
       return {
         order: payload.row as Order,
+        checkoutUrl: null,
         shipment: payload.shipment ?? null,
       };
     }
@@ -106,6 +117,7 @@ export const useOrdersRepository = () => {
     await loadOrders();
     return {
       order: null,
+      checkoutUrl: null,
       shipment: payload.shipment ?? null,
     };
   }, [loadOrders]);

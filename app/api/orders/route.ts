@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromAccessToken } from "@/lib/auth/admin";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/session";
-import { normalizePhoneForStorage } from "@/lib/phone";
+import { buildOrderCheckoutMetadata, buildOrderCheckoutShopId } from "@/lib/orders/checkout";
+import { normalizeInternationalPhone } from "@/lib/phone";
+import { getStripeClientForMode, resolveStripeModeForRequest } from "@/lib/stripe/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { resolvePublicSiteUrl } from "@/lib/url/public-site";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -103,12 +106,6 @@ type ProfileContextRow = {
   full_name?: string | null;
   email?: string | null;
   phone?: string | null;
-};
-
-type CreateOrderShipmentState = {
-  status: "skipped";
-  reason: "AWAITING_PAYMENT" | "MISSING_STORE_ID";
-  message: string;
 };
 
 const ORDER_SELECT_CANDIDATES = [
@@ -452,7 +449,7 @@ export async function POST(request: NextRequest) {
     const listingImageUrl = asTrimmedString(body.listingImageUrl) || null;
     const address = asTrimmedString(body.address);
     const receiverName = asTrimmedString(body.receiverName);
-    const receiverPhone = normalizePhoneForStorage(body.receiverPhone);
+    const receiverPhone = normalizeInternationalPhone(body.receiverPhone);
     const receiverCountryCode = asIso2CountryCode(body.receiverCountryCode);
     const receiverState = asTrimmedString(body.receiverState) || null;
     const receiverCity = asTrimmedString(body.receiverCity);
@@ -498,7 +495,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing required order fields." }, { status: 400 });
     }
 
-    if (!receiverName || !receiverPhone || !receiverCountryCode || !receiverCity || !receiverTown || !receiverPostalCode) {
+    if (!receiverPhone) {
+      return NextResponse.json(
+        { error: "Receiver phone must be in international format like +905551112233." },
+        { status: 400 }
+      );
+    }
+
+    if (!receiverName || !receiverCountryCode || !receiverCity || !receiverTown || !receiverPostalCode) {
       return NextResponse.json(
         { error: "Missing required receiver fields for Navlungo shipment." },
         { status: 400 }
@@ -509,134 +513,71 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Order amount must be zero or positive." }, { status: 400 });
     }
 
-    const baseInsertPayload = {
-      user_id: user.id,
-      store_id: storeId,
-      category_name: category,
-      sub_product_name: subProductName,
-      variant_name: variantName,
-      product_link: resolvedProductLink,
-      listing_id: listingId,
-      listing_key: listingKey,
-      listing_title: listingTitle,
-      listing_image_url: listingImageUrl,
-      order_date: date,
-      shipping_address: address,
-      receiver_name: receiverName,
-      receiver_phone: receiverPhone,
-      receiver_country_code: receiverCountryCode,
-      receiver_state: receiverState,
-      receiver_city: receiverCity,
-      receiver_town: receiverTown,
-      receiver_postal_code: receiverPostalCode,
-      note,
-      ioss,
-      label_number: labelNumber,
-      amount_usd: amountUsd,
-      payment_status: "pending",
-      updated_at: new Date().toISOString(),
-    } satisfies Record<string, unknown>;
-
-    const payloadCandidates: Array<Record<string, unknown>> = [
-      baseInsertPayload,
+    const stripeMode = resolveStripeModeForRequest(request);
+    const stripe = getStripeClientForMode(stripeMode);
+    const appUrl = resolvePublicSiteUrl(request);
+    const checkoutReference = crypto.randomUUID();
+    const shopId = buildOrderCheckoutShopId(storeId, checkoutReference);
+    const metadata = buildOrderCheckoutMetadata(
       {
-        ...baseInsertPayload,
-        store_id: undefined,
+        storeId,
+        category,
+        subProductName,
+        variantName,
+        productLink: resolvedProductLink,
+        listingId,
+        listingKey,
+        listingTitle,
+        listingImageUrl,
+        date,
+        address,
+        receiverName,
+        receiverPhone,
+        receiverCountryCode,
+        receiverState,
+        receiverCity,
+        receiverTown,
+        receiverPostalCode,
+        note,
+        ioss,
+        labelNumber,
+        amountUsd,
       },
       {
-        ...baseInsertPayload,
-        store_id: undefined,
-        receiver_name: undefined,
-        receiver_phone: undefined,
-        receiver_country_code: undefined,
-        receiver_state: undefined,
-        receiver_city: undefined,
-        receiver_town: undefined,
-        receiver_postal_code: undefined,
-        note: undefined,
-        ioss: undefined,
-      },
-      {
-        ...baseInsertPayload,
-        listing_id: undefined,
-        listing_key: undefined,
-        listing_title: undefined,
-        listing_image_url: undefined,
-      },
-      {
-        ...baseInsertPayload,
-        store_id: undefined,
-        listing_id: undefined,
-        listing_key: undefined,
-        listing_title: undefined,
-        listing_image_url: undefined,
-      },
-      {
-        ...baseInsertPayload,
-        store_id: undefined,
-        receiver_name: undefined,
-        receiver_phone: undefined,
-        receiver_country_code: undefined,
-        receiver_state: undefined,
-        receiver_city: undefined,
-        receiver_town: undefined,
-        receiver_postal_code: undefined,
-        note: undefined,
-        ioss: undefined,
-        listing_id: undefined,
-        listing_key: undefined,
-        listing_title: undefined,
-        listing_image_url: undefined,
-      },
-    ];
-
-    let created: OrderRow | null = null;
-    let lastError: QueryError | null = null;
-
-    for (const payload of payloadCandidates) {
-      const { data, error } = await supabaseAdmin.from("orders").insert(payload).select("*").maybeSingle<OrderRow>();
-
-      if (!error) {
-        created = data ?? null;
-        break;
+        userId: user.id,
+        shopId,
+        stripeMode,
       }
+    );
 
-      lastError = error;
-
-      if (!isRecoverableSelectError(error)) {
-        break;
-      }
-    }
-
-    if (created) {
-      const shipment: CreateOrderShipmentState = storeId
-        ? {
-            status: "skipped",
-            reason: "AWAITING_PAYMENT",
-            message: "Order created. Shipment will start automatically after payment is completed.",
-          }
-        : {
-            status: "skipped",
-            reason: "MISSING_STORE_ID",
-            message: "Order created but store selection is missing; shipment cannot start after payment until a store is set.",
-          };
-
-      return NextResponse.json({
-        row: mapOrderRow(created),
-        shipment,
-      });
-    }
-
-    if (isMissingTableError(lastError)) {
-      return NextResponse.json(
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      success_url: `${appUrl}/orders?payment=success&type=one_time&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${appUrl}/orders?payment=cancelled&type=one_time`,
+      line_items: [
         {
-          error: "Table public.orders does not exist in remote schema yet. Apply the latest orders migration in supabase/migrations.",
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: listingTitle || `${category} / ${subProductName}`,
+            },
+            unit_amount: Math.round(amountUsd * 100),
+          },
+          quantity: 1,
         },
-        { status: 400 }
-      );
+      ],
+      metadata,
+    });
+
+    if (!session.url) {
+      return NextResponse.json({ error: "Checkout session could not be created." }, { status: 500 });
     }
 
-    return NextResponse.json({ error: lastError?.message ?? "Order could not be created" }, { status: 500 });
+    return NextResponse.json({
+      url: session.url,
+      checkoutSessionId: session.id,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Order could not be created";
     return NextResponse.json({ error: message }, { status: 500 });

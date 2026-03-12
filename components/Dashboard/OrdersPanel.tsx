@@ -25,7 +25,11 @@ import {
   ImageIcon,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n/provider';
-import { normalizePhoneForStorage, sanitizePhoneInput } from '@/lib/phone';
+import {
+  MAX_INTERNATIONAL_PHONE_LENGTH,
+  normalizeInternationalPhone,
+  sanitizePhoneInput,
+} from '@/lib/phone';
 import { useCategoriesRepository } from '@/lib/repositories/categories';
 import { useOrdersRepository } from '@/lib/repositories/orders';
 import { requiresIossForCountry } from '@/lib/shipping/ioss';
@@ -763,9 +767,14 @@ const OrdersPanel: React.FC = () => {
 
     const resolvedReceiverTown = receiverTown.trim() || receiverCity.trim();
 
-    const normalizedReceiverPhone = normalizePhoneForStorage(receiverPhone);
+    const normalizedReceiverPhone = normalizeInternationalPhone(receiverPhone);
 
-    if (!receiverName.trim() || !normalizedReceiverPhone || !receiverCountryCode.trim() || !receiverCity.trim() || !resolvedReceiverTown || !receiverPostalCode.trim()) {
+    if (!normalizedReceiverPhone) {
+      toast.error(locale === 'en' ? 'Enter a valid phone number like +905551112233.' : 'Telefonu +905551112233 formatında girin.');
+      return;
+    }
+
+    if (!receiverName.trim() || !receiverCountryCode.trim() || !receiverCity.trim() || !resolvedReceiverTown || !receiverPostalCode.trim()) {
       toast.error(locale === 'en' ? 'Receiver details are required for shipment.' : 'Sevkiyat için alıcı bilgileri zorunludur.');
       return;
     }
@@ -807,10 +816,8 @@ const OrdersPanel: React.FC = () => {
         labelNumber,
         price: calculatedPrice,
       });
-
-      const createdOrder = createResult.order;
-      if (!createdOrder?.id) {
-        throw new Error(locale === 'en' ? 'Order was created but order id is missing.' : 'Sipariş oluşturuldu ancak sipariş kimliği alınamadı.');
+      if (!createResult.checkoutUrl) {
+        throw new Error(locale === 'en' ? 'Payment page could not be opened.' : 'Ödeme sayfası açılamadı.');
       }
 
       setAddress('');
@@ -838,9 +845,8 @@ const OrdersPanel: React.FC = () => {
         setSelectedStoreId('');
       }
       setShowModal(false);
-      toast.success(locale === 'en' ? 'Order created. Redirecting to payment...' : 'Sipariş oluşturuldu. Ödemeye yönlendiriliyorsunuz...');
-
-      await startOrderCheckout(createdOrder.id, createdOrder.price ?? calculatedPrice);
+      toast.success(locale === 'en' ? 'Redirecting to payment...' : 'Ödemeye yönlendiriliyorsunuz...');
+      window.location.href = createResult.checkoutUrl;
     } catch (saveError) {
       toast.error(saveError instanceof Error ? saveError.message : 'Sipariş kaydedilemedi.');
     } finally {
@@ -1267,6 +1273,8 @@ const OrdersPanel: React.FC = () => {
                         type="text"
                         inputMode="tel"
                         placeholder="+905551112233"
+                        maxLength={MAX_INTERNATIONAL_PHONE_LENGTH}
+                        pattern="^\+[1-9]\d{7,14}$"
                         className="w-full px-4 py-3.5 rounded-2xl glass border border-zinc-200 dark:border-white/10 outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
                       />
                     </div>

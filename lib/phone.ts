@@ -1,3 +1,6 @@
+export const MAX_INTERNATIONAL_PHONE_LENGTH = 16;
+export const INTERNATIONAL_PHONE_REGEX = /^\+[1-9]\d{7,14}$/;
+
 export const sanitizePhoneInput = (value: string, maxLength = 32): string => {
   if (typeof value !== "string") {
     return "";
@@ -30,4 +33,17 @@ export const normalizePhoneForStorage = (value: unknown, maxLength = 32): string
   }
 
   return normalized;
+};
+
+export const normalizeInternationalPhone = (value: unknown): string | null => {
+  const normalized = normalizePhoneForStorage(value, MAX_INTERNATIONAL_PHONE_LENGTH);
+  if (!normalized) {
+    return null;
+  }
+
+  return INTERNATIONAL_PHONE_REGEX.test(normalized) ? normalized : null;
+};
+
+export const isValidInternationalPhone = (value: unknown): boolean => {
+  return Boolean(normalizeInternationalPhone(value));
 };

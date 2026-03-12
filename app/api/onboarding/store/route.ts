@@ -6,7 +6,8 @@ import {
 } from "@/lib/auth/legacy-onboarding";
 import { syncSchedulerCronJobLifecycle } from "@/lib/cron-job-org/client";
 import { normalizePhoneForStorage } from "@/lib/phone";
-import { normalizeStoreNameInput } from "@/lib/stores/name";
+import { MAX_STORE_NAME_LENGTH, normalizeStoreNameInput } from "@/lib/stores/name";
+import { loadUserStoreQuota } from "@/lib/stores/quota";
 import { resolveCheckoutPriceId } from "@/lib/stripe/plans";
 import { getActiveStripeMode, getStripeClientForMode, resolveStripeMode, type StripeMode } from "@/lib/stripe/client";
 import { syncProfileSubscriptionState } from "@/lib/subscription/profile-sync";
@@ -1366,6 +1367,25 @@ export async function POST(request: NextRequest) {
     const currency = asStoreCurrency(body.currency);
     const fallbackPrefix = asTrimmedString(body.fallbackStoreNamePrefix) || "Magazam";
     const requestedStoreName = normalizeStoreNameInput(asTrimmedString(body.storeName));
+    if (requestedStoreName && requestedStoreName.length > MAX_STORE_NAME_LENGTH) {
+      return NextResponse.json(
+        { error: `Store name cannot exceed ${MAX_STORE_NAME_LENGTH} characters.` },
+        { status: 400 }
+      );
+    }
+
+    const quota = await loadUserStoreQuota(user.id);
+    if (!quota.canCreateStore) {
+      return NextResponse.json(
+        {
+          code: "STORE_LIMIT_REACHED",
+          error: `You can create up to ${quota.absoluteStoreLimit} stores.`,
+          quota,
+        },
+        { status: 409 }
+      );
+    }
+
     const existingCount = requestedStoreName ? 0 : await countUserStores(user.id);
     const storeName = requestedStoreName || `${fallbackPrefix} ${existingCount + 1}`;
     const storeId = randomUUID();

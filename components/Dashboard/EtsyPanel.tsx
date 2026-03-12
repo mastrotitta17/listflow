@@ -19,7 +19,8 @@ import {
 import { useI18n } from "@/lib/i18n/provider";
 import { normalizePhoneForStorage, sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
-import { normalizeStoreNameInput } from "@/lib/stores/name";
+import { MAX_STORE_NAME_LENGTH, normalizeStoreNameInput } from "@/lib/stores/name";
+import { ABSOLUTE_MAX_STORES_PER_USER } from "@/lib/stores/quota";
 import { Select } from "@/components/ui/select";
 import { openCrispChat } from "@/lib/crisp";
 import type { Shop } from "@/types";
@@ -220,6 +221,8 @@ const EtsyPanel: React.FC = () => {
       }))
       .filter((item) => Boolean(item.id) && Boolean(item.name));
   }, [selectedParentCategory]);
+
+  const storeLimitReached = shops.length >= ABSOLUTE_MAX_STORES_PER_USER;
 
   const resolvedSubCategory = useMemo(() => {
     if (!availableSubCategories.length) {
@@ -890,7 +893,9 @@ const EtsyPanel: React.FC = () => {
         </div>
         <button
           onClick={() => setShowConnect(true)}
-          className="px-8 py-4 rounded-2xl bg-indigo-600 text-white font-black flex items-center gap-3 hover:shadow-[0_0_30px_rgba(79,70,229,0.3)] active:scale-95 transition-all text-sm uppercase tracking-widest cursor-pointer"
+          disabled={storeLimitReached}
+          className="px-8 py-4 rounded-2xl bg-indigo-600 text-white font-black flex items-center gap-3 hover:shadow-[0_0_30px_rgba(79,70,229,0.3)] active:scale-95 transition-all text-sm uppercase tracking-widest cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          title={storeLimitReached ? `${ABSOLUTE_MAX_STORES_PER_USER} mağaza limitine ulaşıldı.` : undefined}
         >
           <Plus className="w-5 h-5" /> {t("etsy.addStore")}
         </button>
@@ -1341,6 +1346,7 @@ const EtsyPanel: React.FC = () => {
                       value={shopName}
                       onChange={(event) => setShopName(event.target.value)}
                       onBlur={() => setShopName((prev) => normalizeStoreNameInput(prev))}
+                      maxLength={MAX_STORE_NAME_LENGTH}
                       placeholder="Örn: WoodDesignTR"
                       className="w-full px-5 py-4 rounded-2xl bg-white/5 border border-white/10 text-white outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium"
                     />

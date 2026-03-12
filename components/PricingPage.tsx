@@ -26,7 +26,7 @@ import { buildOAuthRedirectTo } from "@/lib/auth/oauth-client";
 import { useI18n } from "@/lib/i18n/provider";
 import { normalizePhoneForStorage, sanitizePhoneInput } from "@/lib/phone";
 import { useCategoriesRepository } from "@/lib/repositories/categories";
-import { normalizeStoreNameInput } from "@/lib/stores/name";
+import { MAX_STORE_NAME_LENGTH, normalizeStoreNameInput } from "@/lib/stores/name";
 import { supabase } from "@/lib/supabaseClient";
 import type { SupportedLocale } from "@/lib/i18n/config";
 
@@ -53,6 +53,8 @@ type StoreQuotaPayload = {
   plan: BillingPlan;
   hasActiveSubscription: boolean;
   includedStoreLimit: number;
+  effectiveStoreLimit: number;
+  absoluteStoreLimit: number;
   totalStores: number;
   purchasedExtraStores: number;
   usedExtraStores: number;
@@ -1392,7 +1394,7 @@ const PricingPage = () => {
                         <div className="flex flex-wrap gap-3 text-slate-200">
                           <span>
                             {storeQuota.totalStores}/
-                            {storeQuota.includedStoreLimit + storeQuota.purchasedExtraStores}
+                            {storeQuota.effectiveStoreLimit}
                           </span>
                           <span className="text-slate-500">•</span>
                           <span>
@@ -1465,6 +1467,7 @@ const PricingPage = () => {
                             value={storeName}
                             onChange={(event) => setStoreName(event.target.value)}
                             onBlur={() => setStoreName((prev) => normalizeStoreNameInput(prev))}
+                            maxLength={MAX_STORE_NAME_LENGTH}
                             placeholder={copy.storePlaceholderName}
                             className="w-full rounded-2xl border border-white/10 bg-white/5 pl-12 pr-4 py-3.5 text-white outline-none focus:ring-2 focus:ring-indigo-500"
                           />

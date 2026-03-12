@@ -32,6 +32,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (quota.totalStores >= quota.absoluteStoreLimit) {
+      return NextResponse.json(
+        {
+          code: "ABSOLUTE_STORE_LIMIT_REACHED",
+          error: `En fazla ${quota.absoluteStoreLimit} mağaza oluşturabilirsiniz.`,
+          quota,
+        },
+        { status: 409 }
+      );
+    }
+
     if (quota.canCreateStore) {
       return NextResponse.json(
         {

@@ -1,4 +1,7 @@
 const ETSY_HOST_PATTERN = /(^|\.)etsy\.com$/i;
+export const MAX_STORE_NAME_LENGTH = 64;
+
+const clampStoreNameLength = (value: string) => value.slice(0, MAX_STORE_NAME_LENGTH).trim();
 
 const cleanupExtractedName = (value: string) => {
   let decoded = value;
@@ -14,7 +17,7 @@ const cleanupExtractedName = (value: string) => {
     return "";
   }
 
-  return withoutDelimiters;
+  return clampStoreNameLength(withoutDelimiters);
 };
 
 const parseEtsyStoreNameFromUrlLike = (raw: string) => {
@@ -81,5 +84,5 @@ export const normalizeStoreNameInput = (raw: string | null | undefined) => {
     return "";
   }
 
-  return extractEtsyStoreName(normalized) ?? normalized;
+  return clampStoreNameLength(extractEtsyStoreName(normalized) ?? normalized);
 };
