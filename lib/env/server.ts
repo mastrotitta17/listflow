@@ -13,6 +13,19 @@ const readRequiredServerEnv = (key: string) => {
   return value;
 };
 
+const describeEnvKeys = (keys: string[]) => keys.join(" | ");
+
+const readRequiredServerEnvAny = (keys: string[]) => {
+  for (const key of keys) {
+    const value = readOptionalServerEnv(key);
+    if (value) {
+      return value;
+    }
+  }
+
+  throw new Error(`Missing required server environment variable: ${describeEnvKeys(keys)}`);
+};
+
 const readOptionalServerEnv = (key: string) => {
   const value = process.env[key];
 
@@ -78,6 +91,8 @@ const readStripeModeOptional = (
 };
 
 const resolveStripeMode = () => readStripeMode();
+const SUPABASE_URL_KEYS = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL"];
+const SUPABASE_ANON_KEY_KEYS = ["NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY"];
 
 const resolveStripeSecretKey = (stripeMode: StripeMode) => {
   const stripeSecretKey = readStripeModeRequired(
@@ -101,13 +116,27 @@ const resolveStripeSecretKey = (stripeMode: StripeMode) => {
 };
 
 export const serverEnv = {
-  NEXT_PUBLIC_SUPABASE_URL: readRequiredServerEnv("NEXT_PUBLIC_SUPABASE_URL"),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: readRequiredServerEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
-  SUPABASE_SERVICE_ROLE_KEY: readRequiredServerEnv("SUPABASE_SERVICE_ROLE_KEY"),
-  CRON_SECRET: readRequiredServerEnv("CRON_SECRET"),
-  CRON_SCHEDULER_BASE_URL: readOptionalServerEnv("CRON_SCHEDULER_BASE_URL"),
-  VERCEL_AUTOMATION_BYPASS_SECRET: readOptionalServerEnv("VERCEL_AUTOMATION_BYPASS_SECRET"),
-  EXPO_PUSH_ACCESS_TOKEN: readOptionalServerEnv("EXPO_PUSH_ACCESS_TOKEN"),
+  get NEXT_PUBLIC_SUPABASE_URL() {
+    return readRequiredServerEnvAny(SUPABASE_URL_KEYS);
+  },
+  get NEXT_PUBLIC_SUPABASE_ANON_KEY() {
+    return readRequiredServerEnvAny(SUPABASE_ANON_KEY_KEYS);
+  },
+  get SUPABASE_SERVICE_ROLE_KEY() {
+    return readRequiredServerEnv("SUPABASE_SERVICE_ROLE_KEY");
+  },
+  get CRON_SECRET() {
+    return readRequiredServerEnv("CRON_SECRET");
+  },
+  get CRON_SCHEDULER_BASE_URL() {
+    return readOptionalServerEnv("CRON_SCHEDULER_BASE_URL");
+  },
+  get VERCEL_AUTOMATION_BYPASS_SECRET() {
+    return readOptionalServerEnv("VERCEL_AUTOMATION_BYPASS_SECRET");
+  },
+  get EXPO_PUSH_ACCESS_TOKEN() {
+    return readOptionalServerEnv("EXPO_PUSH_ACCESS_TOKEN");
+  },
   get STRIPE_MODE() {
     return resolveStripeMode();
   },
@@ -180,5 +209,7 @@ export const serverEnv = {
       test: ["STRIPE_PRICE_TURBO_YEARLY_TEST", "STRIPE_PRICE_TURBO_YEARLY"],
     });
   },
-  APP_URL: readRequiredServerEnv("APP_URL"),
+  get APP_URL() {
+    return readRequiredServerEnv("APP_URL");
+  },
 } as const;
